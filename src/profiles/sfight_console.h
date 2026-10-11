@@ -370,6 +370,8 @@ static const game_profile_t sfight_console_profile = {
     .input        = { SFIGHT_INPUT_MAP },
     .quirks       = { SFIGHT_QUIRKS },
     .match_info   = sfight_match_info,
+    .native_take  = sfight_native_take,
+    .native_put   = sfight_native_put,
 };
 
 #endif /* PROFILES_SFIGHT_CONSOLE_H */

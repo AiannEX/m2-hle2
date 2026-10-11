@@ -183,6 +183,31 @@ typedef struct {
 
 typedef void (*game_match_info_fn)(struct memory_bus *bus, game_match_info_t *out);
 
+/* A round in the game's own replay formats (core/replay.h keeps them in the
+ * .m2replay; sfight_native.h has STF's). Each part is a block of the game's RAM
+ * as the game itself wrote or would write it, named so the profile knows where
+ * it goes back. */
+#define GAME_NATIVE_PARTS_MAX 8
+typedef struct {
+    const char    *name;         /* "key_bank.bin": the file in the replay */
+    uint32_t       addr;         /* where the game keeps it */
+    const uint8_t *data;
+    uint32_t       len;
+} game_native_part_t;
+
+typedef struct {
+    int                nparts;
+    game_native_part_t part[GAME_NATIVE_PARTS_MAX];
+    char               json[256];   /* what the round was: one JSON object */
+} game_native_round_t;
+
+/* A round the game has ended since the last call: true, with *out pointing
+ * into the profile's buffer until the next call. */
+typedef bool (*game_native_take_fn)(game_native_round_t *out);
+/* Put a round's parts back where the game reads them (out->json unused). NULL
+ * or why not. */
+typedef const char *(*game_native_put_fn)(struct memory_bus *bus, const game_native_round_t *in);
+
 /* ---- Profile ------------------------------------------------------------- */
 
 typedef struct game_profile {
@@ -212,6 +237,10 @@ typedef struct game_profile {
 
     /* The versus match on the board, for a replay's label. NULL: unknown. */
     game_match_info_fn match_info;
+
+    /* Rounds in the game's own replay formats, and the way back in. NULL: none. */
+    game_native_take_fn native_take;
+    game_native_put_fn  native_put;
 } game_profile_t;
 
 /* ---- Registry ------------------------------------------------------------ */

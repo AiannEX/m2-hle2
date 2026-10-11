@@ -2726,8 +2726,9 @@ static void mcp_cmd_follow_lead(const char *req, char *resp, int cap) {
  * {"cmd":"replay", ...} -- recorded online matches (core/replay.h, Pinboard #572).
  * "record":0|1 turns recording on or off ("dir" sets the folder); "open":PATH
  * opens a replay file and answers its label in "info"; "play":1 plays it from
- * the start, "stop":1 gives the board back; "seek":FRAME, "fast":0|1. No
- * arguments only reads.
+ * the start, "stop":1 gives the board back; "seek":FRAME, "fast":0|1.
+ * "native":N puts round N of the open replay into the board in the game's own
+ * replay formats (replay_native_install, Pinboard #602). No arguments only reads.
  */
 static const char *mcp_replay_do(const char *req) {
     emu_thread_ctx_t *ctx = g_mcp.emu;
@@ -2741,6 +2742,7 @@ static const char *mcp_replay_do(const char *req) {
     if (mcp_json_get_u32(req, "stop", &v) && v) { replay_play_stop(); return NULL; }
     if (mcp_json_get_u32(req, "play", &v) && v) return ctx ? replay_play_start(ctx) : "no board";
     if (mcp_json_get_u32(req, "seek", &v)) return ctx ? replay_play_seek(ctx, v) : "no board";
+    if (mcp_json_get_u32(req, "native", &v)) return ctx ? replay_native_install(ctx, (int)v) : "no board";
     return NULL;
 }
 
