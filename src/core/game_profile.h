@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "model_table.h"
+
 struct i960_cpu;
 struct memory_bus;
 struct romset;
@@ -94,6 +96,7 @@ typedef struct {
     uint32_t mesh_ptr_add;          /* 0 = board default 0x10 */
     uint32_t model_table_offset;    /* byte offset of model table within main_data */
     uint32_t model_table_count;     /* number of entries in the model table */
+    model_layout_t model_layout;    /* the entry's shape (model_table.h); zero = 1995's */
     uint32_t camera_struct_addr;    /* RAM address of camera eye (x,y,z f32; 0 = no game camera) */
     /* Absolute RAM address of the camera angle word (low16 = pitch, high16 = yaw).
      * The struct layout differs per game: STF packs it at eye+0xC (0x519EA4);
@@ -281,6 +284,13 @@ extern const size_t              g_prepared_count;
 
 static inline const char *profile_rom_set(const game_profile_t *p) {
     return p->rom_set ? p->rom_set : p->id;
+}
+
+/* The quirks' model table as the board reads it (model_table.h). No quirks:
+ * an empty table. */
+static inline model_table_t profile_model_table(const game_quirks_t *q) {
+    return q ? model_table_make(q->model_table_offset, q->model_table_count, q->model_layout)
+             : model_table_make(0, 0, MODEL_LAYOUT_1995);
 }
 
 /* The profile with this id, or NULL. */

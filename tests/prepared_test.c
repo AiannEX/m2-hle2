@@ -9,8 +9,9 @@
  *
  * With a set in $ROMDIR / $ROMS_DIR: it loads, the PRCB and the start IP are
  * inside the program, ROM_COPY mirrors match their source, and the model table
- * the profile names (noclip's, js/games.js) points into the polygon ROM. A set
- * that is not there is skipped.
+ * the profile names (noclip's, js/games.js) points into the polygon ROM and,
+ * read through the profile's layout (model_table.h; Pinboard #663), gives what
+ * noclip's readModelEntry gives. A set that is not there is skipped.
  */
 #define NDEBUG 1
 #include <stdio.h>
@@ -33,19 +34,37 @@ static int g_fail = 0;
     printf(__VA_ARGS__); printf("\n"); \
 } while (0)
 
-/* What the test reads a profile with: its recipe, and noclip's model-table
- * entry layout (js/games.js, js/romset.js readModelEntry). The 1995 games keep
- * the mesh pointer at +8; Daytona and Virtua Cop put it first. */
+/* What noclip reads from a set's model table (js/romset.js readModelEntry,
+ * with the stride and fields js/games.js gives the game): the entry count,
+ * FNV-1a over every entry's uv, mat and mesh words (little-endian, in that
+ * order), the meshes set and the ones in polygon RAM, and three entries.
+ * Taken with node from the noclip tree (loadRomSet + readModelEntry) on the
+ * container's vcop.zip, daytona.zip and hotd.zip. */
+typedef struct {
+    uint32_t      count, fnv, meshes, ram;
+    uint32_t      sample_idx[3];
+    model_entry_t sample[3];
+} noclip_reads_t;
+
+/* What the test reads a profile with: its recipe, the layout its quirks must
+ * name (model_table.h), and noclip's reads. */
 typedef struct {
     const game_profile_t *p;
     const rom_recipe_t   *recipe;
-    uint32_t              stride, mesh_field;
+    model_layout_t        layout;
+    noclip_reads_t        noclip;
 } prepared_case_t;
 
 static const prepared_case_t k_cases[] = {
-    { &vcop_profile,    &vcop_recipe,    16, 0 },
-    { &daytona_profile, &daytona_recipe, 20, 0 },
-    { &hotd_profile,    &hotd_recipe,    16, 8 },
+    { &vcop_profile, &vcop_recipe, MODEL_LAYOUT_VCOP,
+      { 1234, 0x2298d18du, 1234, 0, { 0, 1, 1233 },
+        { { 0x50000, 0x0, 0x800004 }, { 0x50760, 0x3cc, 0x8009f1 }, { 0xc292a, 0x39240, 0x89c275 } } } },
+    { &daytona_profile, &daytona_recipe, MODEL_LAYOUT_DAYTONA,
+      { 3190, 0xa7bff01du, 3190, 27, { 0, 1, 3189 },
+        { { 0x17ecd0, 0x117080, 0x880004 }, { 0x17f13e, 0x11728c, 0x8805af }, { 0x85abc, 0x18510, 0x84881b } } } },
+    { &hotd_profile, &hotd_recipe, MODEL_LAYOUT_1995,
+      { 7477, 0xac1eb34fu, 7465, 0, { 0, 1, 7476 },
+        { { 0x0, 0x6, 0x800000 }, { 0x0, 0x6, 0x800000 }, { 0x6c7ffa, 0x6c821a, 0xef296a } } } },
 };
 
 static uint32_t rd32(const uint8_t *b, size_t at) {
@@ -75,6 +94,10 @@ static void check_profile(const prepared_case_t *c) {
     CHECK(profile_prepared_message(p->id, msg, sizeof msg) && strstr(msg, p->display_name),
           "%s: the front ends' message names it", p->id);
     check_recipe(c->recipe);
+    const model_table_t t = profile_model_table(&p->quirks);
+    CHECK(!memcmp(&t.layout, &c->layout, sizeof t.layout),
+          "%s: model table entries are %u bytes, mesh +%u uv +%u mat +%u", p->id,
+          t.layout.stride, t.layout.mesh, t.layout.uv, t.layout.mat);
 }
 
 /* The program's reset structures: word 1 is the PRCB, PRCB + 4 the start IP. */
@@ -99,27 +122,60 @@ static void check_mirrors(const char *id, const rom_recipe_t *rc, romset_t *rs) 
     if (n) CHECK(bad == 0, "%s: %d mirrors match their source", id, n);
 }
 
+static uint32_t fnv_word(uint32_t h, uint32_t v) {
+    for (int b = 0; b < 4; b++) { h ^= (v >> (b * 8)) & 0xff; h *= 0x01000193u; }
+    return h;
+}
+
+/* Every entry read through the profile's table must match noclip's reads. */
+static void check_noclip_reads(const char *id, const model_table_t *t, const romset_t *rs,
+                               const noclip_reads_t *n) {
+    uint32_t h = 0x811c9dc5u;
+    model_entry_t e;
+    for (uint32_t i = 0; i < t->count; i++) {
+        model_entry_read(t, rs->main_data, rs->main_data_size, i, &e);
+        h = fnv_word(fnv_word(fnv_word(h, e.uv_ptr), e.mat_ptr), e.mesh_ptr);
+    }
+    CHECK(t->count == n->count && h == n->fnv, "%s: %u entries, FNV 0x%08X (noclip: %u, 0x%08X)",
+          id, t->count, h, n->count, n->fnv);
+    int bad = 0;
+    for (int k = 0; k < 3; k++) {
+        model_entry_read(t, rs->main_data, rs->main_data_size, n->sample_idx[k], &e);
+        if (memcmp(&e, &n->sample[k], sizeof e)) {
+            printf("      entry %u: uv=%X mat=%X mesh=%X\n", n->sample_idx[k], e.uv_ptr, e.mat_ptr, e.mesh_ptr);
+            bad++;
+        }
+    }
+    CHECK(bad == 0, "%s: entries %u, %u and %u are noclip's", id,
+          n->sample_idx[0], n->sample_idx[1], n->sample_idx[2]);
+}
+
 /* Entries whose mesh pointer is set must decode (pointer * 4 - subtract + add,
  * romset.js meshOffsetOf) to inside the polygon ROM. A pointer with bit 23
  * clear is polygon RAM, which the game fills at run time (MAME
- * geo_object_data): Daytona has 27 of those, and they are counted apart. */
+ * geo_object_data): Daytona has 27 of those (entries 2139-2165), and they are
+ * counted apart, not read as ROM. */
 static void check_model_table(const prepared_case_t *c, const romset_t *rs) {
     const game_quirks_t *q = &c->p->quirks;
-    uint64_t last = q->model_table_offset + (uint64_t)q->model_table_count * c->stride;
-    CHECK(last <= rs->main_data_size, "%s: model table inside main_data", c->p->id);
-    if (last > rs->main_data_size) return;
+    const model_table_t t = profile_model_table(q);
+    CHECK(model_table_fits(&t, rs->main_data_size), "%s: model table inside main_data", c->p->id);
+    if (!model_table_fits(&t, rs->main_data_size)) return;
     uint32_t set = 0, inside = 0, ram = 0;
-    for (uint32_t i = 0; i < q->model_table_count; i++) {
-        uint32_t ptr = rd32(rs->main_data, q->model_table_offset + i * c->stride + c->mesh_field);
-        if (!ptr) continue;
+    model_entry_t e;
+    for (uint32_t i = 0; i < t.count; i++) {
+        model_entry_read(&t, rs->main_data, rs->main_data_size, i, &e);
+        if (!e.mesh_ptr) continue;
         set++;
-        if (!(ptr & 0x800000)) { ram++; continue; }
-        uint32_t off = ptr * 4 - q->mesh_ptr_subtract + q->mesh_ptr_add;
+        if (!model_mesh_in_rom(e.mesh_ptr)) { ram++; continue; }
+        uint32_t off = e.mesh_ptr * 4 - q->mesh_ptr_subtract + q->mesh_ptr_add;
         if (off < rs->polygons_size) inside++;
     }
     printf("info: %s: %u of %u models have a mesh: %u in the polygon ROM, %u in polygon RAM\n",
-           c->p->id, set, q->model_table_count, inside, ram);
-    CHECK(set > q->model_table_count / 2 && inside + ram == set, "%s: model table points into the polygon ROM", c->p->id);
+           c->p->id, set, t.count, inside, ram);
+    CHECK(set > t.count / 2 && inside + ram == set, "%s: model table points into the polygon ROM", c->p->id);
+    CHECK(set == c->noclip.meshes && ram == c->noclip.ram, "%s: %u meshes, %u in polygon RAM, as noclip counts",
+          c->p->id, c->noclip.meshes, c->noclip.ram);
+    check_noclip_reads(c->p->id, &t, rs, &c->noclip);
 }
 
 static void check_set(const prepared_case_t *c) {

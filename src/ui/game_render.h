@@ -2306,7 +2306,7 @@ static inline geo3d_models_t geo3d_models_of(const romset_t *rs, const game_quir
         .main_data = rs->main_data, .main_data_size = rs->main_data_size,
         .polygons  = rs->polygons,  .polygons_size  = rs->polygons_size,
         .materials = rs->textures,  .materials_size = rs->textures_size,
-        .table_off = q->model_table_offset, .table_count = q->model_table_count,
+        .table = profile_model_table(q),
         .mesh_ptr_subtract = q->mesh_ptr_subtract, .mesh_ptr_add = q->mesh_ptr_add,
     };
 }

@@ -60,6 +60,7 @@ static const game_profile_t vcop_profile = {
         /* noclip games.js `vcop`: 0x4D2 entries of 16 bytes; palette at 0x4C0000. */
         .model_table_offset = 0x4c8000,
         .model_table_count  = 0x4d2,
+        .model_layout       = MODEL_LAYOUT_VCOP,
         .mesh_ptr_subtract  = 0x02000010,
         .mesh_ptr_add       = 0x10,
     },

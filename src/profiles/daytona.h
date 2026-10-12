@@ -76,6 +76,7 @@ static const game_profile_t daytona_profile = {
          * 0x84F4EC. The polygon decoder was confirmed on this set first. */
         .model_table_offset = 0x83fbb4,
         .model_table_count  = 3190,
+        .model_layout       = MODEL_LAYOUT_DAYTONA,
         .mesh_ptr_subtract  = 0x02000010,
         .mesh_ptr_add       = 0x10,
     },

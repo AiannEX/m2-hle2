@@ -117,6 +117,8 @@ The two did not know the same games. noclip opens Virtua Cop, Daytona USA (eight
 
 ### 6.3 A difference found doing it: the model-table entry
 
-noclip reads an entry by stride and field (`readModelEntry`): the 1995 games (STF, FV, HOTD) keep the mesh pointer at +8 of 16 bytes, Virtua Cop at +0 of 16, Daytona at +0 of 20. m2-hle2's decoder knows only the first: `game_quirks_t` has no stride or field. That has to be added before either of the older games can draw here (`prepared_test`'s `k_cases` holds the layouts meanwhile).
+noclip reads an entry by stride and field (`readModelEntry`): the 1995 games (STF, FV, HOTD) keep the mesh pointer at +8 of 16 bytes, Virtua Cop at +0 of 16, Daytona at +0 of 20. m2-hle2 reads all three the same way (Pinboard #663): `board/model_table.h` has the layouts (`MODEL_LAYOUT_1995`, `_VCOP`, `_DAYTONA`) and `model_entry_read`, a profile names its layout in `game_quirks_t.model_layout` (zero is 1995's), and every reader of the table (the GEO lookup and walks, the object viewer, the texture extraction, the tests) goes through `profile_model_table`.
 
-Daytona has 27 entries (2139-2165) whose pointer has bit 23 clear. On the board that is polygon RAM, which the game fills at run time (MAME `geo_object_data`), not the polygon ROM. noclip's `meshOffsetOf` decodes them into the ROM all the same, to 0xFE0000xx; they should be left alone or taken from RAM.
+`prepared_test` holds the two to noclip's reads on the container's sets: the entry count, an FNV-1a over every entry's uv, mat and mesh words, three sample entries, and the meshes set and in RAM, all taken with node from noclip's `loadRomSet` + `readModelEntry`. Virtua Cop: 1234 entries, `0x2298d18d`; Daytona: 3190, `0xa7bff01d`; House of the Dead: 7477, `0xac1eb34f`.
+
+Daytona has 27 entries (2139-2165) whose pointer has bit 23 clear. On the board that is polygon RAM, which the game fills at run time (MAME `geo_object_data`), not the polygon ROM. noclip's `meshOffsetOf` decodes them into the ROM all the same, to 0xFE0000xx. m2-hle2 leaves them as RAM (`model_mesh_in_rom`); the test counts them apart and does not read them as ROM.

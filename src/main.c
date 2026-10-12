@@ -1319,11 +1319,10 @@ static void draw_windows(void) {
     if (state.show_cop)         cop_window_draw(&state.show_cop);
     if (state.show_geo3d) {
         const game_quirks_t *gq = g_active_profile ? &g_active_profile->quirks : NULL;
+        model_table_t table = profile_model_table(gq);
         geo3d_window_draw(&state.geo3d, &state.show_geo3d,
                           state.romset.main_data, state.romset.main_data_size,
-                          gq ? gq->model_table_offset : 0,
-                          gq ? gq->model_table_count  : 0,
-                          gq ? gq->mesh_ptr_subtract  : 0);
+                          &table, gq ? gq->mesh_ptr_subtract : 0);
     }
     objview_window_draw(&state.show_objview, &state.romset, &state.bus);
     if (state.show_bus_stats)   draw_bus_stats_window();
@@ -1423,12 +1422,11 @@ static void extract_model_tick(void) {
     if (g_extract_model >= 0 && g_active_profile && state.romset.main_data) {
         static int _ec = 0;
         if ((_ec++ % 60) == 0) {
-            const game_quirks_t *q = &g_active_profile->quirks;
+            model_table_t table = profile_model_table(&g_active_profile->quirks);
             geo3d_extract_model_texture(g_extract_model,
                 state.romset.main_data, state.romset.main_data_size,
                 state.romset.textures,  state.romset.textures_size,
-                state.bus.texram0, state.bus.texram1,
-                q->model_table_offset, q->model_table_count);
+                state.bus.texram0, state.bus.texram1, &table);
             if (g_extract_seq >= 0) g_extract_seq++;
         }
     }

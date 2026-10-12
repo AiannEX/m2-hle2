@@ -29,6 +29,7 @@
 #include "cop.h"            /* g_cop, g_cop_capture[] */
 #include "log.h"
 #include "memory.h"         /* mem_read8 / mem_read32 */
+#include "model_table.h"    /* the entry layouts: model_table_t, model_entry_read */
 
 /* ---- Capacities ---------------------------------------------------------- */
 
@@ -36,7 +37,6 @@
 #define GEO3D_DIRECT_WORDS 16384u
 #define GEO3D_MAX_LINES    32768
 #define MODEL_LOOKUP_SIZE  8192
-#define MODEL_ENTRY_SIZE   16
 #define VERTEX_PAIR_SIZE   40
 
 /* Index-array decoder buffers.  Sized for the largest meshes across games:
@@ -817,15 +817,16 @@ static inline uint32_t geo3d_lookup_hash(uint32_t pol_ptr) {
 }
 
 static inline void geo3d_lookup_build(const uint8_t *main_data, size_t main_data_size,
-                                       uint32_t table_off, uint32_t table_count) {
+                                       const model_table_t *table) {
     if (g_geo3d_lookup.built) return;
     g_geo3d_lookup.count = 0;
     if (!main_data) return;
-    if ((size_t)table_off + (size_t)table_count * MODEL_ENTRY_SIZE > main_data_size) return;
+    if (!model_table_fits(table, main_data_size)) return;
 
-    for (uint32_t m = 0; m < table_count && g_geo3d_lookup.count < MODEL_LOOKUP_SIZE; m++) {
-        uint32_t toff = table_off + m * MODEL_ENTRY_SIZE;
-        uint32_t pol  = read_u32_le(main_data + toff + 8);
+    for (uint32_t m = 0; m < table->count && g_geo3d_lookup.count < MODEL_LOOKUP_SIZE; m++) {
+        model_entry_t e;
+        model_entry_read(table, main_data, main_data_size, m, &e);
+        uint32_t pol = e.mesh_ptr;
         if (pol != 0) {
             g_geo3d_lookup.pol_ptrs[g_geo3d_lookup.count]  = pol;
             g_geo3d_lookup.model_idx[g_geo3d_lookup.count] = (int)m;
@@ -841,8 +842,8 @@ static inline void geo3d_lookup_build(const uint8_t *main_data, size_t main_data
         if (g_geo3d_lookup.hash[h] < 0) g_geo3d_lookup.hash[h] = (int16_t)i;
     }
     g_geo3d_lookup.built = true;
-    LOG_INFO("geo3d_lookup_build: %d entries (table_off=0x%X count=%u)",
-             g_geo3d_lookup.count, table_off, table_count);
+    LOG_INFO("geo3d_lookup_build: %d entries (table_off=0x%X count=%u stride=%u)",
+             g_geo3d_lookup.count, table->off, table->count, table->layout.stride);
 }
 
 static inline int geo3d_lookup_by_pol(uint32_t pol_ptr) {
@@ -885,7 +886,7 @@ typedef struct {
     uint32_t        buff_words;
     const uint8_t  *main_data;
     size_t          main_data_size;
-    uint32_t        table_off;
+    model_table_t   table;
     const uint8_t  *palette;
     size_t          palette_size;
     float           cur_mat[12];
@@ -942,12 +943,12 @@ static inline void geo3d__dl_object(geo3d_dl_walk_t *w, uint32_t p) {
     uint32_t oba = w->buff_ram[p + 3];
     int model_idx = geo3d_lookup_by_pol(oba);
     if (model_idx < 0) return;
-    uint32_t toff = w->table_off + (uint32_t)model_idx * MODEL_ENTRY_SIZE;
-    if ((size_t)toff + MODEL_ENTRY_SIZE > w->main_data_size) return;
+    model_entry_t e;
+    if (!model_entry_read(&w->table, w->main_data, w->main_data_size, (uint32_t)model_idx, &e)) return;
     captured_model_t *cm = &geo->captured[geo->captured_count];
     memset(cm, 0, sizeof(*cm));
     cm->model_idx    = model_idx;
-    cm->material_ptr = read_u32_le(w->main_data + toff + 4);
+    cm->material_ptr = e.mat_ptr;
     geo3d__dl_object_color(w, p, cm);
     cm->dbg_mesh_ptr = oba;
     if (w->have_mat) {
@@ -1021,17 +1022,17 @@ static inline bool geo3d__dl_command(geo3d_dl_walk_t *w, uint32_t p, uint32_t cm
 static inline void geo3d_scan_displaylist(geo3d_state_t *geo,
         const uint32_t *buff_ram, uint32_t buff_words, uint32_t rstart,
         const uint8_t *main_data, size_t main_data_size,
-        uint32_t table_off, uint32_t table_count,
+        const model_table_t *table,
         const uint8_t *palette, size_t palette_size) {
     if (!main_data || !buff_ram) { geo->captured_count = 0; return; }
-    geo3d_lookup_build(main_data, main_data_size, table_off, table_count);
+    geo3d_lookup_build(main_data, main_data_size, table);
 
     geo3d__dl_snapshot_prev(geo);
     geo->captured_count = 0;
 
     geo3d_dl_walk_t w = { .geo = geo, .buff_ram = buff_ram, .buff_words = buff_words,
                           .main_data = main_data, .main_data_size = main_data_size,
-                          .table_off = table_off, .palette = palette, .palette_size = palette_size,
+                          .table = *table, .palette = palette, .palette_size = palette_size,
                           .have_mat = false };
     uint32_t p = (rstart & (buff_words * 4u - 1u)) / 4u;   /* wrap within bufferram */
     for (uint32_t guard = 0; guard < buff_words && p < buff_words
@@ -1118,6 +1119,188 @@ static inline bool geo3d_tex_word(const uint8_t *rom, size_t rom_size, uint32_t 
     return true;
 }
 
+/* The walk's state between commands: the matrix, projection, light and
+ * windows the list has set so far. */
+typedef struct {
+    float   raw[12];                 /* column-major, as the COP wrote it */
+    float   fx, fy, light[3];
+    int16_t wvp[4];                  /* viewport, list coordinates */
+    int16_t wc[4][2];                /* each eye mode's window centre */
+    int     window;
+    float   xoff, yoff;
+} geo3d__geol_t;
+
+/* Mode, LOD and z-adjust are the geometrizer's own state and outlive a list. */
+static struct { uint32_t mode; float lod; uint32_t zadj; } g_geol_held;
+
+static inline uint32_t geo3d__geol_arg(const uint32_t *words, uint32_t nw, uint32_t p, uint32_t k) {
+    return p + 1u + k < nw ? words[p + 1u + k] : 0u;
+}
+
+static inline int16_t geo3d__geol_s12(uint32_t v) {
+    return (int16_t)((v & 0x800) ? (int)v - 0x1000 : (int)v);
+}
+
+/* Where a draw lands: the projection, the window's scissor and the state the
+ * geometrizer holds for it. */
+static inline void geo3d__geol_place(const geo3d__geol_t *s, captured_model_t *cm, uint32_t sel,
+                                     uint32_t tpa, uint32_t tha) {
+    cm->view_space = true;
+    cm->gproj[0] = s->fx;
+    cm->gproj[1] = s->fy;
+    cm->gproj[2] = s->xoff + s->wc[sel][0];
+    cm->gproj[3] = (384.0f - s->wc[sel][1]) + s->yoff;
+    cm->vp[0] = (int16_t)(s->wvp[0] + s->xoff);
+    cm->vp[1] = (int16_t)((384 - s->wvp[3]) + s->yoff);
+    cm->vp[2] = (int16_t)(s->wvp[2] + s->xoff);
+    cm->vp[3] = (int16_t)((384 - s->wvp[1]) + s->yoff);
+    cm->window   = (uint16_t)s->window;
+    cm->light[0] = s->light[0]; cm->light[1] = s->light[1]; cm->light[2] = -s->light[2];
+    cm->geo_mode = g_geol_held.mode;
+    cm->geo_lod  = g_geol_held.lod;
+    cm->zadjust  = g_geol_held.zadj;
+    cm->tpa = tpa;
+    cm->tha = tha;
+}
+
+/* Object (0x01): a mesh at oba, drawn with the list's current matrix. An oba
+ * in polygon ROM is a model-table entry; one in polygon RAM has none. */
+static inline void geo3d__geol_object(geo3d_state_t *geo, int *count, const geo3d__geol_t *s,
+                                      const uint32_t *words, uint32_t nw, uint32_t p,
+                                      const uint8_t *main_data, size_t main_data_size,
+                                      const model_table_t *table) {
+    uint32_t op = words[p], oba = geo3d__geol_arg(words, nw, p, 2);
+    int model_idx = -1;
+    model_entry_t e = { 0, 0, 0 };
+    if (model_mesh_in_rom(oba)) {                      /* polygon ROM: a model-table entry */
+        model_idx = geo3d_lookup_by_pol(oba);          /* none: read at the address (MAME) */
+        if (model_idx >= 0 &&
+            !model_entry_read(table, main_data, main_data_size, (uint32_t)model_idx, &e)) return;
+    }
+    captured_model_t *cm = &geo->captured[(*count)++];
+    memset(cm, 0, sizeof *cm);
+    cm->model_idx    = model_idx;                      /* -1: polygon RAM, see oba */
+    if (model_idx >= 0) {
+        cm->material_ptr = e.mat_ptr;
+        material_ptr_to_color(cm->material_ptr, &cm->color[0], &cm->color[1], &cm->color[2]);
+    } else {
+        cm->color[0] = cm->color[1] = cm->color[2] = 0.7f;
+    }
+    /* The decoder reads vertices as (x, y, -z) and the host looks down
+     * -z: undo the first negation in column 2, apply the second to row 2,
+     * so what reaches the screen is the board's M * (x, y, z). */
+    const float *M = s->raw;
+    float *H = cm->matrix;
+    H[0] =  M[0]; H[1] =  M[3]; H[2]  = -M[6]; H[3]  =  M[9];
+    H[4] =  M[1]; H[5] =  M[4]; H[6]  = -M[7]; H[7]  =  M[10];
+    H[8] = -M[2]; H[9] = -M[5]; H[10] =  M[8]; H[11] = -M[11];
+    cm->has_matrix = true;
+    geo3d__geol_place(s, cm, (op >> 29) & 3u, geo3d__geol_arg(words, nw, p, 0), geo3d__geol_arg(words, nw, p, 1));
+    cm->dbg_mesh_ptr = oba;
+    cm->dbg_pos[0] = M[9]; cm->dbg_pos[1] = M[10]; cm->dbg_pos[2] = M[11];
+    cm->dbg_have_mat = 1;
+}
+
+/* Direct data (0x02): polygons in the list itself. Returns its length. */
+static inline uint32_t geo3d__geol_direct(geo3d_state_t *geo, int *count, const geo3d__geol_t *s,
+                                          const uint32_t *words, uint32_t nw, uint32_t p) {
+    uint32_t len = geodl_direct_len(words, nw, p);
+    if (p + 1u + len > nw || geo->direct_used + len > GEO3D_DIRECT_WORDS) return len;
+    captured_model_t *cm = &geo->captured[(*count)++];
+    memset(cm, 0, sizeof *cm);
+    cm->model_idx  = -1;
+    cm->direct_off = geo->direct_used;
+    cm->direct_len = len;
+    memcpy(geo->direct_words + geo->direct_used, words + p + 1u, len * 4u);
+    geo->direct_used += len;
+    /* The raster command is (opcode >> 23) - 1, whose centre select
+     * (bits 6..7) is always 0 (MAME geo_direct_data). */
+    geo3d__geol_place(s, cm, 0u, geo3d__geol_arg(words, nw, p, 0), geo3d__geol_arg(words, nw, p, 1));
+    return len;
+}
+
+/* Window (0x03): the viewport and the four eye modes' centres. */
+static inline void geo3d__geol_window(geo3d__geol_t *s, const uint32_t *words, uint32_t nw, uint32_t p) {
+    uint32_t w0 = geo3d__geol_arg(words, nw, p, 0), w1 = geo3d__geol_arg(words, nw, p, 1);
+    s->wvp[0] = geo3d__geol_s12((w0 >> 16) & 0xFFF); s->wvp[1] = geo3d__geol_s12(w0 & 0xFFF);
+    s->wvp[2] = geo3d__geol_s12((w1 >> 16) & 0xFFF); s->wvp[3] = geo3d__geol_s12(w1 & 0xFFF);
+    for (uint32_t k = 0; k < 4; k++) {
+        uint32_t c = geo3d__geol_arg(words, nw, p, 2 + k);
+        s->wc[k][0] = geo3d__geol_s12((c >> 16) & 0xFFF);
+        s->wc[k][1] = geo3d__geol_s12(c & 0xFFF);
+    }
+    s->window++;
+}
+
+/* Mode, LOD and z-sort, the state that outlives a list. Returns the length,
+ * or -1 for a command that is not one of them. */
+static inline int geo3d__geol_held(uint32_t cmd, uint32_t a0) {
+    switch (cmd) {
+        case 0x07: case 0x17: g_geol_held.mode = a0; return 1;
+        case 0x16:            g_geol_held.lod = u32_as_float(a0); return 1;
+        /* z-sort mode: the raster keeps (word >> 8) << 8 as its z_adjust
+         * (model2_v.cpp geo_zsort_mode, raster command 08) */
+        case 0x08: case 0x18: g_geol_held.zadj = a0 & 0xFFFFFF00u; return 1;
+        default: return -1;
+    }
+}
+
+/* The commands that set the list's state: focal lengths, light, matrix.
+ * Returns the length, or -1 for a command that is not one of them. */
+static inline int geo3d__geol_state(geo3d__geol_t *s, uint32_t cmd, const uint32_t *words, uint32_t nw, uint32_t p) {
+    #define A(k) geo3d__geol_arg(words, nw, p, (k))
+    switch (cmd) {
+        case 0x09: case 0x19:                              /* focal lengths */
+            s->fx = u32_as_float(A(0)); s->fy = u32_as_float(A(1));
+            return 2;
+        case 0x0A: case 0x1A:                              /* light vector */
+            for (uint32_t k = 0; k < 3; k++) s->light[k] = u32_as_float(A(k));
+            return 3;
+        case 0x0B: case 0x1B:                              /* matrix */
+            for (uint32_t k = 0; k < 12; k++) s->raw[k] = u32_as_float(A(k));
+            return 12;
+        case 0x0C: case 0x1C:                              /* translation only */
+            for (uint32_t k = 0; k < 3; k++) s->raw[9 + k] = u32_as_float(A(k));
+            return 3;
+        default: return -1;
+    }
+    #undef A
+}
+
+/* The commands the walk steps over: texture data / polygon data / texture
+ * parameters, which memory.h (geodl_apply_state) applied when the list was
+ * published, and the no-ops. Returns the length (0 for one it does not know). */
+static inline uint32_t geo3d__geol_skip(uint32_t cmd, const uint32_t *words, uint32_t nw, uint32_t p) {
+    switch (cmd) {
+        case 0x04: case 0x14: case 0x05: case 0x15: return 2 + geo3d__geol_arg(words, nw, p, 1);
+        case 0x06: return 2 + 2 * geo3d__geol_arg(words, nw, p, 1);
+        case 0x10: case 0x1E: return 1;
+        case 0x0D: return 2;
+        case 0x1D: return 2 + 3 * geo3d__geol_arg(words, nw, p, 1);
+        default:   return 0;
+    }
+}
+
+/* One command at p (not a jump, not END): what it captures or sets. Returns
+ * its length after the opcode. */
+static inline uint32_t geo3d__geol_command(geo3d_state_t *geo, int *count, geo3d__geol_t *s,
+                                           const uint32_t *words, uint32_t nw, uint32_t p,
+                                           const uint8_t *main_data, size_t main_data_size,
+                                           const model_table_t *table) {
+    uint32_t cmd = (words[p] >> 23) & 0x1F;
+    switch (cmd) {
+        case 0x01: case 0x11:                              /* object */
+            geo3d__geol_object(geo, count, s, words, nw, p, main_data, main_data_size, table);
+            return 4;
+        case 0x02: case 0x12: return geo3d__geol_direct(geo, count, s, words, nw, p);
+        case 0x03: case 0x13: geo3d__geol_window(s, words, nw, p); return 6;
+        default: break;
+    }
+    int len = geo3d__geol_held(cmd, geo3d__geol_arg(words, nw, p, 0));
+    if (len < 0) len = geo3d__geol_state(s, cmd, words, nw, p);
+    return len >= 0 ? (uint32_t)len : geo3d__geol_skip(cmd, words, nw, p);
+}
+
 /* ---- GEO display list, as the geometrizer walks it ----------------------- *
  * The board's own draw list (memory.h, "GEO display list"): the i960 and the
  * COP lay it in bufferram and the GEO walks it once a frame. Walked here the way
@@ -1139,9 +1322,9 @@ static inline bool geo3d_scan_geo_list(geo3d_state_t *geo,
         const uint32_t *words, uint32_t nw, uint32_t rstart,
         int16_t hsync, int16_t vsync,
         const uint8_t *main_data, size_t main_data_size,
-        uint32_t table_off, uint32_t table_count) {
+        const model_table_t *table) {
     if (!main_data || !words) return false;
-    geo3d_lookup_build(main_data, main_data_size, table_off, table_count);
+    geo3d_lookup_build(main_data, main_data_size, table);
 
     if (g_cop.geo_frame_end != geo->last_frame_end) {
         memcpy(geo->captured_prev, geo->captured,
@@ -1150,151 +1333,27 @@ static inline bool geo3d_scan_geo_list(geo3d_state_t *geo,
         geo->last_frame_end      = g_cop.geo_frame_end;
     }
 
-    #define GEOL_S12(v) ((int16_t)(((v) & 0x800) ? (int)(v) - 0x1000 : (int)(v)))
-    float    raw[12] = { 1,0,0, 0,1,0, 0,0,1, 0,0,0 };   /* column-major, as the COP wrote it */
-    float    fx = 280.0f, fy = 280.0f;
-    float    light[3] = { 0.0f, 0.0f, 1.0f };
-    /* Mode and LOD are the geometrizer's own state and outlive a list. */
-    static uint32_t mode = 0;
-    static float    lod  = 0.0f;
-    static uint32_t zadj = 0;
-    int16_t  wvp[4]  = { 0, 0, 496, 384 };                /* viewport, list coordinates */
-    int16_t  wc[4][2] = { {248, 192}, {248, 192}, {248, 192}, {248, 192} };
-    int      window = 0;
-    float    xoff = 84.0f + hsync, yoff = 130.0f + vsync;
-    int      count = 0;
-    bool     ended = false;
+    geo3d__geol_t s = {
+        .raw = { 1,0,0, 0,1,0, 0,0,1, 0,0,0 },
+        .fx = 280.0f, .fy = 280.0f, .light = { 0.0f, 0.0f, 1.0f },
+        .wvp = { 0, 0, 496, 384 },
+        .wc = { {248, 192}, {248, 192}, {248, 192}, {248, 192} },
+        .xoff = 84.0f + hsync, .yoff = 130.0f + vsync,
+    };
+    int  count = 0;
+    bool ended = false;
     geo->direct_used = 0;
-    /* Where a draw lands: the projection, the window's scissor and the state
-     * the geometrizer holds for it. */
-    #define GEOL_PLACE(cm, sel) do {                                       \
-        (cm)->view_space = true;                                           \
-        (cm)->gproj[0] = fx;                                               \
-        (cm)->gproj[1] = fy;                                               \
-        (cm)->gproj[2] = xoff + wc[sel][0];                                \
-        (cm)->gproj[3] = (384.0f - wc[sel][1]) + yoff;                     \
-        (cm)->vp[0] = (int16_t)(wvp[0] + xoff);                            \
-        (cm)->vp[1] = (int16_t)((384 - wvp[3]) + yoff);                    \
-        (cm)->vp[2] = (int16_t)(wvp[2] + xoff);                            \
-        (cm)->vp[3] = (int16_t)((384 - wvp[1]) + yoff);                    \
-        (cm)->window   = (uint16_t)window;                                 \
-        (cm)->light[0] = light[0]; (cm)->light[1] = light[1]; (cm)->light[2] = -light[2]; \
-        (cm)->geo_mode = mode;                                             \
-        (cm)->geo_lod  = lod;                                              \
-        (cm)->zadjust  = zadj;                                             \
-        (cm)->tpa = A(0);                                                  \
-        (cm)->tha = A(1);                                                  \
-    } while (0)
 
     uint32_t p = (rstart & 0x1FFFFu) >> 2;
     for (uint32_t guard = 0; guard < 0x8000u && p < nw && count < MAX_GEO_MODELS; guard++) {
         uint32_t op = words[p];
         if (op & 0x80000000u) { p = (op & 0x1FFFFu) >> 2; continue; }   /* jump */
         uint32_t cmd = (op >> 23) & 0x1F;
-        #define A(k) (p + 1u + (k) < nw ? words[p + 1u + (k)] : 0u)
-        uint32_t len = 0;
-        switch (cmd) {
-            case 0x00: len = 0; break;
-            case 0x01: case 0x11: {                            /* object */
-                len = 4;
-                uint32_t oba = A(2);
-                int model_idx = -1;
-                if (oba & 0x00800000u) {                       /* polygon ROM: a model-table entry */
-                    model_idx = geo3d_lookup_by_pol(oba);      /* none: read at the address (MAME) */
-                    uint32_t toff = table_off + (uint32_t)(model_idx < 0 ? 0 : model_idx) * MODEL_ENTRY_SIZE;
-                    if (model_idx >= 0 && (size_t)toff + MODEL_ENTRY_SIZE > main_data_size) break;
-                }
-                captured_model_t *cm = &geo->captured[count++];
-                memset(cm, 0, sizeof *cm);
-                cm->model_idx    = model_idx;                  /* -1: polygon RAM, see oba */
-                if (model_idx >= 0) {
-                    cm->material_ptr = read_u32_le(main_data + table_off + (uint32_t)model_idx * MODEL_ENTRY_SIZE + 4);
-                    material_ptr_to_color(cm->material_ptr, &cm->color[0], &cm->color[1], &cm->color[2]);
-                } else {
-                    cm->color[0] = cm->color[1] = cm->color[2] = 0.7f;
-                }
-                /* The decoder reads vertices as (x, y, -z) and the host looks down
-                 * -z: undo the first negation in column 2, apply the second to row 2,
-                 * so what reaches the screen is the board's M * (x, y, z). */
-                const float *M = raw;
-                float *H = cm->matrix;
-                H[0] =  M[0]; H[1] =  M[3]; H[2]  = -M[6]; H[3]  =  M[9];
-                H[4] =  M[1]; H[5] =  M[4]; H[6]  = -M[7]; H[7]  =  M[10];
-                H[8] = -M[2]; H[9] = -M[5]; H[10] =  M[8]; H[11] = -M[11];
-                cm->has_matrix = true;
-                GEOL_PLACE(cm, (op >> 29) & 3u);
-                cm->dbg_mesh_ptr = A(2);
-                cm->dbg_pos[0] = M[9]; cm->dbg_pos[1] = M[10]; cm->dbg_pos[2] = M[11];
-                cm->dbg_have_mat = 1;
-                break;
-            }
-            case 0x02: case 0x12: {                            /* direct data: polygons in the list */
-                len = geodl_direct_len(words, nw, p);
-                if (p + 1u + len > nw || geo->direct_used + len > GEO3D_DIRECT_WORDS) break;
-                captured_model_t *cm = &geo->captured[count++];
-                memset(cm, 0, sizeof *cm);
-                cm->model_idx  = -1;
-                cm->direct_off = geo->direct_used;
-                cm->direct_len = len;
-                memcpy(geo->direct_words + geo->direct_used, words + p + 1u, len * 4u);
-                geo->direct_used += len;
-                /* The raster command is (opcode >> 23) - 1, whose centre select
-                 * (bits 6..7) is always 0 (MAME geo_direct_data). */
-                GEOL_PLACE(cm, 0u);
-                break;
-            }
-            case 0x03: case 0x13: {                            /* window */
-                len = 6;
-                uint32_t w0 = A(0), w1 = A(1);
-                wvp[0] = GEOL_S12((w0 >> 16) & 0xFFF); wvp[1] = GEOL_S12(w0 & 0xFFF);
-                wvp[2] = GEOL_S12((w1 >> 16) & 0xFFF); wvp[3] = GEOL_S12(w1 & 0xFFF);
-                for (int k = 0; k < 4; k++) {
-                    uint32_t c = A(2 + (uint32_t)k);
-                    wc[k][0] = GEOL_S12((c >> 16) & 0xFFF);
-                    wc[k][1] = GEOL_S12(c & 0xFFF);
-                }
-                window++;
-                break;
-            }
-            /* texture data / polygon data / texture parameters: memory.h
-             * (geodl_apply_state) applied them when the list was published */
-            case 0x04: case 0x14: case 0x05: case 0x15: len = 2 + A(1); break;
-            case 0x06: len = 2 + 2 * A(1); break;
-            case 0x07: case 0x17: len = 1; mode = A(0); break;
-            case 0x16:            len = 1; lod = u32_as_float(A(0)); break;
-            /* z-sort mode: the raster keeps (word >> 8) << 8 as its z_adjust
-             * (model2_v.cpp geo_zsort_mode, raster command 08) */
-            case 0x08: case 0x18: len = 1; zadj = A(0) & 0xFFFFFF00u; break;
-            case 0x10: case 0x1E: len = 1; break;
-            case 0x09: case 0x19:                              /* focal lengths */
-                len = 2;
-                fx = u32_as_float(A(0)); fy = u32_as_float(A(1));
-                break;
-            case 0x0A: case 0x1A:                              /* light vector */
-                len = 3;
-                light[0] = u32_as_float(A(0)); light[1] = u32_as_float(A(1)); light[2] = u32_as_float(A(2));
-                break;
-            case 0x0B: case 0x1B:                              /* matrix */
-                len = 12;
-                for (uint32_t k = 0; k < 12; k++) raw[k] = u32_as_float(A(k));
-                break;
-            case 0x0C: case 0x1C:                              /* translation only */
-                len = 3;
-                for (uint32_t k = 0; k < 3; k++) raw[9 + k] = u32_as_float(A(k));
-                break;
-            case 0x0D: len = 2; break;
-            case 0x1D: len = 2 + 3 * A(1); break;
-            case 0x0F: case 0x1F: ended = true; break;
-            default: break;
-        }
-        #undef A
-        if (ended) break;
-        p += 1u + len;
+        if (cmd == 0x0F || cmd == 0x1F) { ended = true; break; }
+        p += 1u + geo3d__geol_command(geo, &count, &s, words, nw, p, main_data, main_data_size, table);
     }
-    #undef GEOL_S12
-    #undef GEOL_PLACE
     geo->captured_count = count;
-    geo->geo_windows    = window + 1;
+    geo->geo_windows    = s.window + 1;
     return ended;
 }
 
@@ -1326,7 +1385,7 @@ typedef struct {
     const uint8_t *main_data;  size_t main_data_size;
     const uint8_t *polygons;   size_t polygons_size;
     const uint8_t *materials;  size_t materials_size;   /* the textures ROM */
-    uint32_t table_off, table_count;
+    model_table_t table;
     uint32_t mesh_ptr_subtract, mesh_ptr_add;
     /* A mesh in polygon RAM rather than ROM (an object address without bit 23):
      * when set, the decoder reads it from here, at offset 0, in place of
@@ -1340,16 +1399,15 @@ typedef struct {
  * no mesh. */
 static inline bool geo3d_model_streams(const geo3d_models_t *md, int model_idx,
                                        uint32_t *mesh_offset, uint32_t *mat_ptr, uint32_t *uv_ptr) {
-    if (model_idx < 0 || (uint32_t)model_idx >= md->table_count) return false;
-    uint32_t toff = md->table_off + (uint32_t)model_idx * MODEL_ENTRY_SIZE;
-    if ((size_t)toff + MODEL_ENTRY_SIZE > md->main_data_size) return false;
-    uint32_t mesh_ptr_raw = read_u32_le(md->main_data + toff + 8);
-    if (mesh_ptr_raw == 0) return false;
-    *mesh_offset = mesh_ptr_raw * 4u - md->mesh_ptr_subtract + md->mesh_ptr_add;
+    model_entry_t e;
+    if (model_idx < 0 || !model_entry_read(&md->table, md->main_data, md->main_data_size, (uint32_t)model_idx, &e))
+        return false;
+    if (e.mesh_ptr == 0) return false;
+    *mesh_offset = e.mesh_ptr * 4u - md->mesh_ptr_subtract + md->mesh_ptr_add;
     *mat_ptr = *uv_ptr = 0;
     if (md->materials) {
-        *mat_ptr = read_u32_le(md->main_data + toff + 4);   /* word address (bit 23: texture RAM) */
-        *uv_ptr  = read_u32_le(md->main_data + toff + 0);   /* word index; byte = *2 */
+        *mat_ptr = e.mat_ptr;   /* word address (bit 23: texture RAM) */
+        *uv_ptr  = e.uv_ptr;    /* word index; byte = *2 */
         if (g_geo3d_obj_tha != 0xFFFFFFFFu) *mat_ptr = g_geo3d_obj_tha;
         if (g_geo3d_obj_tpa != 0xFFFFFFFFu) *uv_ptr  = g_geo3d_obj_tpa;
     }
@@ -1729,17 +1787,14 @@ static inline void geo3d_face_depth(const vec3_t *sv, const int zsrc[4], uint32_
 }
 
 /* model_tex.txt's head, for face 0: the model and its neighbouring
- * model-table entries: uv_ptr(+0)/mat_ptr(+4)/mesh_ptr(+8). UV-stream length
+ * model-table entries: uv_ptr/mat_ptr/mesh_ptr. UV-stream length
  * for this model = uv_ptr[next] - uv_ptr[this]. */
 static inline void geo3d_dump_tex_head(FILE *mtf, const geo3d_models_t *md, int model_idx) {
     fprintf(mtf, "# model %d texture tiles  th0 th2 th3 -> sheet (texx,texy) texw x texh\n", model_idx);
     for (int mi = model_idx - 1; mi <= model_idx + 2; mi++) {
-        if (mi < 0 || (uint32_t)mi >= md->table_count) continue;
-        uint32_t te = md->table_off + (uint32_t)mi * MODEL_ENTRY_SIZE;
-        if ((size_t)te + MODEL_ENTRY_SIZE > md->main_data_size) continue;
-        fprintf(mtf, "# table[%d]: uv_ptr=%u mat_ptr=%u mesh_ptr=%u\n", mi,
-                read_u32_le(md->main_data + te + 0), read_u32_le(md->main_data + te + 4),
-                read_u32_le(md->main_data + te + 8));
+        model_entry_t e;
+        if (mi < 0 || !model_entry_read(&md->table, md->main_data, md->main_data_size, (uint32_t)mi, &e)) continue;
+        fprintf(mtf, "# table[%d]: uv_ptr=%u mat_ptr=%u mesh_ptr=%u\n", mi, e.uv_ptr, e.mat_ptr, e.mesh_ptr);
     }
 }
 
@@ -2812,7 +2867,7 @@ static inline bool geo3d_mesh_build(geo3d_cmesh_t *m, uint32_t mesh_offset,
 static inline bool geo3d_models_same(const geo3d_models_t *a, const geo3d_models_t *b) {
     return a->polygons == b->polygons && a->materials == b->materials && a->main_data == b->main_data &&
            a->polygons_size == b->polygons_size && a->materials_size == b->materials_size &&
-           a->table_off == b->table_off && a->table_count == b->table_count &&
+           memcmp(&a->table, &b->table, sizeof a->table) == 0 &&
            a->mesh_ptr_subtract == b->mesh_ptr_subtract && a->mesh_ptr_add == b->mesh_ptr_add;
 }
 
@@ -3073,15 +3128,15 @@ static void geo3d_extract_model_texture(int model_idx,
         const uint8_t *main_data, size_t main_data_size,
         const uint8_t *materials, size_t materials_size,
         const uint8_t *texram0,   const uint8_t *texram1,
-        uint32_t table_off, uint32_t table_count) {
+        const model_table_t *table) {
+    model_entry_t e, next;
     if (!main_data || !materials || model_idx < 0 ||
-        (uint32_t)(model_idx + 1) >= table_count) return;
-    uint32_t toff = table_off + (uint32_t)model_idx * MODEL_ENTRY_SIZE;
-    if ((size_t)toff + 2u * MODEL_ENTRY_SIZE > main_data_size) return;
-    uint32_t uv_ptr   = read_u32_le(main_data + toff + 0);
-    uint32_t mat_ptr  = read_u32_le(main_data + toff + 4);
-    uint32_t mesh_ptr = read_u32_le(main_data + toff + 8);
-    uint32_t mat_next = read_u32_le(main_data + toff + MODEL_ENTRY_SIZE + 4);
+        !model_entry_read(table, main_data, main_data_size, (uint32_t)model_idx, &e) ||
+        !model_entry_read(table, main_data, main_data_size, (uint32_t)model_idx + 1, &next)) return;
+    uint32_t uv_ptr   = e.uv_ptr;
+    uint32_t mat_ptr  = e.mat_ptr;
+    uint32_t mesh_ptr = e.mesh_ptr;
+    uint32_t mat_next = next.mat_ptr;
     if (mat_next <= mat_ptr) return;
     uint32_t nfaces = (mat_next - mat_ptr) / 4u;   /* 8-byte (4 u16) records/face */
     if (nfaces > 8192u) nfaces = 8192u;
@@ -3155,11 +3210,10 @@ static inline void geo3d_wire_capture(const geo3d_state_t *geo, const geo3d_mode
 /* Single-model browser: derive colour from the model-table material ptr. */
 static inline void geo3d_wire_browser(const geo3d_state_t *geo, const geo3d_models_t *md) {
     float cr = 0.0f, cg = 1.0f, cb = 0.0f;
-    uint32_t toff = md->table_off + (uint32_t)geo->model_index * MODEL_ENTRY_SIZE;
-    if (md->main_data && (size_t)toff + MODEL_ENTRY_SIZE <= md->main_data_size) {
-        uint32_t mat_ptr = read_u32_le(md->main_data + toff + 4);
-        material_ptr_to_color(mat_ptr, &cr, &cg, &cb);
-    }
+    model_entry_t e;
+    if (geo->model_index >= 0 &&
+        model_entry_read(&md->table, md->main_data, md->main_data_size, (uint32_t)geo->model_index, &e))
+        material_ptr_to_color(e.mat_ptr, &cr, &cg, &cb);
     geo3d_decode_model(md, geo->model_index, NULL, cr, cg, cb);
 }
 
