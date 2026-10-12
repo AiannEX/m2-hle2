@@ -65,8 +65,10 @@ function explainMissing(missing) {
 
 function loadZip(bytes) {
   show('step-busy');
-  /* ?follow= names the leader's profile before the game loads (m2hle-follow.js). */
-  followReady.then(() => loadZipNow(bytes), (e) => romError('Cannot follow: ' + e.message));
+  /* ?follow= names the leader's profile before the game loads (m2hle-follow.js), and
+   * the arcade (stf-arcade.mjs, if it loaded) puts the shared board in localStorage. */
+  followReady.then(() => window.stfArcade && window.stfArcade.ready)
+    .then(() => loadZipNow(bytes), (e) => romError('Cannot follow: ' + e.message));
 }
 
 function loadZipNow(bytes) {
@@ -98,6 +100,7 @@ function loadZipNow(bytes) {
     addEventListener('pagehide', () => Module._web_backup_flush());
     if (m2hleFollow.active) m2hleFollow.onGame();   /* no netplay: the board is the leader's */
     else { m2hleNetplay.onGame(); m2hleGgpo.onGame(); }
+    if (window.stfArcade) window.stfArcade.onGame(m2hleFollow.active ? 'follow' : 'solo');
     m2hleTouch.onGame();
     pauseOnGame();
     $('canvas').focus();
