@@ -13,6 +13,7 @@
 #ifndef GAME_RENDER_H
 #define GAME_RENDER_H
 
+#include <ctype.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -204,8 +205,39 @@ static int g_game_render_fill_shade = 0;
 /* Give a game frame's faces the board's sort key as their vertex z instead of
  * writing it with gl_FragDepth, so the GPU keeps its early depth test. -1 (the
  * default) is on for GLES and off elsewhere; $M2HLE_VDEPTH=0/1 overrides it.
+ * The web build picks it by the GPU (game_render_vertex_depth_exact).
  * GL builds only. Set before game_render_init. */
 static int g_game_render_vertex_depth = -1;
+
+/* Whether a GPU, by its renderer string, keeps the vertex depth's key exact.
+ * ANGLE over Direct3D, Metal or Vulkan (every desktop browser, and Safari on
+ * every device) turns GL's clip z into D3D's [0, 1] depth as (z + w) * 0.5.
+ * The sum rounds at w's last bit, which is a whole step of the 24-bit depth,
+ * so faces one key apart swap and a tie no longer goes to the later polygon
+ * (issue #299: Sega Rally's car decals tore on Firefox over D3D11). A GLES
+ * driver hands z / w to the rasterizer as it is. So the key goes on the
+ * vertex only for a phone or handheld GPU named as itself or as ANGLE over
+ * OpenGL ES; anything else, a masked name included, writes gl_FragDepth. */
+static inline bool game_render__names(const char *s, const char *word) {
+    size_t n = strlen(word);
+    for (; *s; s++) {
+        size_t i = 0;
+        while (i < n && s[i] && tolower((unsigned char)s[i]) == word[i]) i++;
+        if (i == n) return true;
+    }
+    return false;
+}
+
+static inline bool game_render_vertex_depth_exact(const char *renderer) {
+    static const char *const zero_to_one[] = { "direct3d", "d3d1", "metal", "vulkan", "apple" };
+    static const char *const gles_gpus[] = { "mali", "adreno", "powervr", "immortalis", "xclipse" };
+    if (!renderer) return false;
+    for (size_t i = 0; i < sizeof zero_to_one / sizeof *zero_to_one; i++)
+        if (game_render__names(renderer, zero_to_one[i])) return false;
+    for (size_t i = 0; i < sizeof gles_gpus / sizeof *gles_gpus; i++)
+        if (game_render__names(renderer, gles_gpus[i])) return true;
+    return false;
+}
 /* Give faces colour ramp rows (default); 0 keeps the shader's colorxlat lookup
  * for all of them (timing comparisons). Set before game_render_init. */
 static int g_game_render_fill_ramp = 1;
