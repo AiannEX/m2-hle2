@@ -21,3 +21,9 @@
   position: fixed; left: 50%; top: 1rem; transform: translateX(-50%); z-index: 1001;
   background: #3d6fff; color: #fff; padding: .6rem 1rem; border-radius: 6px; font: 14px system-ui, sans-serif;
 }
+/* m2-hle2's tools drawer (Lag check, Console, Picture, Replay) opens at the foot of the page:
+ * sit on top of it, not over it. --drawer-h is its height, from the page's m2hle.css. */
+body:has(#drawer:not([hidden])) .stfa-open { bottom: calc(var(--drawer-h, 0px) + .5rem); }
+body:has(#drawer:not([hidden])) .stfa-banner {
+  bottom: calc(var(--drawer-h, 0px) + 1rem); max-height: calc(100vh - var(--drawer-h, 0px) - 2rem);
+}
