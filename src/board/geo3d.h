@@ -1200,10 +1200,9 @@ static inline bool geo3d_scan_geo_list(geo3d_state_t *geo,
                 uint32_t oba = A(2);
                 int model_idx = -1;
                 if (oba & 0x00800000u) {                       /* polygon ROM: a model-table entry */
-                    model_idx = geo3d_lookup_by_pol(oba);
-                    if (model_idx < 0) break;
-                    uint32_t toff = table_off + (uint32_t)model_idx * MODEL_ENTRY_SIZE;
-                    if ((size_t)toff + MODEL_ENTRY_SIZE > main_data_size) break;
+                    model_idx = geo3d_lookup_by_pol(oba);      /* none: read at the address (MAME) */
+                    uint32_t toff = table_off + (uint32_t)(model_idx < 0 ? 0 : model_idx) * MODEL_ENTRY_SIZE;
+                    if (model_idx >= 0 && (size_t)toff + MODEL_ENTRY_SIZE > main_data_size) break;
                 }
                 captured_model_t *cm = &geo->captured[count++];
                 memset(cm, 0, sizeof *cm);

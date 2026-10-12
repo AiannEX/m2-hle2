@@ -20,6 +20,7 @@
 #include "fvipers.h"
 #include "m2snake.h"
 #include "sfight_homebrew.h"
+#include "srallyc.h"
 #endif
 /* Future: vf2.h, daytona.h, vcop.h, ... */
 
@@ -32,6 +33,7 @@ const game_profile_t *const g_profiles[] = {
     &fvipers_profile,
     &m2snake_profile,
     &sfight_homebrew_profile,
+    &srallyc_profile,
 #endif
 };
 
