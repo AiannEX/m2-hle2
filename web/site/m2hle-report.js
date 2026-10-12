@@ -151,10 +151,21 @@ const m2hleReport = (() => {
 
   /* ---- Screenshot ------------------------------------------------------------ */
 
+  /* A room can start while a picture is being encoded or zipped: the copy the page
+   * pulled before it is dropped here, before anything is saved, and the panel with it. */
+  function dropIfOnline() {
+    if (allowed()) return false;
+    if (open) toggle(false);
+    report = null;
+    return true;
+  }
+
   async function screenshot() {
     const shot = await grab(false);
     if (!shot) { m2hleTools.printErr('screenshot: none taken'); return; }
-    download(await toPng(shot), stamp(shot) + '.png');
+    const png = await toPng(shot);
+    if (dropIfOnline()) { m2hleTools.printErr('screenshot: dropped, a room started'); return; }
+    download(png, stamp(shot) + '.png');
     m2hleTools.print('screenshot: ' + shot.w + 'x' + shot.h + ' at frame ' + shot.info.frame);
   }
 
@@ -174,20 +185,23 @@ const m2hleReport = (() => {
   }
 
   async function reportZip() {
-    if (!allowed()) { toggle(false); return; }   /* a room started: no state leaves the page */
-    const enc = new TextEncoder();
+    if (dropIfOnline() || !report) return;   /* a room started: no state leaves the page */
+    const r = report, enc = new TextEncoder();
+    const png = new Uint8Array(await r.png.arrayBuffer());
+    if (dropIfOnline()) return;
     const files = [
       { name: 'report.txt', bytes: enc.encode(reportText() + '\n') },
-      { name: 'screenshot.png', bytes: new Uint8Array(await report.png.arrayBuffer()) },
+      { name: 'screenshot.png', bytes: png },
       { name: 'console.txt', bytes: enc.encode(m2hleTools.consoleText() + '\n') },
     ];
-    if (report.state) files.push({ name: 'state.sta', bytes: report.state });
-    download(zip(files), stamp(report) + '-report.zip');
+    if (r.state) files.push({ name: 'state.sta', bytes: r.state });
+    download(zip(files), stamp(r) + '-report.zip');
     $('rp-saved').hidden = false;
   }
 
   /* The issue's body rides in the URL, which GitHub cuts off at about 8 KB. */
   function openIssue() {
+    if (dropIfOnline() || !report) return;
     const desc = $('rp-text').value.trim();
     const title = '[web] ' + (desc.split('\n')[0].slice(0, 80) || report.info.game + ': ');
     let body = reportText();
@@ -216,7 +230,9 @@ const m2hleReport = (() => {
     const shot = await grab(true);
     if (!open) return;   /* closed before the frame came */
     held = !!shot && M._web_paused() !== 1 && M._web_report_hold(1) === 1;
-    report = shot ? { ...shot, png: await toPng(shot) } : null;
+    const png = shot && await toPng(shot);
+    if (dropIfOnline() || !open) return;
+    report = shot ? { ...shot, png } : null;
     showReport();
   }
 
@@ -262,7 +278,7 @@ const m2hleReport = (() => {
     const ok = allowed();
     $('btn-shot').hidden = !ok;
     $('btn-report').hidden = !ok;
-    if (open && !ok) toggle(false);   /* a room started under it */
+    if (!ok) dropIfOnline();   /* a room started under it */
   }
 
   function wire() {
@@ -271,7 +287,7 @@ const m2hleReport = (() => {
     $('rp-close').addEventListener('click', () => toggle(false));
     $('rp-zip').addEventListener('click', reportZip);
     $('rp-issue').addEventListener('click', openIssue);
-    $('rp-copy').addEventListener('click', (e) => m2hleTools.copy(reportText(), e.currentTarget));
+    $('rp-copy').addEventListener('click', (e) => { if (!dropIfOnline() && report) m2hleTools.copy(reportText(), e.currentTarget); });
     for (const id of ['btn-online', 'btn-ggpo', 'btn-controls']) $(id).addEventListener('click', () => toggle(false));
   }
 
