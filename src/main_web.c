@@ -1565,6 +1565,10 @@ EMSCRIPTEN_KEEPALIVE int web_shader_mode(void) { return (int)post_shader_mode();
 EMSCRIPTEN_KEEPALIVE void web_shader_set_arcade(int on) { post_shader_set_arcade(on != 0); }
 EMSCRIPTEN_KEEPALIVE int web_shader_arcade(void) { return post_shader_arcade() ? 1 : 0; }
 
+/* Depth per pixel, not the board's one key a polygon (geo3d.h): 0 off, 1 on. */
+EMSCRIPTEN_KEEPALIVE void web_set_pixel_depth(int on) { g_geo3d_pixel_depth = on != 0; }
+EMSCRIPTEN_KEEPALIVE int web_pixel_depth(void) { return g_geo3d_pixel_depth; }
+
 /* The monitor's pots (crt_pots.h, CRT_POT_*), from the Picture tab. */
 EMSCRIPTEN_KEEPALIVE void  web_crt_pot_set(int id, float v) { crt_pots_set(id, v); }
 EMSCRIPTEN_KEEPALIVE float web_crt_pot(int id)              { return crt_pots_get(id); }

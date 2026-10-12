@@ -13,7 +13,10 @@
  * because a preset's textures are too big for localStorage -- so the shader is
  * back on the next visit without the whole folder being stored.
  *
- * Stored, per browser: the Arcade (localStorage m2hle.arcade, 0 or 1), the
+ * Beside them, Depth per pixel (geo3d.h): not the board's one sort key a polygon.
+ *
+ * Stored, per browser: the Arcade (localStorage m2hle.arcade, 0 or 1), Depth per
+ * pixel (m2hle.pixelDepth, 0 or 1), the
  * filter (m2hle.shaderMode; an old 3 was the CRT with the Arcade), the custom
  * shader's files (IndexedDB m2hle-shader), its parameter values
  * (localStorage m2hle.shaderParams, by preset name).
@@ -25,6 +28,7 @@ const m2hleShader = (() => {
   const MODE_OFF = 0, MODE_CRT = 1, MODE_CUSTOM = 2;
   const MODE_OLD_ARCADE = 3;
   const KEY_MODE = 'm2hle.shaderMode', KEY_PARAMS = 'm2hle.shaderParams', KEY_ARCADE = 'm2hle.arcade';
+  const KEY_PIXDEPTH = 'm2hle.pixelDepth';
   const DB_NAME = 'm2hle-shader', DB_STORE = 'preset', DB_KEY = 'current';
   const TEXT = /\.(glslp|glsl|inc|h)$/i;
   const IMAGE = /\.(png|jpe?g|bmp|tga)$/i;
@@ -116,6 +120,12 @@ const m2hleShader = (() => {
     Module._web_shader_set_arcade(on ? 1 : 0);
     $('shader-arcade').checked = on;
     if (remember) store.set(KEY_ARCADE, on ? '1' : '0');
+  }
+
+  function setPixelDepth(on, remember = true) {
+    Module._web_set_pixel_depth(on ? 1 : 0);
+    $('shader-pixdepth').checked = on;
+    if (remember) store.set(KEY_PIXDEPTH, on ? '1' : '0');
   }
 
   function refreshCustom() {
@@ -353,6 +363,7 @@ const m2hleShader = (() => {
       else status(loadedName + ' is loaded.');
     }
     setArcade(arcade, false);
+    setPixelDepth(store.get(KEY_PIXDEPTH) === '1', false);
     setMode(mode === MODE_CUSTOM && !loadedName ? MODE_OFF : mode, false);
   }
 
@@ -361,6 +372,7 @@ const m2hleShader = (() => {
   function init() {
     $('shader-mode').addEventListener('change', (e) => setMode(Number(e.target.value)));
     $('shader-arcade').addEventListener('change', (e) => { if (ready) setArcade(e.target.checked); });
+    $('shader-pixdepth').addEventListener('change', (e) => { if (ready) setPixelDepth(e.target.checked); });
     $('shader-files').addEventListener('click', () => $('shader-file-input').click());
     $('shader-folder').addEventListener('click', () => $('shader-folder-input').click());
     for (const id of ['shader-file-input', 'shader-folder-input']) {
@@ -386,5 +398,5 @@ const m2hleShader = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { onReady, setMode, setArcade };
+  return { onReady, setMode, setArcade, setPixelDepth };
 })();

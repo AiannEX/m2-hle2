@@ -88,7 +88,7 @@ the next game cheaper instead of being spent on a single ROM set.
 | Automation | In-process MCP bridge over TCP (`--mcp`) |
 | Recording | Capture mode (`--kiosk`): chrome-free window at a fixed capture size, parked off the desktop, run from a tray icon |
 | Streaming | Raw board video and audio on one socket and one clock (`--av-port`), and a plugin that paints over the picture (`--overlay`) |
-| Picture filters | The Arcade switch (a real board's tone curve, ghosting, noise and 4:3 shape; every build), and over it Lost Judgment's CRT scanlines, as YAMP ports them, or a libretro GLSL shader preset of your own (web and Linux builds): the Video menu, `--arcade`, `--crt`, `--shader`; the browser's Picture tab |
+| Picture filters | The Arcade switch (a real board's tone curve, ghosting, noise and 4:3 shape; every build), and over it Lost Judgment's CRT scanlines, as YAMP ports them, or a libretro GLSL shader preset of your own (web and Linux builds): the Video menu, `--arcade`, `--crt`, `--shader`; the browser's Picture tab. Depth per pixel (`--pixel-depth`, off by default) draws each pixel at its own depth instead of the board's one sort key a polygon |
 
 Game profiles live in [src/profiles/](src/profiles/): `sfight_console`, `sfight`, `fvipers`,
 `m2snake` (the web build carries the two Sonic the Fighters profiles only).
@@ -295,6 +295,15 @@ the ghost every edge trails to its right (+7%, then a ripple of 2-3% fading over
 capture's noise (0.5-1.5% of white, new every frame), and the picture shown 4:3, as the cabinet's
 monitor shows it, instead of with square pixels. Every build.
 
+**Depth per pixel** is another switch, off by default, and it is not the board (#668). The board
+sorts each polygon by one key, so where faces cross, the whole of one wins: in the attract
+intro the Tornado's wing hides the backs of Sonic's shoes, on the real board as here. With the
+switch each pixel is drawn at its own depth, so the shoes come in front of the wing. It works
+both ways: a part the board shows only through its sort is hidden too (the dark wedge at the
+wing's tip in the same shot lies behind the wing). On a GLES device (the handhelds) it costs
+frame rate, since the fill then writes its depth and the GPU's early depth test is lost. Every
+build: the Video menu, `--pixel-depth`, the libretro core's Depth option, the browser's Picture tab.
+
 The filters:
 
 - **CRT (Lost Judgment's)** -- the CRT filter Lost Judgment's arcade cabinets put on Sonic the
@@ -313,9 +322,10 @@ m2hle --rom sfight.zip --arcade                         # the real board's pictu
 m2hle --rom sfight.zip --arcade --crt                   # the board's picture, the CRT over it
 m2hle --rom sfight.zip --shader crt/crt-geom.glslp      # a libretro preset (GL builds)
 m2hle --rom sfight.zip --shader-scale 2                 # the picture the filter reads: 1-4 x 496x384
+m2hle --rom sfight.zip --pixel-depth                    # depth per pixel, not the board (--no-pixel-depth: off)
 ```
 
-On the desktop the **Video** menu switches the Arcade, picks the filter, loads a preset, sets its parameters and is
+On the desktop the **Video** menu switches the Arcade and depth per pixel, picks the filter, loads a preset, sets its parameters and is
 remembered in `video.cfg` beside the netplay settings (`%APPDATA%\m2hle2`, `~/.config/m2hle2`);
 the command line applies over it for one run. In the browser it is the menu's **Picture** tab:
 choose a preset's files or a whole folder, and only the files the preset uses are kept (in the

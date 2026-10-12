@@ -385,6 +385,32 @@ static int   g_geo3d_flat_list   = 0;   /* set while game_render_draw_geo_list d
 static float g_geo3d_flat_prev_z = 1.0e10f;
 static float g_geo3d_emit_flat   = -1.0f;   /* this face's depth in its window's slice, or < 0 */
 
+/* The z-sort mode in force for the object being drawn (the display list's
+ * command 08, captured_model_t.zadjust); set by the draw loop like g_geo3d_mode. */
+static uint32_t g_geo3d_zadjust = 0;
+
+/* Per-pixel depth, an option and not the board (issue #304). The board gives a
+ * polygon one key, so a large face that starts near the eye covers what stands
+ * on it: in the attract intro the Tornado's wing hides the backs of Sonic's
+ * shoes, on the real board and in MAME alike. With this on, a game frame's
+ * face takes the board's key at every pixel instead (the fill shader runs
+ * float_to_zval on the pixel's own z), and a tie still goes to the later
+ * polygon, so a decal or a shadow lying on its surface is settled as before.
+ * It works both ways: a part the board shows only through its sort goes too
+ * (the dark wedge at the wing's tip in the same shot is the Tornado's own part,
+ * 2.6 units behind its red wing).
+ * The face carries its z_adjust exponent: zl = -(GEO3D_PIXEL_ZL + exponent).
+ * Key 0 and 0xFFFF keep the face's one key: the board's "at the eye" and
+ * "behind everything" are choices, not depths. */
+#define GEO3D_PIXEL_ZL 3.0f
+static int   g_geo3d_pixel_depth = 0;
+static int   g_geo3d_pixel_list  = 0;   /* g_geo3d_pixel_depth as this frame's draw took it */
+
+static inline bool geo3d_pixel_face(float flat) {
+    const float key = flat * 65536.0f;
+    return g_geo3d_pixel_list && key > 1.0f && key < 65535.0f;
+}
+
 /* Faces that cannot reach the window are not emitted (game_render_draw_geo_list
  * sets the planes per run; $M2HLE_VIEW_CULL=0 turns it off for an A/B). The
  * planes are the run's projection rows taken into eye space: the window's four
@@ -641,6 +667,11 @@ static inline void geo3d_emit_tri_uv(float x0, float y0, float z0, float u0, flo
     T->tx=tx; T->ty=ty; T->tw=tw; T->th=th;
     T->lb=lb; T->pl=pl; T->fl=fl;
     T->texlod = g_geo3d_emit_texlod;
+    if (g_geo3d_emit_flat >= 0.0f && geo3d_pixel_face(g_geo3d_emit_flat)) {
+        T->zs0 = T->zs1 = T->zs2 = GEO3D_ZSORT_NONE;
+        T->zl  = -(GEO3D_PIXEL_ZL + (float)((g_geo3d_zadjust >> 23) & 0xffu));
+        return;
+    }
     if (g_geo3d_emit_flat >= 0.0f) {
         T->zs0 = T->zs1 = T->zs2 = GEO3D_ZSORT_NONE;
         T->zl  = -(1.0f + g_geo3d_emit_flat);
@@ -2674,10 +2705,6 @@ done:
     free(scratch);
     free(L); free(ord); free(ordered); free(E.bottom); free(E.top);
 }
-
-/* The z-sort mode in force for the object being drawn (the display list's
- * command 08, captured_model_t.zadjust); set by the draw loop like g_geo3d_mode. */
-static uint32_t g_geo3d_zadjust = 0;
 
 /* The board's sort key for a polygon depth (board z, positive into the screen):
  * MAME's float_to_zval, z_adjust and all. The exponent is taken relative to

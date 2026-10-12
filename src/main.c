@@ -83,6 +83,7 @@ static int  g_mcp_enable = 0;      /* --mcp: start the TCP debug server */
  * Video menu's filter and Arcade for this run, over what video.cfg remembers (shader_window.h). */
 static int  g_shader_arg = -1;    /* -1 as remembered, else a post_shader_mode_t */
 static int  g_arcade_arg = -1;    /* -1 as remembered, else 0 or 1 */
+static int  g_pixdepth_arg = -1;  /* --pixel-depth / --no-pixel-depth, the same */
 static char g_shader_preset[512] = {0};
 static int  g_shader_scale = -1;
 static int  g_mcp_port   = 7172;   /* --mcp-port N */
@@ -775,6 +776,7 @@ static void init_renderer(void) {
         LOG_WARN("--shader %s: %s", g_shader_preset, post_shader_error());
     if (g_shader_arg >= 0) post_shader_set_mode((post_shader_mode_t)g_shader_arg);
     if (g_arcade_arg >= 0) post_shader_set_arcade(g_arcade_arg);
+    if (g_pixdepth_arg >= 0) g_geo3d_pixel_depth = g_pixdepth_arg;
     if (g_shader_scale >= 0) post_shader_set_input_scale(g_shader_scale);
     geo3d_init(&state.geo3d);
     g_geo3d_state = &state.geo3d;
@@ -1831,6 +1833,10 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             g_arcade_arg = 1;
         } else if (strcmp(argv[i], "--no-arcade") == 0) {
             g_arcade_arg = 0;
+        } else if (strcmp(argv[i], "--pixel-depth") == 0) {
+            g_pixdepth_arg = g_geo3d_pixel_depth = 1;
+        } else if (strcmp(argv[i], "--no-pixel-depth") == 0) {
+            g_pixdepth_arg = g_geo3d_pixel_depth = 0;
         } else if (strcmp(argv[i], "--no-shader") == 0) {
             g_shader_arg = POST_SHADER_OFF;
         } else if (strcmp(argv[i], "--shader") == 0 && i + 1 < argc) {

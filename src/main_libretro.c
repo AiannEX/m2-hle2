@@ -204,6 +204,13 @@ static struct retro_core_option_v2_definition option_defs[] = {
       { { "native", "Native (496x384)" }, { "double", "Double (992x768)" }, { "triple", "Triple (1488x1152)" },
         { "quadruple", "Quadruple (1984x1536)" }, { "fullscreen", "Full screen" }, { NULL, NULL } },
       LR_DEFAULT_RES },
+    { "m2hle_depth", "Depth", NULL,
+      "Board: each polygon is sorted by one depth, as the board does, so a large polygon that starts near the camera "
+      "covers what stands on it (the Tornado's wing hides the backs of Sonic's shoes in the attract intro, on the "
+      "real board too). Per pixel: every pixel by its own depth. On GLES this costs the GPU's early depth test.",
+      NULL, "video",
+      { { "board", "Board" }, { "pixel", "Per pixel" }, { NULL, NULL } },
+      "board" },
     { "m2hle_stf_version", "Sonic the Fighters version", NULL,
       "Console: the game as Sega's console release runs it, with Honey, Metal Sonic and Robotnik selectable "
       "(Start on Amy, Sonic or Bean at character select). Arcade: the arcade board as it shipped. Each has its own "
@@ -326,6 +333,7 @@ static void lr_read_live_options(void) {
         opt.net_delay = d < 1 ? 1 : d > 8 ? 8 : d;
         g_ps3ui_app.default_delay = opt.net_delay;
     }
+    if ((v = lr_var("m2hle_depth")))      g_geo3d_pixel_depth = !strcmp(v, "pixel");
     if ((v = lr_var("m2hle_draw_rate")))  opt.draw_every = strcmp(v, "30") ? 1 : 2;
     if ((v = lr_var("m2hle_sound_thread"))) g_sound_thread_want = strcmp(v, "disabled") != 0;   /* from the next slice */
     if ((v = lr_var("m2hle_heat_guard"))) {
@@ -383,6 +391,7 @@ static void lr_set_options(void) {
         { "m2hle_gems_i960",  "Gems C: main CPU functions; disabled|enabled" },
         { "m2hle_gems_cop",   "Gems C: coprocessor; disabled|enabled" },
         { "m2hle_sound_thread", "Sound board on its own core; enabled|disabled" },
+        { "m2hle_depth",      "Depth; board|pixel" },
         { "m2hle_draw_rate",  "Draw rate; 60|30" },
         { "m2hle_heat_guard", "Heat guard; " LR_DEFAULT_HEAT "|off|80|85|90" },
         { "m2hle_online",     "Online play; retroarch|rpcn|ggpo" },

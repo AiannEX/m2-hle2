@@ -487,6 +487,12 @@
         A real board's picture: its tone, ghosting and noise, shown 4:3</label>
       <p class="fine left">Measured from a real Model 2B board's video. It goes on first; the filter below,
         if any, goes over it.</p>
+      <h3 class="shader-h">Depth</h3>
+      <label class="pad-check picture-arcade"><input id="shader-pixdepth" type="checkbox">
+        Sort every pixel by its own depth</label>
+      <p class="fine left">The board sorts each polygon by one depth, so a large polygon that starts near the
+        camera covers what stands on it: the Tornado's wing hides the backs of Sonic's shoes in the attract
+        intro, on the real board too. Off is the board.</p>
       <h3 class="shader-h">Filter</h3>
       <label class="picture-filter">
         <select id="shader-mode" class="tool" aria-label="Filter">
