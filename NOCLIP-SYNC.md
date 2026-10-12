@@ -201,6 +201,18 @@ Without the per-mesh reset, the split table fills and its probe never ends.
 Two things are left out of the hash:
 
 - **The normal `emitTri` stores.** It is the ROM normal normalised, or a cross product when the ROM normal is too short (|n|₁ ≤ 0.5). It comes out of double arithmetic in noclip. For hotd it is a plane normal (`lighting.planeNormals`), which is lighting, not decoding.
-- **Face-flag bit 128** (bit 17 or that short normal). Bit 17 itself is hashed.
+- **Face-flag bit 128.** It is a cull rule over values the hash already holds, not a further read; see below.
+
+**Face-flag bit 128** (Pinboard #676). `decodeModel` does store it on every triangle (`flags`, js/model.js line 525 at aefb324): `((att >>> 17) & 1) || !faceN`. `faceN` is "this face has a normal": the ROM normal with |n|₁ > 0.5, or, in a game with `lighting.planeNormals` (hotd), also a non-zero plane of A, B and C. Its only reader is the viewer's `boardDrawsFace`, which skips the facing test when the bit is set. So it is render-side. It takes nothing from the ROM that the triangle hash does not already cover: bit 17, the ROM normal, A and B (the face's first triangle's first two corners) and C (the facing point). A probe on the same export of master recomputed the bit from those hashed values for every triangle and matched noclip's `flags` on all of them:
+
+| set | triangles | bit 128 set | of those, not from bit 17 | mismatches |
+|---|---|---|---|---|
+| vcop | 100826 | 13594 | 0 | 0 |
+| daytona | 299707 | 44618 | 0 | 0 |
+| hotd | 664370 | 182983 | 715 | 0 |
+
+In vcop and daytona bit 128 is bit 17 on every triangle: no ROM normal there is short. hotd's 715 others have a zero ROM normal and a degenerate plane. The bit is therefore not added to the hash, and m2-hle2 gets no field for it.
+
+One difference, recorded and not changed: when hotd's plane is degenerate, noclip falls back to the ROM normal. MAME's `geo_parse_nn_ns` does not: `normalize_vector` leaves the zero cross product as it is, so `dotp` is 0 and the face counts as front. m2-hle2's `geo3d_board_normal` / `geo3d_board_cull` do the same as MAME. On the container's hotd that is 2257 triangles without bit 17 whose plane is degenerate and whose ROM normal is not zero. Those triangles are culled and lit by different rules on the two sides. It is lighting and culling, not decoding, and noclip is not changed here.
 
 noclip's z mode starts at 1, and m2-hle2's at 0 ("none yet", which `geo3d_sort_z` treats as 1). The census reports 0 as 1. In these three sets every mesh's first drawn face names a mode, so this never comes up.
