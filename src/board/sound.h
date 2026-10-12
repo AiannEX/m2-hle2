@@ -653,19 +653,29 @@ static inline bool sound_uart_rxrdy(const sound_state_t *ss) { return ss->scsp.m
 static void sound_run(uint32_t n);                      /* below */
 static inline bool sound_uart_make_room(bool for_game);  /* below; both callbacks need it */
 
+/* The i8251 sits at 0x9C0000 on a 2B board, its status a word on (umask32
+ * 0x000000ff), and at 0x01C80000 on a 2A, its status a halfword on (umask16
+ * 0x00ff; model2a_install names that region UART_2A). MAME model2.cpp. */
+static inline bool sound_uart_region(const mem_region_t *r) {
+    return r->base == MIDI_BASE || strcmp(r->name, "UART_2A") == 0;
+}
+static inline uint32_t sound_uart_status_off(const mem_region_t *r) {
+    return r->base == MIDI_BASE ? 4u : 2u;
+}
+
 static uint32_t sound_midi_read_cb(mem_region_t *r, uint32_t addr, int size) {
-    (void)r; (void)size;
+    (void)size;
     sound_settle();
     g_sound.read_count++;
-    if ((addr - MIDI_BASE) == 0) {           /* i8251 data: the received byte */
+    if ((addr - r->base) == 0) {             /* i8251 data: the received byte */
         scsp_t *s = &g_sound.scsp;
         if (s->mo_r == s->mo_w) return 0u;
         uint8_t b = s->mo[s->mo_r];
         s->mo_r = (uint8_t)((s->mo_r + 1u) & 31u);
         return b;
     }
-    /* i8251 status at +4: TxRDY (bit 0), RxRDY (bit 1) and TxEMPTY (bit 2) as the line stands */
-    if ((addr - MIDI_BASE) != 4) return 0u;
+    /* i8251 status: TxRDY (bit 0), RxRDY (bit 1) and TxEMPTY (bit 2) as the line stands */
+    if ((addr - r->base) != sound_uart_status_off(r)) return 0u;
     sound_uart_service(&g_sound, g_sound.m68k.cpu.cycles);
     /* A program that polls TxRDY instead of taking the interrupt (m2-pacman's
      * flush loop) would otherwise see the holding register full for the rest of
@@ -677,10 +687,10 @@ static uint32_t sound_midi_read_cb(mem_region_t *r, uint32_t addr, int size) {
 }
 
 static void sound_midi_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int size) {
-    (void)r; (void)size;
+    (void)size;
     sound_settle();
     if (sndcap_on()) sndcap_put(1, addr, (val & 0xFFu) | 0xFF0000u, 0);
-    if ((addr - MIDI_BASE) != 0) return;                   /* +4 is the UART's control register */
+    if ((addr - r->base) != 0) return;                     /* the other address is the control register */
     g_sound.write_count++;
     if (g_sound.midi_log_n < 64) {
         g_sound.midi_log[g_sound.midi_log_n]    = (uint8_t)val;
@@ -777,7 +787,7 @@ static inline void sound_attach(memory_bus_t *bus) {
     g_sound.detached = false;
     for (int i = 0; i < bus->region_count; i++) {
         mem_region_t *r = &bus->regions[i];
-        if (r->base == MIDI_BASE) {
+        if (sound_uart_region(r)) {
             r->read_cb  = sound_midi_read_cb;
             r->write_cb = sound_midi_write_cb;
             mem_regions_changed(bus);
@@ -803,7 +813,7 @@ static inline void sound_detach(memory_bus_t *bus) {
     g_sound.detached = true;
     for (int i = 0; i < bus->region_count; i++) {
         mem_region_t *r = &bus->regions[i];
-        if (r->base == MIDI_BASE) {
+        if (sound_uart_region(r)) {
             r->read_cb  = NULL;
             r->write_cb = NULL;
             mem_regions_changed(bus);
