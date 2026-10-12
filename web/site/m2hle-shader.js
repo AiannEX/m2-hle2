@@ -1,7 +1,8 @@
 /*
  * m2hle-shader.js -- the Picture tab: a filter over the game's 4:3 picture
  * (src/ui/post_shader.h). Either the built-in CRT (Lost Judgment's, as YAMP
- * ports it) or a libretro GLSL shader the player supplies.
+ * ports it), the Arcade (that CRT with a real board's tone curve, mode 3) or a
+ * libretro GLSL shader the player supplies.
  *
  * The emulator has no file system, so a custom shader arrives as files: the
  * player picks a preset with its shaders and textures (or a whole folder), this

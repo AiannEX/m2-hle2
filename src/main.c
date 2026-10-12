@@ -79,7 +79,7 @@ static int  g_browse_model = -1;   /* --model N: open single-model browser on N 
 static int  g_objview_on    = 0;   /* --objview: open the object viewer at boot */
 static int  g_objview_model = -1;  /* --objview N: and select model N */
 static int  g_mcp_enable = 0;      /* --mcp: start the TCP debug server */
-/* --crt / --shader <preset> / --no-shader / --shader-scale N: the Video menu's
+/* --crt / --arcade / --shader <preset> / --no-shader / --shader-scale N: the Video menu's
  * filter for this run, over what video.cfg remembers (shader_window.h). */
 static int  g_shader_arg = -1;    /* -1 as remembered, else a post_shader_mode_t */
 static char g_shader_preset[512] = {0};
@@ -1819,6 +1819,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             overlay_host_set_watch(true);
         } else if (strcmp(argv[i], "--crt") == 0) {
             g_shader_arg = POST_SHADER_CRT;
+        } else if (strcmp(argv[i], "--arcade") == 0) {
+            g_shader_arg = POST_SHADER_ARCADE;
         } else if (strcmp(argv[i], "--no-shader") == 0) {
             g_shader_arg = POST_SHADER_OFF;
         } else if (strcmp(argv[i], "--shader") == 0 && i + 1 < argc) {

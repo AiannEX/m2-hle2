@@ -29,6 +29,15 @@
  * below that the 384 scanlines alias into broken segments. It runs on every
  * backend: HLSL for D3D11, GLSL for GL and WebGL.
  *
+ * THE ARCADE is the same CRT over the owner's real Model 2B board's picture:
+ * before the scanline, each colour goes through the board's tone curve,
+ * c^POST_ARCADE_TONE. It was measured from the board's video, captured by VCS,
+ * against this emulator's picture of the same frames (the title on white and
+ * on black, the character grid; Pinboard #639): per channel, the board's level
+ * is k * emu^0.76 within 3 levels of 255, with no shift of hue or saturation
+ * (a fitted 3x3 colour matrix comes out diagonal). k, the capture's own level,
+ * is left out: white stays white.
+ *
  * A CUSTOM preset needs a GL backend (the web build and the Linux desktop); on
  * D3D11 post_shader_custom_supported() is false and loading one says why.
  */
@@ -47,7 +56,12 @@ typedef enum {
     POST_SHADER_OFF,
     POST_SHADER_CRT,      /* the built-in one */
     POST_SHADER_CUSTOM,   /* a libretro preset */
+    POST_SHADER_ARCADE,   /* the built-in CRT with the real board's tone curve */
 } post_shader_mode_t;
+
+/* The board's tone curve: the exponent on each 0..1 channel. */
+#define POST_ARCADE_TONE_GLSL "  c = pow(c, vec3(0.76));\n"
+#define POST_ARCADE_TONE_HLSL "  c = pow(c, float3(0.76, 0.76, 0.76));\n"
 
 /* The 1080-line floor below which the CRT is filtered large and scaled down. */
 #define POST_SHADER_CRT_MIN_LINES 1080
@@ -62,9 +76,9 @@ static struct {
     sg_view  src_color_att, src_depth_att, src_tex;
     int      src_w, src_h;
 
-    /* The built-in CRT. */
-    sg_shader   crt_shader;
-    sg_pipeline crt_screen, crt_offscreen;
+    /* The built-in CRT, [0], and the Arcade, [1]: post_builtin(). */
+    sg_shader   crt_shader[2];
+    sg_pipeline crt_screen[2], crt_offscreen[2];
     sg_sampler  crt_sampler;
     sg_image    up_color;
     sg_view     up_att, up_tex;
@@ -82,63 +96,73 @@ static struct {
 
 /* ---- The CRT's shaders ------------------------------------------------------ */
 
-static const char *post_crt_fs_glsl =
-    "#version 410\n"
-    "uniform sampler2D tex_smp;\n"
-    "in vec2 uv;\n"
-    "out vec4 frag_color;\n"
-    "const float kBayer[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,\n"
-    "                                   3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);\n"
-    /* p is picture space, top-left origin; a GL target keeps its bottom row first. */
-    "vec3 crt_tap(vec2 p) {\n"
-    "  vec3 c = texture(tex_smp, vec2(p.x, 1.0 - p.y)).rgb;\n"
-    "  int xi = int(fract(floor(p.x * 2048.0 + 0.5) * 0.25) * 4.0) & 3;\n"
-    "  int yi = int(fract(floor(p.y * 1536.0 + 0.5) * 0.25) * 4.0) & 3;\n"
-    "  float dither = kBayer[yi * 4 + xi] / 255.0;\n"
-    "  float py = fract(dither + p.y * 384.0);\n"
-    "  float m4 = min(py, 0.6); m4 *= m4; m4 *= m4;\n"
-    "  float scan = 1.0 - m4;\n"
-    "  float px = fract(p.x * 512.0);\n"
-    "  float m8 = min(px, 0.6); m8 *= m8; m8 *= m8; m8 *= m8;\n"
-    "  float grille = clamp(1.0 - m8, 0.0, 1.0);\n"
-    "  return c * (scan * grille);\n"
+/* TONE is a line of GLSL that may change c, the source colour, before the
+ * scanline and the grille: empty for the CRT, the board's curve for the Arcade. */
+#define POST_CRT_FS_GLSL(TONE) \
+    "#version 410\n" \
+    "uniform sampler2D tex_smp;\n" \
+    "in vec2 uv;\n" \
+    "out vec4 frag_color;\n" \
+    "const float kBayer[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,\n" \
+    "                                   3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);\n" \
+    /* p is picture space, top-left origin; a GL target keeps its bottom row first. */ \
+    "vec3 crt_tap(vec2 p) {\n" \
+    "  vec3 c = texture(tex_smp, vec2(p.x, 1.0 - p.y)).rgb;\n" \
+    TONE \
+    "  int xi = int(fract(floor(p.x * 2048.0 + 0.5) * 0.25) * 4.0) & 3;\n" \
+    "  int yi = int(fract(floor(p.y * 1536.0 + 0.5) * 0.25) * 4.0) & 3;\n" \
+    "  float dither = kBayer[yi * 4 + xi] / 255.0;\n" \
+    "  float py = fract(dither + p.y * 384.0);\n" \
+    "  float m4 = min(py, 0.6); m4 *= m4; m4 *= m4;\n" \
+    "  float scan = 1.0 - m4;\n" \
+    "  float px = fract(p.x * 512.0);\n" \
+    "  float m8 = min(px, 0.6); m8 *= m8; m8 *= m8; m8 *= m8;\n" \
+    "  float grille = clamp(1.0 - m8, 0.0, 1.0);\n" \
+    "  return c * (scan * grille);\n" \
+    "}\n" \
+    "void main() {\n" \
+    /* D3D's derivatives of this uv are positive; GL's y runs the other way. */ \
+    "  vec2 d = vec2(abs(dFdx(uv.x)), abs(dFdy(uv.y)));\n" \
+    "  vec3 s = crt_tap(uv) + crt_tap(uv + 0.25 * d) + crt_tap(uv + 0.5 * d) + crt_tap(uv + 0.75 * d);\n" \
+    "  frag_color = vec4(s * 0.25, 1.0);\n" \
     "}\n"
-    "void main() {\n"
-    /* D3D's derivatives of this uv are positive; GL's y runs the other way. */
-    "  vec2 d = vec2(abs(dFdx(uv.x)), abs(dFdy(uv.y)));\n"
-    "  vec3 s = crt_tap(uv) + crt_tap(uv + 0.25 * d) + crt_tap(uv + 0.5 * d) + crt_tap(uv + 0.75 * d);\n"
-    "  frag_color = vec4(s * 0.25, 1.0);\n"
-    "}\n";
 
-static const char *post_crt_fs_hlsl =
-    "Texture2D<float4> tex : register(t0);\n"
-    "SamplerState smp : register(s0);\n"
-    "struct fs_in { float4 pos : SV_Position; float2 uv : TEXCOORD0; };\n"
-    "static const float kBayer[16] = {\n"
-    "   0.0,  8.0,  2.0, 10.0,\n"
-    "  12.0,  4.0, 14.0,  6.0,\n"
-    "   3.0, 11.0,  1.0,  9.0,\n"
-    "  15.0,  7.0, 13.0,  5.0,\n"
-    "};\n"
-    "float3 crt_tap(float2 uv) {\n"
-    "  float3 c = tex.Sample(smp, uv).rgb;\n"
-    "  int xi = (int)(frac(round(uv.x * 2048.0) * 0.25) * 4.0);\n"
-    "  int yi = (int)(frac(round(uv.y * 1536.0) * 0.25) * 4.0);\n"
-    "  float dither = kBayer[yi * 4 + xi] / 255.0;\n"
-    "  float py = frac(dither + uv.y * 384.0);\n"
-    "  float m4 = min(py, 0.6); m4 *= m4; m4 *= m4;\n"
-    "  float scan = 1.0 - m4;\n"
-    "  float px = frac(uv.x * 512.0);\n"
-    "  float m8 = min(px, 0.6); m8 *= m8; m8 *= m8; m8 *= m8;\n"
-    "  float grille = saturate(1.0 - m8);\n"
-    "  return c * (scan * grille);\n"
+static const char *post_crt_fs_glsl    = POST_CRT_FS_GLSL("");
+static const char *post_arcade_fs_glsl = POST_CRT_FS_GLSL(POST_ARCADE_TONE_GLSL);
+
+#define POST_CRT_FS_HLSL(TONE) \
+    "Texture2D<float4> tex : register(t0);\n" \
+    "SamplerState smp : register(s0);\n" \
+    "struct fs_in { float4 pos : SV_Position; float2 uv : TEXCOORD0; };\n" \
+    "static const float kBayer[16] = {\n" \
+    "   0.0,  8.0,  2.0, 10.0,\n" \
+    "  12.0,  4.0, 14.0,  6.0,\n" \
+    "   3.0, 11.0,  1.0,  9.0,\n" \
+    "  15.0,  7.0, 13.0,  5.0,\n" \
+    "};\n" \
+    "float3 crt_tap(float2 uv) {\n" \
+    "  float3 c = tex.Sample(smp, uv).rgb;\n" \
+    TONE \
+    "  int xi = (int)(frac(round(uv.x * 2048.0) * 0.25) * 4.0);\n" \
+    "  int yi = (int)(frac(round(uv.y * 1536.0) * 0.25) * 4.0);\n" \
+    "  float dither = kBayer[yi * 4 + xi] / 255.0;\n" \
+    "  float py = frac(dither + uv.y * 384.0);\n" \
+    "  float m4 = min(py, 0.6); m4 *= m4; m4 *= m4;\n" \
+    "  float scan = 1.0 - m4;\n" \
+    "  float px = frac(uv.x * 512.0);\n" \
+    "  float m8 = min(px, 0.6); m8 *= m8; m8 *= m8; m8 *= m8;\n" \
+    "  float grille = saturate(1.0 - m8);\n" \
+    "  return c * (scan * grille);\n" \
+    "}\n" \
+    "float4 main(fs_in inp) : SV_Target0 {\n" \
+    "  float2 uvc = inp.uv;\n" \
+    "  float2 d = float2(abs(ddx(uvc.x)), abs(ddy(uvc.y)));\n" \
+    "  float3 s = crt_tap(uvc) + crt_tap(uvc + 0.25 * d) + crt_tap(uvc + 0.5 * d) + crt_tap(uvc + 0.75 * d);\n" \
+    "  return float4(s * 0.25, 1.0);\n" \
     "}\n"
-    "float4 main(fs_in inp) : SV_Target0 {\n"
-    "  float2 uvc = inp.uv;\n"
-    "  float2 d = float2(abs(ddx(uvc.x)), abs(ddy(uvc.y)));\n"
-    "  float3 s = crt_tap(uvc) + crt_tap(uvc + 0.25 * d) + crt_tap(uvc + 0.5 * d) + crt_tap(uvc + 0.75 * d);\n"
-    "  return float4(s * 0.25, 1.0);\n"
-    "}\n";
+
+static const char *post_crt_fs_hlsl    = POST_CRT_FS_HLSL("");
+static const char *post_arcade_fs_hlsl = POST_CRT_FS_HLSL(POST_ARCADE_TONE_HLSL);
 
 static inline sg_pixel_format post_color_format(void) {
     sg_pixel_format f = sg_query_desc().environment.defaults.color_format;
@@ -152,11 +176,8 @@ static inline sg_pixel_format post_depth_format(void) {
 
 /* ---- Set-up ---------------------------------------------------------------------- */
 
-/* After sg_setup and game_render_init. */
-static inline void post_shader_init(void) {
-    if (g_post.init) return;
-    const sg_backend backend = sg_query_backend();
-
+/* Built-in filter i (0 the CRT, 1 the Arcade): its shader and its two pipelines. */
+static inline void post_builtin_make(int i, sg_backend backend, const char *glsl, const char *hlsl) {
     sg_shader_desc d;
     memset(&d, 0, sizeof d);
     d.attrs[0].hlsl_sem_name  = "POSITION";
@@ -176,34 +197,42 @@ static inline void post_shader_init(void) {
     d.texture_sampler_pairs[0].view_slot    = 0;
     d.texture_sampler_pairs[0].sampler_slot = 0;
     d.texture_sampler_pairs[0].glsl_name    = "tex_smp";
-    d.label = "post-crt-shader";
+    d.label = i ? "post-arcade-shader" : "post-crt-shader";
     if (backend == SG_BACKEND_GLCORE || backend == SG_BACKEND_GLES3) {
         d.vertex_func.source   = game_render_glsl(backend, game_render_tile_vs_glsl, 0);
-        d.fragment_func.source = game_render_glsl(backend, post_crt_fs_glsl, 1);
+        d.fragment_func.source = game_render_glsl(backend, glsl, 1);
     } else if (backend == SG_BACKEND_D3D11) {
         d.vertex_func.source         = game_render_tile_vs_hlsl;
         d.vertex_func.d3d11_target   = "vs_4_0";
-        d.fragment_func.source       = post_crt_fs_hlsl;
+        d.fragment_func.source       = hlsl;
         d.fragment_func.d3d11_target = "ps_4_0";
     }
-    g_post.crt_shader = sg_make_shader(&d);
+    g_post.crt_shader[i] = sg_make_shader(&d);
 
     sg_pipeline_desc p;
     memset(&p, 0, sizeof p);
-    p.shader                   = g_post.crt_shader;
+    p.shader                   = g_post.crt_shader[i];
     p.primitive_type           = SG_PRIMITIVETYPE_TRIANGLES;
     p.layout.attrs[0].format   = SG_VERTEXFORMAT_FLOAT2;
     p.layout.attrs[0].offset   = offsetof(game_render_quad_vertex_t, x);
     p.layout.attrs[1].format   = SG_VERTEXFORMAT_FLOAT2;
     p.layout.attrs[1].offset   = offsetof(game_render_quad_vertex_t, u);
     p.layout.buffers[0].stride = sizeof(game_render_quad_vertex_t);
-    p.label = "post-crt-screen";
-    g_post.crt_screen = sg_make_pipeline(&p);
+    p.label = i ? "post-arcade-screen" : "post-crt-screen";
+    g_post.crt_screen[i] = sg_make_pipeline(&p);
     p.colors[0].pixel_format = post_color_format();
     p.depth.pixel_format     = SG_PIXELFORMAT_NONE;
     p.sample_count           = 1;
-    p.label = "post-crt-offscreen";
-    g_post.crt_offscreen = sg_make_pipeline(&p);
+    p.label = i ? "post-arcade-offscreen" : "post-crt-offscreen";
+    g_post.crt_offscreen[i] = sg_make_pipeline(&p);
+}
+
+/* After sg_setup and game_render_init. */
+static inline void post_shader_init(void) {
+    if (g_post.init) return;
+    const sg_backend backend = sg_query_backend();
+    post_builtin_make(0, backend, post_crt_fs_glsl, post_crt_fs_hlsl);
+    post_builtin_make(1, backend, post_arcade_fs_glsl, post_arcade_fs_hlsl);
 
     /* LJ's own filtering: MIN_MAG_MIP_LINEAR, clamp. */
     g_post.crt_sampler = sg_make_sampler(&(sg_sampler_desc){
@@ -243,9 +272,11 @@ static inline void post_shader_shutdown(void) {
     post_free_source();
     post_free_up();
     sg_destroy_sampler(g_post.crt_sampler);
-    sg_destroy_pipeline(g_post.crt_offscreen);
-    sg_destroy_pipeline(g_post.crt_screen);
-    sg_destroy_shader(g_post.crt_shader);
+    for (int i = 0; i < 2; i++) {
+        sg_destroy_pipeline(g_post.crt_offscreen[i]);
+        sg_destroy_pipeline(g_post.crt_screen[i]);
+        sg_destroy_shader(g_post.crt_shader[i]);
+    }
     g_post.init = false;
 }
 
@@ -268,9 +299,14 @@ static inline const char *post_shader_custom_path(void)      { return g_post.cus
 static inline void post_shader_set_input_scale(int n)        { g_post.input_scale = n < 0 ? 0 : n > 4 ? 4 : n; }
 static inline int  post_shader_input_scale(void)             { return g_post.input_scale; }
 
+/* The CRT or the Arcade: the built-in filters, which differ only in their tone. */
+static inline bool post_builtin(void) {
+    return g_post.mode == POST_SHADER_CRT || g_post.mode == POST_SHADER_ARCADE;
+}
+
 static inline bool post_shader_active(void) {
     if (!g_post.init) return false;
-    if (g_post.mode == POST_SHADER_CRT) return true;
+    if (post_builtin()) return true;
     return g_post.mode == POST_SHADER_CUSTOM && g_post.custom_loaded && post_shader_custom_supported();
 }
 
@@ -349,7 +385,7 @@ static inline bool post_shader_set_param(const char *name, float v) {
 static inline void post_shader_source_size(int native_w, int native_h, int rect_w, int rect_h, int *sw, int *sh) {
     int n = g_post.input_scale;
     if (n > 0) { *sw = native_w * n; *sh = native_h * n; }
-    else if (g_post.mode == POST_SHADER_CRT) { *sw = rect_w; *sh = rect_h; }
+    else if (post_builtin()) { *sw = rect_w; *sh = rect_h; }
     else { *sw = native_w; *sh = native_h; }
     if (*sw < 1) *sw = 1;
     if (*sh < 1) *sh = 1;
@@ -385,8 +421,8 @@ static inline void post_shader_end_source(void) {
     g_post.source_drawn = true;
 }
 
-static inline void post_crt_draw(sg_pipeline pip) {
-    sg_apply_pipeline(pip);
+static inline void post_crt_draw(const sg_pipeline pip[2]) {
+    sg_apply_pipeline(pip[g_post.mode == POST_SHADER_ARCADE]);
     sg_apply_bindings(&(sg_bindings){
         .vertex_buffers[0] = g_game_render.quad_vbuf,
         .views[0]          = g_post.src_tex,
@@ -400,7 +436,7 @@ static inline void post_crt_draw(sg_pipeline pip) {
 static inline void post_shader_prepare(int rect_w, int rect_h) {
     g_post.up_used = false;
     if (!g_post.source_drawn || rect_w <= 0 || rect_h <= 0) return;
-    if (g_post.mode == POST_SHADER_CRT) {
+    if (post_builtin()) {
         if (rect_h >= POST_SHADER_CRT_MIN_LINES) return;   /* straight to the screen */
         const float up = (float)POST_SHADER_CRT_MIN_LINES / (float)rect_h;
         int uw = (int)((float)rect_w * up + 0.5f), uh = POST_SHADER_CRT_MIN_LINES;
@@ -437,7 +473,7 @@ static inline void post_shader_draw(int ox, int oy, int w, int h, int fb_w, int 
     (void)fb_w;
     if (!g_post.source_drawn || w <= 0 || h <= 0) return;
     g_post.source_drawn = false;
-    if (g_post.mode == POST_SHADER_CRT) {
+    if (post_builtin()) {
         if (g_post.up_used) {
             game_render_draw_target(g_post.up_tex, true, ox, oy, w, h);
         } else {
