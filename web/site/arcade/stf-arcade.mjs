@@ -149,7 +149,8 @@ async function joinBoard() {
   const r = await fetch(`${API}/api/board?game=${GAME.id}`,
     { signal: AbortSignal.timeout(5000) });   // never hold the game up long
   if (!r.ok) throw new Error('board: ' + r.status);
-  const { hex } = await r.json();
+  const { set, hex } = await r.json();
+  if (set !== GAME.id) throw new Error('board: ' + set);   // an arcade that knows no ?game=
   const mine = localStorage.getItem(NVRAM_KEY);
   if (mine !== null && localStorage.getItem(LOCAL_KEY) === null) localStorage.setItem(LOCAL_KEY, mine);
   localStorage.setItem(NVRAM_KEY, hex);
