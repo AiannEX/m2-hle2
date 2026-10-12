@@ -183,6 +183,17 @@ static float g_web_audio_chunk[WEB_AUDIO_CHUNK_FRAMES * 2];
 /* What load_active_profile does in main.c once the ROM files are read, and what
  * netplay's cold boot at the barrier repeats: install, then everything mem_init
  * does not reach. Called with no slice in progress (there is one thread). */
+/* The WebGL context's GPU, unmasked where the browser allows it, into out. */
+EM_JS(void, web_gpu_renderer, (char *out, int cap), {
+    let s = '';
+    try {
+        const gl = typeof GLctx !== 'undefined' ? GLctx : null;
+        const dbg = gl && gl.getExtension('WEBGL_debug_renderer_info');
+        if (gl) s = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+    } catch (e) {}
+    stringToUTF8(s, out, cap);
+});
+
 static void web_install_board(void) {
     g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
     irqt_reset();
@@ -590,6 +601,10 @@ static void init(void) {
         .environment = sglue_environment(),
         .logger.func = slog_func,
     });
+    char gpu[256];
+    web_gpu_renderer(gpu, (int)sizeof gpu);
+    g_game_render_vertex_depth = game_render_vertex_depth_exact(gpu);
+    LOG_INFO("web: sort key %s", g_game_render_vertex_depth ? "as vertex z" : "by gl_FragDepth");
     game_render_init();
     post_shader_init();
     video_init(&state.video);
