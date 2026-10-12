@@ -187,7 +187,7 @@ typedef void (*game_match_info_fn)(struct memory_bus *bus, game_match_info_t *ou
  * .m2replay; sfight_native.h has STF's). Each part is a block of the game's RAM
  * as the game itself wrote or would write it, named so the profile knows where
  * it goes back. */
-#define GAME_NATIVE_PARTS_MAX 8
+#define GAME_NATIVE_PARTS_MAX 12
 typedef struct {
     const char    *name;         /* "key_bank.bin": the file in the replay */
     uint32_t       addr;         /* where the game keeps it */
@@ -207,6 +207,14 @@ typedef bool (*game_native_take_fn)(game_native_round_t *out);
 /* Put a round's parts back where the game reads them (out->json unused). NULL
  * or why not. */
 typedef const char *(*game_native_put_fn)(struct memory_bus *bus, const game_native_round_t *in);
+/* Play rounds back with the game's own replay (Pinboard #617): from the next
+ * attract replay on, the board plays rounds[0..n-1] one after another, as
+ * g_native_play (hle_hooks.h) reports. The rounds stay the caller's until it
+ * stops the play (n = 0). NULL or why not. */
+typedef const char *(*game_native_play_fn)(const game_native_round_t *rounds, int n);
+/* Is a player's game on the board (not attract, not the test menu)? A local
+ * session is recorded while it is. */
+typedef bool (*game_in_play_fn)(struct memory_bus *bus);
 
 /* ---- Profile ------------------------------------------------------------- */
 
@@ -241,6 +249,8 @@ typedef struct game_profile {
     /* Rounds in the game's own replay formats, and the way back in. NULL: none. */
     game_native_take_fn native_take;
     game_native_put_fn  native_put;
+    game_native_play_fn native_play;
+    game_in_play_fn     in_play;
 } game_profile_t;
 
 /* ---- Registry ------------------------------------------------------------ */

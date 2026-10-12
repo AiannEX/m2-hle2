@@ -2723,21 +2723,42 @@ static void mcp_cmd_follow_lead(const char *req, char *resp, int cap) {
 }
 
 /*
- * {"cmd":"replay", ...} -- recorded online matches (core/replay.h, Pinboard #572).
- * "record":0|1 turns recording on or off ("dir" sets the folder); "open":PATH
+ * {"cmd":"replay", ...} -- recorded matches (core/replay.h, Pinboard #572, #617).
+ * "record":0|1 turns recording on or off ("dir" sets the folder), "format":
+ * "native"|"inputs" picks what a recording saves, "view":"native"|"inputs"|"auto"
+ * which way the next "play" plays it; "open":PATH
  * opens a replay file and answers its label in "info"; "play":1 plays it from
  * the start, "stop":1 gives the board back; "seek":FRAME, "fast":0|1.
  * "native":N puts round N of the open replay into the board in the game's own
  * replay formats (replay_native_install, Pinboard #602). No arguments only reads.
  */
-static const char *mcp_replay_do(const char *req) {
-    emu_thread_ctx_t *ctx = g_mcp.emu;
+/* The replay command's settings: "dir", "record", "fast", "format", "view". */
+static const char *mcp_replay_settings(const char *req) {
     char path[512] = {0};
     uint32_t v = 0;
     if (mcp_json_get_str(req, "dir", path, sizeof path))
         snprintf(g_replay_rec.dir, sizeof g_replay_rec.dir, "%s", path);
     if (mcp_json_get_u32(req, "record", &v)) g_replay_rec.want = v != 0;
     if (mcp_json_get_u32(req, "fast", &v))   g_replay_play.fast = v != 0;
+    char word[16];
+    int pick;
+    if (mcp_json_get_str(req, "format", word, sizeof word)) {
+        if ((pick = replay_format_parse(word, false)) < 0) return "format is native or inputs";
+        g_replay_rec.format = pick;
+    }
+    if (mcp_json_get_str(req, "view", word, sizeof word)) {
+        if ((pick = replay_format_parse(word, true)) < 0) return "view is native, inputs or auto";
+        g_replay_play.view = pick;
+    }
+    return NULL;
+}
+
+static const char *mcp_replay_do(const char *req) {
+    emu_thread_ctx_t *ctx = g_mcp.emu;
+    const char *err = mcp_replay_settings(req);
+    if (err) return err;
+    char path[512] = {0};
+    uint32_t v = 0;
     if (mcp_json_get_str(req, "open", path, sizeof path)) return replay_open_file(path);
     if (mcp_json_get_u32(req, "stop", &v) && v) { replay_play_stop(); return NULL; }
     if (mcp_json_get_u32(req, "play", &v) && v) return ctx ? replay_play_start(ctx) : "no board";
@@ -2750,16 +2771,17 @@ static void mcp_cmd_replay(const char *req, char *resp, int cap) {
     int locked = g_mcp.emu && g_mcp.emu->thread_alive;
     if (locked) emu_mutex_lock(&g_mcp.emu->mutex);
     const char *err = mcp_replay_do(req);
-    char play[512], last[700], rerr[200], unplayable[200];
+    char play[800], last[700], rerr[200], unplayable[200];
     replay_play_status(play, sizeof play);
     json_escape(last, sizeof last, g_replay_rec.last);
     json_escape(rerr, sizeof rerr, g_replay_rec.error);
     json_escape(unplayable, sizeof unplayable, g_replay_play.unplayable);
     snprintf(resp, (size_t)cap,
-             "{\"ok\":%s%s%s%s,\"record\":%d,\"recording\":%d,\"saved\":%u,\"last\":\"%s\","
+             "{\"ok\":%s%s%s%s,\"record\":%d,\"format\":\"%s\",\"recording\":%d,\"saved\":%u,\"last\":\"%s\","
              "\"record_error\":\"%s\",\"playback\":%s,\"unplayable\":\"%s\",\"info\":%s}",
              err ? "false" : "true", err ? ",\"error\":\"" : "", err ? err : "", err ? "\"" : "",
-             g_replay_rec.want ? 1 : 0, replay_recording() ? 1 : 0, g_replay_rec.saved, last, rerr,
+             g_replay_rec.want ? 1 : 0, g_replay_rec.format == REPLAY_SAVE_INPUTS ? "inputs" : "native",
+             replay_recording() ? 1 : 0, g_replay_rec.saved, last, rerr,
              play, unplayable, g_replay_play.json[0] ? g_replay_play.json : "null");
     if (locked) emu_mutex_unlock(&g_mcp.emu->mutex);
 }

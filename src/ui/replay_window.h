@@ -57,13 +57,37 @@ static inline void replay_ui_open_dialog(ImGuiFileDialog *fd) {
     IGFD_OpenDialog(fd, "OpenReplay", "Open a replay", "Replays{.m2replay}", cfg);
 }
 
+/* What a recording saves, and which way a replay plays. The game's own format
+ * is the default for both; the inputs feed is the old exact record. */
+static inline void replay_ui_formats(void) {
+    if (igBeginMenu("Save as")) {
+        if (igMenuItemEx("The game's own replay", NULL, g_replay_rec.format == REPLAY_SAVE_NATIVE, true)) {
+            g_replay_rec.format = REPLAY_SAVE_NATIVE;
+            replay_settings_save();
+        }
+        if (igMenuItemEx("Inputs from power-on (exact)", NULL, g_replay_rec.format == REPLAY_SAVE_INPUTS, true)) {
+            g_replay_rec.format = REPLAY_SAVE_INPUTS;
+            replay_settings_save();
+        }
+        igEndMenu();
+    }
+    if (igBeginMenu("Play as")) {
+        if (igMenuItemEx("The game's own replay", NULL, g_replay_play.view != REPLAY_VIEW_INPUTS, true))
+            g_replay_play.view = REPLAY_VIEW_AUTO;
+        if (igMenuItemEx("Inputs, when the file has them", NULL, g_replay_play.view == REPLAY_VIEW_INPUTS, true))
+            g_replay_play.view = REPLAY_VIEW_INPUTS;
+        igEndMenu();
+    }
+}
+
 static inline void replay_ui_menu(emu_thread_ctx_t *ctx, ImGuiFileDialog *fd) {
     if (!igBeginMenu("Replays")) return;
     bool rec = g_replay_rec.want;
-    if (igMenuItemBoolPtr("Record online matches", NULL, &rec, true)) {
+    if (igMenuItemBoolPtr("Record matches", NULL, &rec, true)) {
         g_replay_rec.want = rec;
         replay_settings_save();
     }
+    replay_ui_formats();
     if (igMenuItem("Play a replay...")) replay_ui_open_dialog(fd);
     igMenuItemBoolPtr("Replay window", NULL, &g_replay_ui.show, true);
     if (replay_playing() && igMenuItem("Stop the replay")) {

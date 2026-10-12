@@ -40,6 +40,18 @@ static volatile int g_replay_stage_pin   = -1;
 static volatile int      g_match_replay = 0;
 static volatile uint32_t g_match_replay_frame = 0;
 
+/* A replay played with the game's own replay code (game_profile_t.native_play,
+ * Pinboard #617): which round of how many, and how far into it, in the frames
+ * the game's key player ran. Written by the profile's hooks; core/replay.h
+ * reads it for its status and seeks. `ended`: the last round has played. */
+typedef struct {
+    bool     on, ended;
+    int      round, rounds;
+    uint32_t frame, frames;     /* in this round */
+    uint32_t total, total_frames;
+} native_play_t;
+static native_play_t g_native_play;
+
 /* At a game frame's end: if armed and attract mode is at the profile's movie
  * step with the movie set up, write the movie state a natural boot has when the
  * replay starts and move on to the replay step. It runs where the game's frame

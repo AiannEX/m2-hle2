@@ -490,17 +490,23 @@
     </div>
   </div>
 
-  <!-- Replays of online matches (m2hle-replay.js, src/core/replay.h). -->
+  <!-- Replays of games and online matches (m2hle-replay.js, src/core/replay.h). -->
   <div id="pane-replay" class="pane" role="tabpanel" hidden>
     <div class="replay">
       <h3 class="shader-h">REPLAY</h3>
       <p class="np-row"><label><input id="replay-record" type="checkbox">
-        Save a replay of every online match</label>
+        Save a replay of every game and online match</label>
         <span id="replay-recording" class="status" hidden>&middot; recording this match</span></p>
       <p class="np-row"><label><input id="replay-download" type="checkbox">
         Download each one to this computer too</label></p>
-      <p class="fine left">Replays are kept in this browser and listed below. A replay is the match's
-        start and both players' buttons, compressed: a few hundred KB. It plays only on the same game.</p>
+      <p class="np-row"><label><input id="replay-as-inputs" type="checkbox">
+        Save the buttons from power-on instead of the game's own replay</label></p>
+      <p class="np-row"><label><input id="replay-view-inputs" type="checkbox">
+        Play a replay's buttons from power-on when it has them</label></p>
+      <p class="fine left">Replays are kept in this browser and listed below. A replay is each round in the
+        game's own replay format, the one attract plays, a few KB a round; with the buttons from
+        power-on it is the match's start and both players' buttons, a few hundred KB, and plays the
+        whole game. It plays only on the same game.</p>
       <p id="replay-rec-error" class="status" role="status"></p>
 
       <h3 class="shader-h">PLAYBACK</h3>

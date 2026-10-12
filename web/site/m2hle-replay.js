@@ -1,8 +1,9 @@
-/* Replays of online matches (core/replay.h, Pinboard #572).
+/* Replays of games and online matches (core/replay.h, Pinboard #572, #617).
  *
- * With "Save a replay of every online match" on, each match this board plays on
- * RPCN or GGPO ends as a .m2replay file (a zip: the board's state at the match's cold
- * boot, both players' inputs, and replay.json, its label). The board leaves it in
+ * With "Save a replay of every game and online match" on, each game played here and
+ * each match this board plays on RPCN or GGPO ends as a .m2replay file (a zip: every
+ * round in STF's own replay format, or with "Save the buttons" the board's state at
+ * the start and both players' inputs; and replay.json, its label). The board leaves it in
  * a slot; this script takes it, keeps it in the browser (IndexedDB) and, if asked,
  * downloads it too. PLAYBACK opens a file from the computer, or one kept here,
  * shows its label and asks before it plays: a replay takes the board over until
@@ -282,6 +283,14 @@ function replayWire() {
   $r('replay-download').addEventListener('change', (e) => {
     try { localStorage.setItem('m2hle.replayDownload', e.target.checked ? '1' : '0'); } catch (x) { /* private mode */ }
   });
+  $r('replay-as-inputs').addEventListener('change', (e) => {
+    replay.M._web_replay_set_format(e.target.checked ? 1 : 0);
+    try { localStorage.setItem('m2hle.replayFormat', e.target.checked ? 'inputs' : 'native'); } catch (x) { /* private mode */ }
+  });
+  $r('replay-view-inputs').addEventListener('change', (e) => {
+    replay.M._web_replay_set_view(e.target.checked ? 1 : 0);
+    try { localStorage.setItem('m2hle.replayView', e.target.checked ? 'inputs' : 'native'); } catch (x) { /* private mode */ }
+  });
   $r('replay-playback').addEventListener('click', () => $r('replay-file').click());
   $r('replay-file').addEventListener('change', replayPick);
   $r('replay-play').addEventListener('click', replayPlay);
@@ -307,13 +316,21 @@ function replayWire() {
 }
 
 function replayLoadSettings() {
-  let rec = '0', dl = '0';
+  let rec = '0', dl = '0', fmt = 'native', view = 'native';
   try {
     rec = localStorage.getItem('m2hle.replayRecord') || '0';
     dl = localStorage.getItem('m2hle.replayDownload') || '0';
+    fmt = localStorage.getItem('m2hle.replayFormat') || 'native';
+    view = localStorage.getItem('m2hle.replayView') || 'native';
   } catch (e) { /* private mode */ }
   replay.M._web_replay_set_record(rec === '1' ? 1 : 0);
   $r('replay-download').checked = dl === '1';
+  $r('replay-as-inputs').checked = fmt === 'inputs';
+  $r('replay-view-inputs').checked = view === 'inputs';
+  if (replay.M._web_replay_set_format) {
+    replay.M._web_replay_set_format(fmt === 'inputs' ? 1 : 0);
+    replay.M._web_replay_set_view(view === 'inputs' ? 1 : 0);
+  }
 }
 
 const m2hleReplay = {
