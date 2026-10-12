@@ -2153,6 +2153,8 @@ typedef struct {
     uint32_t zmode;               /* the z-sort mode standing (1 before any) */
     vec3_t   zc[4];               /* the z-sort's four source corners */
     vec3_t   face_pt;             /* the facing point: C, or A without one */
+    vec3_t   face_a, face_b;      /* the face's A and B, the plane's other two */
+    uint32_t has_c;               /* the face has a C */
 } geo3d_reads_tri_t;
 
 typedef struct {
@@ -2181,6 +2183,7 @@ typedef struct {
     float    uvu[4], uvv[4];
     uint32_t at, zmode;
     vec3_t   normal, zc[4], face_pt;
+    bool     has_c;
 } geo3d_reads_face_t;
 
 static inline void geo3d_reads_tri(const geo3d_reads_face_t *f, int t, geo3d_reads_tri_t *x) {
@@ -2194,6 +2197,9 @@ static inline void geo3d_reads_tri(const geo3d_reads_face_t *f, int t, geo3d_rea
     x->zmode     = f->zmode;
     memcpy(x->zc, f->zc, sizeof x->zc);
     x->face_pt   = f->face_pt;
+    x->face_a    = f->P[0];
+    x->face_b    = f->P[1];
+    x->has_c     = f->has_c;
 }
 
 static inline void geo3d_reads_tris(geo3d_mesh_reads_t *r, const geo3d_reads_face_t *f) {
@@ -2254,6 +2260,7 @@ static inline void geo3d_reads_corners(geo3d_decode_walk_t *w, int fi, const int
     f->zmode = w->zmode ? w->zmode : 1u;   /* the explorer's walk starts at 1 */
     for (int k = 0; k < 4; k++) f->zc[k] = ia->sv[w->zsrc[k]];
     f->face_pt = has_c ? f->P[2] : f->P[0];
+    f->has_c = has_c;
     uint32_t quad = 0, cut = 0;
     if (!is_tri) {
         const uint32_t kA = ia->svk[c[0]], kB = ia->svk[c[1]], kC = ia->svk[c[2]], kD = ia->svk[c[3]];
@@ -2281,15 +2288,17 @@ static inline void geo3d_reads_face(geo3d_decode_walk_t *w, int i, geo3d_mesh_re
     r->faces++;
 }
 
-/* Model model_idx's reads into r (its buffers and caps set by the caller).
- * False when the model has no mesh in the polygon ROM; r->n_tris 0 is the
- * decode drawing nothing (decodeModel's null). */
+/* Model model_idx's reads into r (its buffers and caps set by the caller), or
+ * with md->obj_mesh set, a polygon-RAM object's (its texture addresses
+ * g_geo3d_obj_tha / g_geo3d_obj_tpa, as geo3d_decode_streams takes them;
+ * decodeModel's mesh argument). False when the model has no mesh in the
+ * polygon ROM; r->n_tris 0 is the decode drawing nothing (decodeModel's null). */
 static inline bool geo3d_mesh_reads(const geo3d_models_t *md, int model_idx, geo3d_mesh_reads_t *r) {
     static geo3d_ia_t ia;
     geo3d_decode_walk_t w = { .md = md, .model_idx = model_idx, .ia = &ia };
     r->records = r->faces = r->textured = r->n_reads = r->n_tris = r->n_hdrs = 0;
     r->palette_max = -1;
-    if (md->obj_mesh || !geo3d_decode_streams(&w)) return false;
+    if (!geo3d_decode_streams(&w)) return false;
     geo3d_ia_walk(&ia, w.polygons, w.polygons_size, w.mesh_offset, NULL);
     r->records = ia.n_qt;
     w.mat_rec = w.mat_word;

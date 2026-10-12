@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "constants.h"
 #include "vcop.h"
@@ -85,6 +86,19 @@ typedef struct {
      * normal, the z mode, the four z-source corners and the facing point,
      * floats as their bits (NaN 0x7fc00000). noclip master (aefb324). */
     uint32_t      tri_n, tri_fnv;
+    /* What decodeModel lights and culls each triangle by (its normals and
+     * flags arrays): whether the game takes the plane of A, B and C for the
+     * normal (js/games.js lighting.planeNormals), the triangles with bit 128,
+     * and FNV-1a, per mesh, over its index, then per triangle the emitted
+     * normal's three floats and bit 128, then the triangle count. noclip
+     * master (aefb324). */
+    uint32_t      plane, lit_b128, lit_fnv;
+    /* Where the board's rule (MAME geo_parse, geo3d_board_normal and
+     * geo3d_board_cull at an identity matrix) parts from it, as this test
+     * counts: triangles drawn from one side on one and both on the other,
+     * lit by a normal pointing elsewhere, by a zero normal, and by a ROM
+     * normal that is not unit length. */
+    uint32_t      cull_diff, light_dir, light_zero, light_len;
 } noclip_reads_t;
 
 /* What the test reads a profile with: its recipe, the layout its quirks must
@@ -102,19 +116,19 @@ static const prepared_case_t k_cases[] = {
         { { 0x50000, 0x0, 0x800004 }, { 0x50760, 0x3cc, 0x8009f1 }, { 0xc292a, 0x39240, 0x89c275 } },
         1234, 0, 0xab8c6c68u, { { 0, 0x10, 0x1841701 }, { 1, 0x27c4, 0x1841b01 }, { 1233, 0x2709d4, 0x9c1502 } },
         1234, 0, 61375, 57495, 57002, 0xae157b11u, 60141, 59615, 0x4add73cbu,
-        100826, 0x4a1dafe1u } },
+        100826, 0x4a1dafe1u, 0, 13594, 0xb34338bbu, 0, 0, 0, 0 } },
     { &daytona_profile, &daytona_recipe, MODEL_LAYOUT_DAYTONA,
       { 3190, 0xa7bff01du, 3190, 27, { 0, 1, 3189 },
         { { 0x17ecd0, 0x117080, 0x880004 }, { 0x17f13e, 0x11728c, 0x8805af }, { 0x85abc, 0x18510, 0x84881b } },
         3163, 0, 0xac46f303u, { { 0, 0x200010, 0x941501 }, { 1, 0x2016bc, 0x89141601 }, { 3189, 0x12206c, 0x41401 } },
         3163, 813, 203300, 163823, 138791, 0x5195b8e6u, 200136, 168923, 0x06c84e43u,
-        299707, 0xa00063c5u } },
+        299707, 0xa00063c5u, 0, 44618, 0xb84eb618u, 0, 0, 0, 0 } },
     { &hotd_profile, &hotd_recipe, MODEL_LAYOUT_1995,
       { 7477, 0xac1eb34fu, 7465, 0, { 0, 1, 7476 },
         { { 0x0, 0x6, 0x800000 }, { 0x0, 0x6, 0x800000 }, { 0x6c7ffa, 0x6c821a, 0xef296a } },
         7465, 0, 0xf2dfe35cu, { { 0, 0x0, 0x1000a02 }, { 1, 0x0, 0x1000a02 }, { 7476, 0x1bca5a8, 0x1000601 } },
         7465, 0, 466634, 378760, 367185, 0xdc922fa1u, 459169, 446049, 0xcd3e0d51u,
-        664370, 0xc855317au } },
+        664370, 0xc855317au, 1, 182983, 0x03eaf696u, 2263, 0, 10297, 0 } },
 };
 
 static uint32_t rd32(const uint8_t *b, size_t at) {
@@ -240,6 +254,7 @@ typedef struct {
     uint32_t n, null, records, faces, textured, fnv;
     uint32_t hdrs, hdr_textured, hdr_fnv;
     uint32_t tris, tri_fnv;
+    uint32_t b128, lit_fnv, cull_diff, light_dir, light_zero, light_len;
 } decode_totals_t;
 
 static uint32_t fnv_float(uint32_t h, float f) {
@@ -266,6 +281,74 @@ static void decode_mix_tris(decode_totals_t *d, uint32_t i, const geo3d_mesh_rea
     }
     d->tris += (uint32_t)r->n_tris;
     d->tri_fnv = fnv_word(h, (uint32_t)r->n_tris);
+}
+
+/* V8's Math.hypot (src/builtins/math.tq): scaled by the largest, Kahan-summed. */
+static double js_hypot3(double x, double y, double z) {
+    const double a[3] = { fabs(x), fabs(y), fabs(z) };
+    const double max = fmax(a[0], fmax(a[1], a[2]));
+    if (max == 0.0) return 0.0;
+    double sum = 0.0, comp = 0.0;
+    for (int i = 0; i < 3; i++) {
+        const double n = a[i] / max, summand = n * n - comp, pre = sum + summand;
+        comp = (pre - sum) - summand;
+        sum = pre;
+    }
+    return sqrt(sum) * max;
+}
+
+static void js_cross(const vec3_t *a, const vec3_t *b, const vec3_t *c, double n[3]) {
+    const double e1x = (double)b->x - a->x, e1y = (double)b->y - a->y, e1z = (double)b->z - a->z;
+    const double e2x = (double)c->x - a->x, e2y = (double)c->y - a->y, e2z = (double)c->z - a->z;
+    n[0] = e1y * e2z - e1z * e2y;
+    n[1] = e1z * e2x - e1x * e2z;
+    n[2] = e1x * e2y - e1y * e2x;
+}
+
+/* decodeModel's normal for a triangle and whether it sets bit 128: the ROM
+ * normal when its |x|+|y|+|z| is over 0.5, the plane of A, B and C instead
+ * where the game takes it and it is not degenerate, else the triangle's own
+ * edges; made unit in doubles and stored as floats (js/model.js emitTri). */
+static uint32_t noclip_lit(const geo3d_reads_tri_t *x, bool plane, float out[3]) {
+    double f[3] = { x->normal.x, x->normal.y, x->normal.z }, n[3];
+    bool face_n = fabs(f[0]) + fabs(f[1]) + fabs(f[2]) > 0.5;
+    if (plane && x->has_c) {
+        js_cross(&x->face_a, &x->face_b, &x->face_pt, n);
+        const double len = js_hypot3(n[0], n[1], n[2]);
+        if (len > 0) { for (int k = 0; k < 3; k++) f[k] = -n[k] / len; face_n = true; }
+    }
+    if (face_n) memcpy(n, f, sizeof n);
+    else js_cross(&x->p[0], &x->p[1], &x->p[2], n);
+    double nl = js_hypot3(n[0], n[1], n[2]);
+    if (nl == 0) nl = 1;
+    for (int k = 0; k < 3; k++) out[k] = (float)(n[k] / nl);
+    return (x->two_sided || !face_n) ? 1u : 0u;
+}
+
+/* The board's normal set against noclip's, as decoded_totals_t counts it. */
+static void board_lit(decode_totals_t *d, const geo3d_reads_tri_t *x, const float nc[3], uint32_t b128) {
+    static const float ident[12] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 };
+    const vec3_t n = geo3d_board_normal(ident, x->normal, x->has_c, x->face_a, x->face_b, x->face_pt);
+    const float len = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z);
+    const uint32_t both = (x->two_sided || len == 0.0f) ? 1u : 0u;
+    d->cull_diff += both != b128;
+    if (len == 0.0f) { d->light_zero++; return; }
+    if (fabsf(len - 1.0f) > 1e-3f) d->light_len++;
+    if ((n.x * nc[0] + n.y * nc[1] + n.z * nc[2]) / len < 0.9999f) d->light_dir++;
+}
+
+/* The lighting part (noclip_reads_t.lit_fnv), mixed as the node script does. */
+static void decode_mix_lit(decode_totals_t *d, uint32_t i, const geo3d_mesh_reads_t *r, bool plane) {
+    uint32_t h = fnv_word(d->lit_fnv, i);
+    for (int k = 0; k < r->n_tris && k < r->tris_cap; k++) {
+        float nc[3];
+        const uint32_t b128 = noclip_lit(&r->tri[k], plane, nc);
+        for (int c = 0; c < 3; c++) h = fnv_float(h, nc[c]);
+        h = fnv_word(h, b128);
+        d->b128 += b128;
+        board_lit(d, &r->tri[k], nc, b128);
+    }
+    d->lit_fnv = fnv_word(h, (uint32_t)r->n_tris);
 }
 
 /* The headers' part, as the node script mixes it (noclip_reads_t.hdr_fnv). */
@@ -305,6 +388,8 @@ static void decode_mix(decode_totals_t *d, uint32_t i, uint32_t off, const geo3d
 /* Each ROM-backed mesh decoded as geo3d_decode_model walks it (geo3d_mesh_reads)
  * must read what noclip's decodeModel reads and come to the same faces.
  * Polygon-RAM entries (Daytona's 2139-2165) have no ROM mesh and are skipped. */
+static void check_decode_totals(const char *id, const decode_totals_t *dt, const noclip_reads_t *n);
+
 static void check_noclip_decode(const char *id, const model_table_t *t, const game_quirks_t *q,
                                 const romset_t *rs, const noclip_reads_t *n) {
     enum { FACES = GEO3D_IA_MAX_IDX / 4, READS = FACES * 24, TRIS = FACES * 2 };
@@ -319,7 +404,9 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
     };
     geo3d_mesh_reads_t r = { .reads = reads, .reads_cap = READS, .tri_face = tris, .tri = tri, .tris_cap = TRIS,
                              .hdrs = hdrs, .hdrs_cap = FACES };
-    decode_totals_t d = { .fnv = 0x811c9dc5u, .hdr_fnv = 0x811c9dc5u, .tri_fnv = 0x811c9dc5u };
+    decode_totals_t d = { .fnv = 0x811c9dc5u, .hdr_fnv = 0x811c9dc5u, .tri_fnv = 0x811c9dc5u,
+                          .lit_fnv = 0x811c9dc5u };
+    g_geo3d_mode = n->plane ? 2u : 0u;
     int over = 0;
     model_entry_t e;
     uint32_t off;
@@ -332,8 +419,16 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
         decode_mix(&d, i, off, &r);
         decode_mix_headers(&d, i, &r);
         decode_mix_tris(&d, i, &r);
+        decode_mix_lit(&d, i, &r, n->plane);
     }
+    g_geo3d_mode = 0;
     CHECK(over == 0, "%s: every decode's reads fit the test's buffers", id);
+    check_decode_totals(id, &d, n);
+}
+
+/* check_noclip_decode's totals against noclip's. */
+static void check_decode_totals(const char *id, const decode_totals_t *dt, const noclip_reads_t *n) {
+    const decode_totals_t d = *dt;
     CHECK(d.n == n->dec_n && d.null == n->dec_null && d.records == n->dec_records,
           "%s: %u meshes decode, %u to nothing, over %u records (noclip: %u, %u, %u)",
           id, d.n, d.null, d.records, n->dec_n, n->dec_null, n->dec_records);
@@ -347,6 +442,14 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
     CHECK(d.tris == n->tri_n && d.tri_fnv == n->tri_fnv,
           "%s: %u triangles, corners, UVs, attributes, normals and z-sort FNV 0x%08X (noclip: %u, 0x%08X)",
           id, d.tris, d.tri_fnv, n->tri_n, n->tri_fnv);
+    CHECK(d.b128 == n->lit_b128 && d.lit_fnv == n->lit_fnv,
+          "%s: %u triangles with bit 128, emitted normals FNV 0x%08X (noclip: %u, 0x%08X)",
+          id, d.b128, d.lit_fnv, n->lit_b128, n->lit_fnv);
+    CHECK(d.cull_diff == n->cull_diff && d.light_dir == n->light_dir && d.light_zero == n->light_zero &&
+          d.light_len == n->light_len,
+          "%s: against the board's normal, %u triangles culled otherwise, %u lit from elsewhere, %u by a zero "
+          "normal, %u by a non-unit one (expected %u, %u, %u, %u)", id, d.cull_diff, d.light_dir, d.light_zero,
+          d.light_len, n->cull_diff, n->light_dir, n->light_zero, n->light_len);
 }
 
 /* Entries whose mesh pointer is set must resolve (model_mesh_resolve, noclip's

@@ -121,7 +121,7 @@ noclip reads an entry by stride and field (`readModelEntry`): the 1995 games (ST
 
 `prepared_test` holds the two to noclip's reads on the container's sets: the entry count, an FNV-1a over every entry's uv, mat and mesh words, three sample entries, and the meshes set and in RAM, all taken with node from noclip's `loadRomSet` + `readModelEntry`. Virtua Cop: 1234 entries, `0x2298d18d`; Daytona: 3190, `0xa7bff01d`; House of the Dead: 7477, `0xac1eb34f`.
 
-Daytona has 27 entries (2139-2165) whose pointer has bit 23 clear. On the board that is polygon RAM, which the game fills at run time (MAME `geo_object_data`), not the polygon ROM. noclip's `meshOffsetOf` decodes them into the ROM all the same, to 0xFE0000xx. m2-hle2 leaves them as RAM (`model_mesh_in_rom`); the test counts them apart and does not read them as ROM.
+Daytona has 27 entries (2139-2165) whose pointer has bit 23 clear. On the board that is polygon RAM, which the game fills at run time (MAME `geo_object_data`), not the polygon ROM. noclip's `meshOffsetOf` decodes them into the ROM all the same, to 0xFE0000xx. m2-hle2 leaves them as RAM (`model_mesh_in_rom`); the test counts them apart and does not read them as ROM. §6.8 decodes them from MAME's polygon RAM.
 
 ### 6.4 Following the mesh pointer (Pinboard #666)
 
@@ -153,7 +153,7 @@ One difference was found and fixed. noclip reads Virtua Cop's headers at address
 | daytona | 3163 | 813 | 203300 | 163823 | 138791 | 0x5195b8e6 |
 | hotd | 7465 | 0 | 466634 | 378760 | 367185 | 0xdc922fa1 |
 
-On vcop and daytona no header address is in texture RAM (bit 23), negative, or past the ROM, and no set's UV stream starts in texture RAM, so the board's texture-RAM path never comes into it. Daytona's 813 null meshes are ones whose faces are all lone edges or lack A or B; both sides decode them to nothing. The 27 polygon-RAM entries (2139-2165) have no ROM mesh and are skipped.
+On vcop and daytona no header address is in texture RAM (bit 23), negative, or past the ROM, and no set's UV stream starts in texture RAM, so the board's texture-RAM path never comes into it. Daytona's 813 null meshes are ones whose faces are all lone edges or lack A or B; both sides decode them to nothing. The 27 polygon-RAM entries (2139-2165) have no ROM mesh and are skipped here; §6.8 checks them against MAME's polygon RAM.
 
 ### 6.6 Decoded header fields (Pinboard #669)
 
@@ -201,6 +201,54 @@ Without the per-mesh reset, the split table fills and its probe never ends.
 Two things are left out of the hash:
 
 - **The normal `emitTri` stores.** It is the ROM normal normalised, or a cross product when the ROM normal is too short (|n|₁ ≤ 0.5). It comes out of double arithmetic in noclip. For hotd it is a plane normal (`lighting.planeNormals`), which is lighting, not decoding.
-- **Face-flag bit 128** (bit 17 or that short normal). Bit 17 itself is hashed.
+- **Face-flag bit 128.** It is a cull rule over values the hash already holds, not a further read; see below.
+
+**Face-flag bit 128** (Pinboard #676). `decodeModel` does store it on every triangle (`flags`, js/model.js line 525 at aefb324): `((att >>> 17) & 1) || !faceN`. `faceN` is "this face has a normal": the ROM normal with |n|₁ > 0.5, or, in a game with `lighting.planeNormals` (hotd), also a non-zero plane of A, B and C. Its only reader is the viewer's `boardDrawsFace`, which skips the facing test when the bit is set. So it is render-side. It takes nothing from the ROM that the triangle hash does not already cover: bit 17, the ROM normal, A and B (the face's first triangle's first two corners) and C (the facing point). A probe on the same export of master recomputed the bit from those hashed values for every triangle and matched noclip's `flags` on all of them:
+
+| set | triangles | bit 128 set | of those, not from bit 17 | mismatches |
+|---|---|---|---|---|
+| vcop | 100826 | 13594 | 0 | 0 |
+| daytona | 299707 | 44618 | 0 | 0 |
+| hotd | 664370 | 182983 | 715 | 0 |
+
+In vcop and daytona bit 128 is bit 17 on every triangle: no ROM normal there is short. hotd's 715 others have a zero ROM normal and a degenerate plane. The bit is therefore not added to the hash, and m2-hle2 gets no field for it.
+
+One difference, recorded and not changed: when hotd's plane is degenerate, noclip falls back to the ROM normal. MAME's `geo_parse_nn_ns` does not: `normalize_vector` leaves the zero cross product as it is, so `dotp` is 0 and the face counts as front. m2-hle2's `geo3d_board_normal` / `geo3d_board_cull` do the same as MAME. On the container's hotd that is 2257 triangles (2263 counting the board's float cross product, §6.8) without bit 17 whose plane is degenerate and whose ROM normal is not zero. Those triangles are culled and lit by different rules on the two sides. It is lighting and culling, not decoding, and noclip is not changed here.
 
 noclip's z mode starts at 1, and m2-hle2's at 0 ("none yet", which `geo3d_sort_z` treats as 1). The census reports 0 as 1. In these three sets every mesh's first drawn face names a mode, so this never comes up.
+
+**Face colours** (Pinboard #681). One field `decodeModel` returns is in none of the hashes above: `colors`, set in the haveMat block (js/model.js line 458 at aefb324) by `if (palette[matidx] >= 0) bgr555(palette[matidx], rgb)`. The header-field hash covers `matidx`, not the colour. `palette` is `facePalette(rom)` (js/romset.js line 281): 1024 entries, BGR555, -1 where it has no colour. Read from that source, the three sets are:
+
+- **daytona** (the `DAYTONA_REV_A` profile): 1007 words of the data ROM pair `epr-16724a.6` / `epr-16725a.7`, `mainData` 0x84F4EC (0x4F4EC into the pair), in entries 0–1006. Entries 1007–1023 are -1 (`paletteCount`). Every colour that can be stored is one ROM word.
+- **vcop**: 1024 words of the data ROM pair `mpr-17162.8` / `mpr-17163.9`, `mainData` 0x4C0000 (0xC0000 into the pair). `paletteFixes` then puts constants over entries 0xE1–0xE5 (0xB245) and 0x173–0x177 (0xA1B2, 0xBA96 ×3, 0xA1D2). They are the values the boot stores by hand at 0x38B58 after it copies the table, so they are not words of that table.
+- **hotd** (the container's `hotdo`): not one table. The colours come from the program ROM pair `epr-19696.15` / `epr-19697.16`: the pointer list at 0xA98F0 (13 sets, each a count and then the colours), with set 0 at entry 0 and the others from `split` 500 on, and the table at 0xA35B8 filled downward from 1023. Which set is written above 500 is `rom.paletteSet`, which the viewer moves with the texture set. The sets in `loadOrder` before it are written first and fill what it leaves. Entry 1023 is then set to the constant 0x801F (`fixed`).
+
+The four ROM pairs are all loaded by the prepared profiles (`profiles/vcop.h`, `daytona.h`, `hotd.h`). Only Daytona's colours are fixed ROM words, though. Virtua Cop's include ten values the boot writes, and House of the Dead's depend on the set the viewer chooses. m2-hle2's decoder takes a face's colour from palette RAM at colorbase + 0x1000, which the game fills as it runs, and falls back to `main_data` + 0x100000 only when there is no palette RAM (`geo3d_palette_color`, STF's layout). So `colors` is not hashed, and no reader or ROM load is added for it. §6.8 compares it with MAME's palette RAM. The rest of `decodeModel`'s return value is covered by the hashes above or is lighting. Every field decodeModel returns is in the mesh checksum, the header-field FNV, or the triangle hash, or is lighting or the derived bit 128, except colors at js/model.js line 458: that value is the facePalette read described above, it is in none of those hashes, and it is not hashed, because Virtua Cop's ten boot-written slots and House of the Dead's viewer-chosen table are not fixed ROM words.
+
+Texel bytes are not a field decodeModel returns, and they are in none of the hashes above. On noclip master aefb324, buildTexram (js/texture.js) copies those bytes and does not read tx, ty, sheet, tw, th, matidx, or lumaBase. Virtua Cop and Daytona go through buildDaytonaTexram; House of the Dead goes through buildRawTexram. Each copy is a 1 MB bank: a CPU address minus 0x02000000 is the data-ROM offset. The boot bank is a constant (Virtua Cop 0x2300000 in mpr-17164.10 / mpr-17165.11, Daytona 0x2500000 in mpr-16808.8 / mpr-16809.9, House of the Dead 0x02000000 in mpr-19704.11 / mpr-19705.12) and is the same on every load. The other bank's address is a word in an already-loaded ROM, indexed by a set number (Virtua Cop: data 0x8190E8 + set×4 in epr-17168a.6 / epr-17169a.7, pointing into mpr-17164.10 / mpr-17165.11; Daytona: program 0x15A0 + set×4 in epr-16722a.12 / epr-16723a.13, pointing into mpr-16528.10 / mpr-16529.11 or mpr-16808.8 / mpr-16809.9; House of the Dead: program 0xA9970 + set×4 in epr-19696.15 / epr-19697.16, pointing into mpr-19704.11 / mpr-19705.12 or mpr-19702.9 / mpr-19703.10). House of the Dead also copies that set's eight 0x2000-byte patch blocks, none for set 0, whose pointers are the words at program 0xC15E0 + set×32, from mpr-19702.9 / mpr-19703.10. No bank address is a word the boot writes, and there is no runtime fill: every copied byte is a fixed ROM word. Which set is copied is not fixed. Virtua Cop uses the viewer's texture-set picker or default set 0. Daytona uses the course records in ROM, or that picker, or default set 0. House of the Dead uses the profile bankSets table, which that picker can override; the shared bank 0 is drawn under set 1. The only read that indexes a pixel with tx, ty, sheet, tw, and th is the viewer's draw path (levelTile and tileTexel in js/viewer.js). lumaBase indexes the luma table there, not texel bytes. matidx selects a colour, not a pixel. Those bytes are not hashed, and no texel reader and no ROM load are added, because the set bank is not one fixed image and that pixel index is only the viewer's draw path. The prepared profiles already load every ROM file these copies read. §6.8 compares these copies with MAME's texture RAM.
+
+### 6.8 The checks §6.7 left out, against MAME (Pinboard #692)
+
+Five things §6.7 records but does not check: lighting, culling, texels, the Daytona polygon-RAM entries, and face colours. The ground truth is the shared MAME build (`~/build/mame-bin/mame-shared/shared`, `-video none -nothrottle`), with a Lua script that dumps palette RAM (0x01800000), the two texture RAMs, both polygon RAMs and the raster's texture RAM at set times. The container's sets lack three support ROMs (vcop's `hd44780_a00.bin`, daytona's `epr-16726.bin` and `epr-16488a.ic12`); zero-filled stand-ins boot with a checksum warning. The container's `hotd.zip` is MAME's `hotdo`, which is noclip's id for it as well.
+
+**Lighting and bit 128** (in `prepared_test`). Each triangle's emitted normal is computed as `decodeModel` does: the face normal when |nx|+|ny|+|nz| > 0.5, else the triangle's cross product; on hotd (`lighting.planeNormals`) the negated plane cross of A, B, C when the face has a C. It is divided by V8's `Math.hypot` (reproduced exactly) and stored as float. The FNV of the three floats and bit 128 per triangle matches noclip at aefb324 bit for bit:
+
+| set | triangles with bit 128 | normals FNV |
+|---|---|---|
+| vcop | 13594 | 0xB34338BB |
+| daytona | 44618 | 0xB84EB618 |
+| hotd | 182983 | 0x03EAF696 |
+
+**Against the board's normal.** The test also runs `geo3d_board_normal` (identity matrix, mode 2 on hotd) on every triangle and counts four things. These are triangles culled by a different rule (both-sided on the board ≠ bit 128), lit from another direction (cosine < 0.9999), lit by a zero normal, and lit by a non-unit one. vcop and daytona are 0 in all four. hotd has 2263 culled otherwise, 0 from another direction, 10297 by a zero normal, and 0 non-unit. The 2263 are §6.7's degenerate planes: 2257 whose cross is zero in doubles and 6 (one face) where it is zero in the board's float cross but 2.7e-9 in noclip's double one. The 10297 are faces whose plane is degenerate; MAME's `normalize_vector` leaves those at zero (the 2263 among them; the rest have bit 17 set or a ROM normal of 0.5 or less, which both sides draw two-sided, and noclip lights them with the triangle's own cross product). It is the §6.7 difference, now counted; noclip is not changed.
+
+**Texels.** MAME's texture RAM (the first 1 MB of each sheet, 16-bit words in write order) was compared with what noclip's `buildTexram` builds for the same set. There were 0 differing words in either sheet: vcop under set 0 (40 s and 90 s), daytona under set 0 (40 s; set 3 is the same bank), and hotdo under set 3 at 40 s and set 1 at 90 s. So the bank addresses and House of the Dead's patch blocks are the board's.
+
+**Daytona entries 2139–2165.** Their mesh pointers (0x4…0x51E) are in slow polygon RAM; their UV and material pointers (0x805000…, 0x800000…) have bit 23 set and read the raster's texture RAM. MAME's polygon RAM 0 is the same at every dump from 20 s to 160 s, while the texture RAM changes. Both sides decoded the dumps: `geo3d_mesh_reads` with `obj_mesh`, and `decodeModel` with its `mesh` argument and texture RAM placed at textures byte 0x1000000. Both decode 27 meshes, 69 faces (all textured) and 138 triangles, identical in every field (corners, UVs, material, normal, bit 128, face point, z-corners) at all eight dumps. They have 0 differences against the board's normal as well.
+
+**Face colours.** MAME's palram[0x1000 + i] against `facePalette`:
+
+- **vcop**: all 1024 entries are the same from 20 s to 80 s and at 100 s and 120 s, so the ten boot-written slots are the board's. At 90 s, 401 differ (a fade).
+- **daytona**: 1004 the same, 17 unset by noclip (1007–1023, which no face uses), and 3 differ at every time from 20 s to 180 s. They are 430 (noclip 0xA7FF, MAME 0x83FF), 437 (0xCE7F, 0xFE73) and 438 (0xCFE9, 0xFE73), used by 630, 545 and 68 face headers, all textured.
+- **hotdo**: the best-matching set changes as the game runs (2, 3, 1…), and at best 10–11 entries differ. Entry 211 (noclip 0xA18E, MAME 0xEBDF; 392 textured headers) differs every time. 1023 (noclip's fixed 0x801F, MAME 0xB340; 18911 textured headers) differs too. 959 and 984–991 are faded values later on. At other times 31 differ (984–993), or 107–117 (532–542 and 684–694, a table none of noclip's sets matches).
+
+None of the differing colours is on an untextured face, so on these sets they reach a textured face only as its colour field. The three Daytona words and hotd's 211 and 1023 are noclip's to look at; the rest are the game changing its palette at run time, which a fixed table cannot hold. m2-hle2 reads palette RAM, as the board does, so nothing changes here.
