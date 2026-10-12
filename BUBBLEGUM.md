@@ -111,6 +111,7 @@ Sega Rally has no table and already reads the mesh at the object's address (`gam
 ## 3. The COP's FIFO
 
 - **An unknown command is given 0 arguments** (`sharc_args_for_cmd`, `sharc_exec.h:179`). Its arguments are then read as commands, which has happened twice (`0x2A805555`, `0x17002E2E`). The command word's low byte is the firmware's dispatch index (0x..5151 is dispatch[0x51]). A table of argument counts by index, read from cpres1's PM, would cover every command, including ones not yet seen.
+  - *Detail from the #682 scan, part of this item and not new work:* these firmware commands read arguments or reply and have no case in `sharc_exec.h` and reach the default (`:1817`; `sharc_args_for_cmd`, `:58`, default `:179`): `0x0C801919` `Fn_sqr_r`; `0x0D801B1B-0x10002020` `put_c`, `add_c`, `sub_c`, `mul_c`, `div_c`, `get_c`; `0x14002828` `Fn_tri_shin`; `0x15002A2A` `Fn_get_inner`; `0x23804747` `Fn_mul_matrix_rev`; `0x2E805D5D` `Fn_sub3` (its sibling `add3` is ported); `0x3B007676` `Fn_get_glo_ang_zyx`; `0x3C807979` `Fn_ziku_rot`; `0x3D007A7A` `Fn_mul_matrix3`; `0x3D807B7B` `Fn_scrn_clip`; `0x3E007C7C / 0x3E807D7D` `load_inner_3x3` / `store_inner_3x3`; `0x3F007E7E` `Fn_mul_matrix_inner3`. The dispatch table is `stf-sharc/cpres1.asm:245-334`.
 - **Every command empties the reply FIFO** (`sharc_exec.h:679-680`, and `cop.h:175-176` for the stream command). Replies the i960 has not read are dropped, where the board would hand them to the next read. Since an empty read answers 0, this hides a handler that answers too many words. An under-read should be logged at WARN, as an underflow is, not dropped silently.
 - The short-argument fallbacks that push zeros (`:985`, `:1218` and others) can only be reached from a truncated `cop_replay` input. They are harmless.
 
@@ -198,6 +199,7 @@ This is a fresh scan of the board, core and renderer, looking for shared behavio
 - **doc**: a comment or document only.
 - **cheap**: no STF frame, timing or netplay change.
 - **MAME**: needs a MAME check first, or moves STF.
+- **netplay**: changes netplay behaviour (who joins which rooms), so it is not cheap even when no STF frame moves.
 
 MAME references are to `claude_mame/mame/src/mame/sega/model2.cpp` unless another file is named.
 
@@ -246,28 +248,6 @@ MAME references are to `claude_mame/mame/src/mame/sega/model2.cpp` unless anothe
 
 ### 7.5 The COP
 
-- **13 firmware commands that read arguments or reply have no case** in `sharc_exec.h`. They fall to the default (`:1817`), which logs them and gives them 0 arguments, so their arguments are then run as commands (§3):
-
-  | Opcode | Command | Arguments in | Replies |
-  |---|---|---|---|
-  | 0x0C801919 | `Fn_sqr_r` | 1 | 1 |
-  | 0x0D801B1B-0x10002020 | the C-accumulator group: `put_c`, `add_c`, `sub_c`, `mul_c`, `div_c` | 1 each | — |
-  | (same group) | `get_c` | 0 | 1 |
-  | 0x14002828 | `Fn_tri_shin` | 3 | 3 |
-  | 0x15002A2A | `Fn_get_inner` | 6 | 1 |
-  | 0x23804747 | `Fn_mul_matrix_rev` | 12 | — |
-  | 0x2E805D5D | `Fn_sub3` (its sibling `add3` is ported) | 6 | 3 |
-  | 0x3B007676 | `Fn_get_glo_ang_zyx` | 0 | 3 |
-  | 0x3C807979 | `Fn_ziku_rot` | ≥5 | — |
-  | 0x3D007A7A | `Fn_mul_matrix3` | 9 | — |
-  | 0x3D807B7B | `Fn_scrn_clip` | 5 | 1 |
-  | 0x3E007C7C / 0x3E807D7D | `load_inner_3x3` / `store_inner_3x3` | 2 each | — |
-  | 0x3F007E7E | `Fn_mul_matrix_inner3` | 2 | — |
-
-  The table is `stf-sharc/cpres1.asm:245-334`. Its `in=` notes are wrong for 0x55, 0x70 and 0x74, so take the counts from the handler bodies.
-  - STF never sends these commands. FV's firmware is the same library, and other 2B games probably are too.
-  - The other dispatch slots with no case are bare `rts` in this firmware, so the default is harmless for them.
-  - **cheap**: port them from cpres1, with a `cop_test` case each. That also settles most of §3's argument-table item.
 - **The bone table's index is masked.** `pm_bone[(int)args[n] & 0xF]` (`sharc_exec.h:1630` and `:1669` with `args[0]`, `:1662` with `args[6]`) wraps past 16, where the firmware addresses PM `0x21F20 + 12n` directly. Slot indices of 16 or more are ignored silently (`:1137`, `:1151`, `:1540`). Who it affects: every 2B game on the SHARC HLE. **cheap** (a WARN); STF stays below 16.
 - **Accumulation order not yet held to the firmware.** These add in one expression, where `Fn_trans` adds one term at a time:
   - `0x1C803939` (`:1172-1174`);
@@ -296,7 +276,7 @@ These add to "The homebrew display-list walker" in §4. Every `geo_displaylist` 
 
 ### 7.8 PS3 cross-play matches the id prefix
 
-- `netplay.h:2280` is `bool stf = strncmp(g_active_profile->id, "sfight", 6) == 0;`, so `sfight_homebrew` (m2-pacman and any other program on STF's set) counts as STF. On the official server (`netplay_server_is_official`, `:2281`) it takes `RPCN_PS3_COM_ID` and joins the PS3 port's rooms, where the boards cannot agree. Who it affects: homebrew on STF's set. STF's two profiles are unchanged. **cheap**: compare against `sfight` and `sfight_console` exactly, as `gems.h:531` does.
+- `netplay.h:2280` is `bool stf = strncmp(g_active_profile->id, "sfight", 6) == 0;`, so `sfight_homebrew` (m2-pacman and any other program on STF's set) counts as STF. On the official server (`netplay_server_is_official`, `:2281`) it takes `RPCN_PS3_COM_ID` and joins the PS3 port's rooms, where the boards cannot agree. Who it affects: homebrew on STF's set (`sfight_homebrew`: m2-pacman and the like) online on the official server; STF's `sfight` and `sfight_console` match either way. **netplay**: an exact compare, as `gems.h:531` does, would stop `sfight_homebrew` counting as STF, so such a player would no longer be put in the PS3 rooms. That is a change in netplay behaviour, not a cheap fix.
 
 ## Doc drift found on the way
 
@@ -326,7 +306,7 @@ The sound pin (§2.1) and the board install (§2.2) were looked at and are not c
 ## Suggested order
 
 1. **The cheap fixes that move no STF frame.** The asin clamp and the empty 0x68 handler are done (see above). The sound pin (§2.1) and the board install (§2.2) are left, and are not cheap: they move FV, Sega Rally and homebrew, and need a protocol bump. For each, run `cop_replay`, `match-replay` and `det_digest`.
-2. **The COP argument table by dispatch index, and keeping unread replies (§3).** Both are ROM-free and testable with `cop_test` / `cop_replay`. Port the 13 missing firmware commands (§7.5) in the same pass.
+2. **The COP argument table by dispatch index, and keeping unread replies (§3).** Both are ROM-free and testable with `cop_test` / `cop_replay`.
    - These #682 items move no STF frame and can go alongside: the 2A savestate parts made board parts (§7.1), a WARN at the GEO object cap (§7.4), and the 0x980030 and 0x10400000 reads (§7.3).
    - These need MAME first: the 315-5649 on 2B (§7.2), the bufferram fill, the 2B function port and the 0x10F00000 alias (§7.3), and the per-list GEO reset (§7.4).
 3. **The model catalogue out of the game draw (§2.3).** Run `grade-models`, `grade-stages` and `grade-zsort`. This also unblocks Daytona's 20-byte table.
