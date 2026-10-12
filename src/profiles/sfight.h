@@ -173,6 +173,7 @@ static inline void sfight_install(const romset_t *rs, i960_cpu_t *cpu, memory_bu
     if (!rs->loaded) { LOG_ERROR("sfight_install: romset not loaded"); return; }
     s_sfight_on_vs_rematch = NULL;
     m2_texload_forget();   /* a new program: check its texture loader again */
+    sfight_native_install("sfight");
 
     i960_reset(cpu);
     mem_init(bus, rs->maincpu, rs->maincpu_size);
@@ -773,7 +774,7 @@ static inline void sfight_apply_menu_settings(memory_bus_t *bus, const uint8_t s
 /* The hooks every STF profile needs to boot and pace frames, the versus hook
  * netplay rooms read the result from, VS mode's rematch, and the region
  * default. */
-#define SFIGHT_BASE_HOOK_COUNT 24
+#define SFIGHT_BASE_HOOK_COUNT (23 + SFIGHT_NATIVE_HOOK_COUNT)
 #define SFIGHT_BASE_HOOKS                                                      \
     { 0x00011A04, sfight_hook_frame_pace,         "frame_pace"              }, \
     { 0x000077F8, sfight_hook_cop_err_hang,       "co_processor_error_hang" }, \
@@ -798,7 +799,7 @@ static inline void sfight_apply_menu_settings(memory_bus_t *bus, const uint8_t s
     { SKY_EYE_HOOK_PC, sky_eye_hook_camera,       "camera_control sky_eye" }, \
     { 0x0004C334, sfight_hook_tex_q_anim,        "send_lod_data_q_sub_anim row" }, \
     { 0x00011610, sfight_hook_idle_spin,          "_idle spin"              }, \
-    { 0x0000DD20, sfight_hook_native_round,       "round_dsp judge (native replay)" },
+    SFIGHT_NATIVE_HOOKS
 
 /* hook_count stops the scan, so a count one short drops the last hook without
  * a word: the merge of #151 left it at 25 over 26 entries, and the console
@@ -882,6 +883,8 @@ static const game_profile_t sfight_profile = {
     .quirks       = { SFIGHT_QUIRKS },
     .match_info   = sfight_match_info,
     .native_take  = sfight_native_take,
+    .native_play  = sfight_native_play,
+    .in_play      = sfight_in_play,
     .native_put   = sfight_native_put,
 };
 

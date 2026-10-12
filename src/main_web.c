@@ -327,7 +327,7 @@ static bool web_slice(void) {
     netplay_step_t np = emu_netplay_pump(&state.emu);
     g_web_waited = (np == NETPLAY_STEP_WAIT);
     if (np == NETPLAY_STEP_WAIT || np == NETPLAY_STEP_RESET) return false;
-    if ((g_web_follow || replay_playing()) && !web_follow_ready()) { g_web_waited = true; return false; }
+    if ((g_web_follow || replay_play_follows()) && !web_follow_ready()) { g_web_waited = true; return false; }
     if (state.emu.run_state != EMU_RUNNING) return false;
     if (emu_slice_should_stop(&state.emu)) return false;
     while (g_web_script_at < g_web_script_n && g_web_script[g_web_script_at].frame <= g_emu_frames)
@@ -1112,6 +1112,14 @@ static int web_replay_result(const char *err) {
 
 EMSCRIPTEN_KEEPALIVE void web_replay_set_record(int on) { g_replay_rec.want = on != 0; }
 EMSCRIPTEN_KEEPALIVE int  web_replay_record(void)       { return g_replay_rec.want ? 1 : 0; }
+/* 1 saves the inputs feed, 0 the game's own replay (the default). */
+EMSCRIPTEN_KEEPALIVE void web_replay_set_format(int inputs) {
+    g_replay_rec.format = inputs ? REPLAY_SAVE_INPUTS : REPLAY_SAVE_NATIVE;
+}
+/* 1 plays a replay's inputs when it has them, 0 the game's own view. */
+EMSCRIPTEN_KEEPALIVE void web_replay_set_view(int inputs) {
+    g_replay_play.view = inputs ? REPLAY_VIEW_INPUTS : REPLAY_VIEW_AUTO;
+}
 
 /* The finished match's zip: its length (0 when none waits), bytes and name.
  * web_replay_ready_free once the page has copied it out. */
@@ -1167,15 +1175,16 @@ EMSCRIPTEN_KEEPALIVE const char *web_replay_error(void) { return g_web_replay_er
 /* replay_play_status's object, plus "unplayable" (why the open one cannot
  * play here), "recording" and "saved" (matches recorded since the page opened). */
 EMSCRIPTEN_KEEPALIVE const char *web_replay_status(void) {
-    static char buf[800];
-    char play[400], why[200], rec_err[200];
+    static char buf[1200];
+    char play[800], why[200], rec_err[200];
     replay_play_status(play, sizeof play);
     json_escape(why, sizeof why, g_replay_play.unplayable);
     json_escape(rec_err, sizeof rec_err, g_replay_rec.error);
     size_t n = strlen(play);
     if (n) play[n - 1] = '\0';   /* reopen the object */
-    snprintf(buf, sizeof buf, "%s,\"unplayable\":\"%s\",\"record\":%d,\"recording\":%d,\"saved\":%u,"
-             "\"rec_error\":\"%s\"}", play, why, g_replay_rec.want ? 1 : 0,
+    snprintf(buf, sizeof buf, "%s,\"unplayable\":\"%s\",\"record\":%d,\"format\":%d,\"recording\":%d,"
+             "\"saved\":%u,\"rec_error\":\"%s\"}", play, why, g_replay_rec.want ? 1 : 0,
+             g_replay_rec.format == REPLAY_SAVE_INPUTS ? 1 : 0,
              replay_recording() ? 1 : 0, (unsigned)g_replay_rec.saved, rec_err);
     return buf;
 }

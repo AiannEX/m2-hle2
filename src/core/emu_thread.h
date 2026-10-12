@@ -1089,7 +1089,7 @@ static inline bool emu_netplay_allows_slice(emu_thread_ctx_t *ctx, int64_t slice
         return false;
     }
     /* A replay holds the board where its feed ends (or splits), still. */
-    if (np_step == NETPLAY_STEP_OFF && replay_playing() && !follow_slice_ready()) {
+    if (np_step == NETPLAY_STEP_OFF && replay_play_follows() && !follow_slice_ready()) {
         emu_sleep_ms(2);
         g_emu_times.net_us += emu_now_us() - slice_start;
         return false;

@@ -73,7 +73,7 @@ static int  g_autorun = 0;
 static char g_load_state[1024];   /* --load-state FILE: start from a savestate */
 static char     g_follow_out[512];   /* --follow-out DIR: lead a one-way follow (core/follow.h) */
 static uint32_t g_follow_every;      /* --follow-every FRAMES between its join points */
-static bool     g_replay_cli_set;    /* --record-replays / --no-record-replays override the saved switch */
+static bool     g_replay_cli_set;    /* --record-replays / --replay-format: the command line, not replay.cfg */
 static char     g_replay_open_arg[512];   /* --replay FILE: open it once a game is loaded */
 static int  g_browse_model = -1;   /* --model N: open single-model browser on N */
 static int  g_objview_on    = 0;   /* --objview: open the object viewer at boot */
@@ -345,6 +345,12 @@ static bool replay_cli_arg(int argc, char **argv, int *i) {
     if (!strcmp(a, "--record-replays") || !strcmp(a, "--no-record-replays")) {
         g_replay_rec.want = a[2] == 'r';   /* save every online match */
         g_replay_cli_set  = true;
+    } else if ((!strcmp(a, "--replay-format") || !strcmp(a, "--replay-view")) && more) {
+        bool view = a[9] == 'v';
+        int pick = replay_format_parse(argv[++*i], view);
+        if (pick < 0) LOG_WARN("%s %s: native or inputs", a, argv[*i]);
+        else if (view) g_replay_play.view = pick;
+        else { g_replay_rec.format = pick; g_replay_cli_set = true; }
     } else if (!strcmp(a, "--replay-dir") && more) {
         snprintf(g_replay_rec.dir, sizeof g_replay_rec.dir, "%s", argv[++*i]);
     } else if (!strcmp(a, "--replay") && more) {

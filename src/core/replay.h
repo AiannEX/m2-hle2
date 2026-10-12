@@ -38,14 +38,29 @@
  * replay.json says how many rounds there are ("native_rounds"). An open
  * replay's round goes back into the board with replay_native_install.
  *
+ * Two ways to save (g_replay_rec.format, Pinboard #617; NATIVE-REPLAY.md):
+ *   REPLAY_SAVE_NATIVE   the default: replay.json and the native rounds only.
+ *                        No snapshot is taken, and a match none of whose
+ *                        rounds the game kept is not saved.
+ *   REPLAY_SAVE_INPUTS   the above plus state.sta and inputs.feed, #572's
+ *                        frame-exact record of the whole match.
+ * A local game is recorded too, when the player asks for replays: from the
+ * moment the profile says a game is on (game_profile_t.in_play) to its return
+ * to attract, every match and the CPU's rounds included. It ends no sooner
+ * for a result, so one file holds the whole session.
+ *
  * The zip is made beside the board (a writer thread; the web build has none and
  * makes it at once) and saved as <p1>-vs-<p2>-<local date>-<time>.m2replay, in
  * the replay folder (native) or handed to the page (web_replay_take).
  *
- * Playback (g_replay_play) joins follow.h as a follower on the replay's state
- * and feed: the replay's profile is installed for it, the battery detached, and
- * everything is put back when it stops. Seeking back is a rejoin and a run to
- * the frame unpaced; forward is the run alone.
+ * Playback (g_replay_play) has two views. The default is the game's own: the
+ * keyed rounds go to the profile's native_play, the board boots, attract is
+ * sent to its replay fight (g_match_replay) and the game's key player plays
+ * each round in turn (sfight_native.h). The other, and the only one for a
+ * replay with no keyed round, joins follow.h as a follower on the replay's
+ * state and feed. Either way the replay's profile is installed for it, the
+ * battery detached, and everything is put back when it stops. Seeking back is
+ * a restart and a run to the frame unpaced; forward is the run alone.
  */
 #ifndef REPLAY_H
 #define REPLAY_H
@@ -62,6 +77,12 @@
 #define REPLAY_NAME_MAX    24
 #define REPLAY_NATIVE_MAX  32      /* rounds a replay keeps in the game's formats */
 #define REPLAY_NATIVE_JSON 1024
+
+#define REPLAY_SAVE_NATIVE 0       /* g_replay_rec.format: the game's formats only */
+#define REPLAY_SAVE_INPUTS 1       /* ... and the snapshot and input feed */
+#define REPLAY_VIEW_AUTO   0       /* g_replay_play.view: the game's own if it can */
+#define REPLAY_VIEW_NATIVE 1
+#define REPLAY_VIEW_INPUTS 2
 
 /* A round in the game's own formats, owned (the profile's buffers are not). */
 typedef struct {
@@ -129,7 +150,8 @@ static inline bool replay__native_copy(replay_native_t *r, const game_native_rou
 typedef struct {
     char     p1[REPLAY_NAME_MAX], p2[REPLAY_NAME_MAX], recorded_by[REPLAY_NAME_MAX];
     char     server[128], profile[32], romset[32], why[48];
-    const char *netcode;        /* "rpcn" or "ggpo" */
+    const char *netcode;        /* "rpcn", "ggpo" or "local" */
+    bool     inputs;            /* saved with state.sta and inputs.feed */
     int      side;              /* the recorder's: 0 1P, 1 2P, 2 watching */
     uint32_t session, match;
     int64_t  when;              /* time(NULL) at the match's first frame */
@@ -151,6 +173,8 @@ typedef struct {
 
 typedef struct {
     volatile int want;          /* the player's switch */
+    volatile int format;        /* REPLAY_SAVE_* */
+    bool     local;             /* a local game, not an online match */
     char     dir[512];          /* where native builds save ("" = the user dir's replays) */
     bool     on, due;
     uint8_t *feed;
@@ -186,6 +210,32 @@ typedef struct {
 } replay_rec_t;
 
 static replay_rec_t g_replay_rec;
+
+typedef struct {
+    bool     loaded;            /* a replay is open (replay_open) */
+    bool     on;                /* the board is playing it */
+    uint8_t *state, *feed;
+    size_t   state_len, feed_len;
+    char     json[REPLAY_JSON_MAX];
+    char     unplayable[160];   /* "" when it can play on this ROM set */
+    uint32_t frames;
+    bool     fast;
+    uint32_t seek;              /* run unpaced until the board reaches this frame */
+    const game_profile_t *old_profile;
+    int      old_sps;
+    int32_t  old_set[FOLLOW_SET_WORDS];
+    int      old_match_replay, old_match_stage;
+    replay_natives_t native;    /* its rounds in the game's formats */
+    int      view;              /* REPLAY_VIEW_*: what the next start plays */
+    bool     native_on;         /* playing through the game's own replay code */
+    const game_profile_t *native_prof;
+    game_native_round_t nround[REPLAY_NATIVE_MAX];   /* the keyed rounds */
+    int      nrounds;
+    uint32_t native_frames;     /* their key frames, as g_native_play counts */
+    char     error[160];
+} replay_play_t;
+
+static replay_play_t g_replay_play;
 
 static inline bool replay_recording(void) { return g_replay_rec.on; }
 
@@ -246,11 +296,11 @@ static inline void replay__sample(emu_thread_ctx_t *ctx, replay_meta_t *m) {
     m->fight_seen = true;
 }
 
-static inline void replay__meta_begin(replay_meta_t *m) {
+static inline void replay__meta_begin(replay_meta_t *m, bool local) {
     memset(m, 0, sizeof *m);
     replay__copy_name(m->p1, "1P");
     replay__copy_name(m->p2, "2P");
-    replay__names(m);
+    if (!local) replay__names(m);
     snprintf(m->server, sizeof m->server, "%s", g_replay_ggpo.on ? g_replay_ggpo.server : g_netplay.cfg.server);
     m->netcode = g_replay_ggpo.on ? "ggpo" : "rpcn";
     if (g_active_profile) {
@@ -266,6 +316,13 @@ static inline void replay__meta_begin(replay_meta_t *m) {
         m->session = 0;
         m->match   = g_replay_ggpo.matches++;
     }
+    if (local) {
+        m->server[0] = '\0';
+        m->netcode   = "local";
+        m->side = 0;
+        m->session = m->match = 0;
+    }
+    m->inputs  = g_replay_rec.format == REPLAY_SAVE_INPUTS;
     m->when    = (int64_t)time(NULL);
     m->winner  = -1;
     follow_settings(m->settings);
@@ -341,6 +398,7 @@ static inline size_t replay__json(const replay_meta_t *m, int native_n, char *ou
     replay__json_int(out, cap, &n, "timestamp", m->when);
     replay__json_str(out, cap, &n, "server", m->server);
     replay__json_str(out, cap, &n, "netcode", m->netcode);
+    replay__json_str(out, cap, &n, "content", m->inputs ? "inputs" : "native");
     replay__json_int(out, cap, &n, "session", m->session);
     replay__json_int(out, cap, &n, "match", m->match);
     replay__json_str(out, cap, &n, "recorded_by", m->recorded_by);
@@ -401,8 +459,9 @@ static inline void *replay__zip(const replay_job_t *j, size_t *out_len) {
     *out_len = 0;
     if (!mz_zip_writer_init_heap(&z, 0, j->snap_len / 4 + j->feed_len + 65536)) return NULL;
     bool ok = mz_zip_writer_add_mem(&z, "replay.json", json, jn, MZ_DEFAULT_LEVEL)
-           && mz_zip_writer_add_mem(&z, "state.sta", j->snap, j->snap_len, MZ_BEST_SPEED)
-           && mz_zip_writer_add_mem(&z, "inputs.feed", j->feed, j->feed_len, MZ_DEFAULT_LEVEL)
+           && (!j->meta.inputs
+               || (mz_zip_writer_add_mem(&z, "state.sta", j->snap, j->snap_len, MZ_BEST_SPEED)
+                   && mz_zip_writer_add_mem(&z, "inputs.feed", j->feed, j->feed_len, MZ_DEFAULT_LEVEL)))
            && replay__zip_native(&z, &j->native)
            && mz_zip_writer_finalize_heap_archive(&z, &buf, out_len);
     mz_zip_writer_end(&z);
@@ -517,7 +576,7 @@ static inline void replay__write_start(void) {
 
 static inline void replay__rec(int type, uint32_t slice, const void *p, uint32_t n) {
     replay_rec_t *R = &g_replay_rec;
-    if (R->full) return;
+    if (R->full || !R->meta.inputs) return;
     size_t need = R->len + FOLLOW_REC_BYTES + n;
     if (need > R->cap) {
         size_t cap = R->cap ? R->cap : (1u << 20);
@@ -556,11 +615,16 @@ static inline const char *replay__snap(emu_thread_ctx_t *ctx) {
     return "no state";
 }
 
-/* Start a replay here: the board's state, then an empty feed. */
-static inline void replay__begin(emu_thread_ctx_t *ctx) {
+static inline void replay_rec_finish(const char *why);
+
+/* Start a replay here: the board's state and an empty feed, when they are
+ * saved; a local game's (`local`) or an online match's. */
+static inline void replay__begin(emu_thread_ctx_t *ctx, bool local) {
     replay_rec_t *R = &g_replay_rec;
+    replay_rec_finish(R->local ? "an online match began" : "a new match began");
     R->due = false;
-    const char *err = replay__snap(ctx);
+    bool inputs = R->format == REPLAY_SAVE_INPUTS;
+    const char *err = inputs ? replay__snap(ctx) : NULL;
     if (err) {
         snprintf(R->error, sizeof R->error, "could not start a replay: %s", err);
         LOG_WARN("replay: %s", R->error);
@@ -572,8 +636,14 @@ static inline void replay__begin(emu_thread_ctx_t *ctx) {
     R->held_known = R->set_known = R->board_known = false;
     R->tail = 0;
     R->id++;
+    R->local = local;
     replay__natives_cut(&R->native, 0);
-    replay__meta_begin(&R->meta);
+    replay__meta_begin(&R->meta, local);
+    if (!inputs) {
+        R->on = true;
+        LOG_INFO("replay: recording %s (the game's formats)", local ? "a local game" : "an online match");
+        return;
+    }
     uint8_t h[FOLLOW_HDR_BYTES] = {0};
     memcpy(h, FOLLOW_MAGIC, 8);
     follow_put32(h + 8,  FOLLOW_VERSION);
@@ -595,8 +665,10 @@ static inline void replay_rec_finish(const char *why) {
     replay__rec(FOLLOW_END, R->slice, why, (uint32_t)strlen(why));
     R->meta.frames = R->frame;
     snprintf(R->meta.why, sizeof R->meta.why, "%s", why);
-    if (R->meta.winner < 0 && R->frame < REPLAY_MIN_FRAMES) {
-        LOG_INFO("replay: dropped (%s after %u frames, no result)", why, R->frame);
+    bool empty = !R->meta.inputs && R->native.n == 0;
+    if ((R->meta.winner < 0 && R->frame < REPLAY_MIN_FRAMES) || empty) {
+        LOG_INFO("replay: dropped (%s after %u frames, %s)", why, R->frame,
+                 empty ? "no round in the game's formats" : "no result");
         replay__natives_cut(&R->native, 0);
         free(R->feed);
         R->feed = NULL;
@@ -639,7 +711,7 @@ static inline void replay_rec_write(uint32_t addr, bool rom, const uint8_t *data
 static inline void replay_session_reset(emu_thread_ctx_t *ctx) {
     replay_rec_t *R = &g_replay_rec;
     if (!R->want || g_netplay.ps3) return;
-    replay__begin(ctx);
+    replay__begin(ctx, false);
 }
 
 /* Changes since the last slice, then the input word latched for this one. */
@@ -678,15 +750,47 @@ static inline void replay__rec_state(void) {
     }
 }
 
+/* Is the player's own game on, the profile says (not attract or a replay)? */
+static inline bool replay__local_game(emu_thread_ctx_t *ctx) {
+    if (!g_active_profile || !g_active_profile->in_play || replay__session_live()) return false;
+    if (g_replay_play.on || follow_following() || g_native_play.on) return false;
+    return g_active_profile->in_play(ctx->bus);
+}
+
+/* A replay played in the game's own code reads no pad: attract would take a
+ * START as a coin-up. The latch is the recorder's, which is off meanwhile. */
+static inline void replay__native_latch(void) {
+    replay_rec_t *R = &g_replay_rec;
+    R->use_net_was   = g_input.use_net;
+    R->latched       = true;
+    g_input.net_held = 0;
+    g_input.use_net  = 1;
+}
+
+/* A local game starts a replay when the player wants them, and its return
+ * to attract ends it. */
+static inline bool replay__local_slice(emu_thread_ctx_t *ctx) {
+    replay_rec_t *R = &g_replay_rec;
+    if (!R->on) {
+        if (R->want && !R->due && replay__local_game(ctx)) replay__begin(ctx, true);
+        return R->on;
+    }
+    if (!R->local) return true;
+    if (replay__session_live())         { replay_rec_finish("an online match began"); return false; }
+    if (!replay__local_game(ctx))       { replay_rec_finish("game over"); return false; }
+    return true;
+}
+
 static inline void replay_slice_begin(emu_thread_ctx_t *ctx) {
     replay_rec_t *R = &g_replay_rec;
+    if (g_replay_play.on && g_replay_play.native_on) { replay__native_latch(); return; }
     if (R->due && !R->on) {
-        if (R->want && replay__session_live()) replay__begin(ctx);
+        if (R->want && replay__session_live()) replay__begin(ctx, false);
         else R->due = false;
     }
-    if (!R->on) return;
+    if (!replay__local_slice(ctx)) return;
     /* The session went before a result: a peer left, a desync, a stall. */
-    if (!R->tail && !replay__session_live()) { replay_rec_finish("the session ended"); return; }
+    if (!R->local && !R->tail && !replay__session_live()) { replay_rec_finish("the session ended"); return; }
     if (R->full) { replay_rec_finish("too long"); return; }
     replay__rec_state();
 }
@@ -728,7 +832,7 @@ static inline void replay_slice_end(emu_thread_ctx_t *ctx, bool frame_end) {
 /* The frame's versus verdict (emu_slice_count_frame): 1 = 1P won, 2 = 2P. */
 static inline void replay_frame_result(emu_thread_ctx_t *ctx, int versus_result) {
     replay_rec_t *R = &g_replay_rec;
-    if (!R->on || R->tail || (versus_result != 1 && versus_result != 2)) return;
+    if (!R->on || R->local || R->tail || (versus_result != 1 && versus_result != 2)) return;
     replay__sample(ctx, &R->meta);
     replay__names(&R->meta);
     R->meta.winner       = versus_result - 1;
@@ -759,7 +863,7 @@ static inline void replay_ggpo_begin(emu_thread_ctx_t *ctx, const char *p1, cons
     g_replay_ggpo.matches = 0;
     for (int i = 0; i < REPLAY_MARKS; i++) g_replay_ggpo.marks[i].at = -1;
     R->due = false;
-    if (R->want) replay__begin(ctx);
+    if (R->want) replay__begin(ctx, false);
 }
 
 /* The session is over (emu_ggpo_stop, mutex held): keep what it has. */
@@ -851,31 +955,19 @@ static inline void replay_label_get(const char *json, replay_label_t *l) {
 
 /* ---- Playback -------------------------------------------------------------- */
 
-typedef struct {
-    bool     loaded;            /* a replay is open (replay_open) */
-    bool     on;                /* the board is following it */
-    uint8_t *state, *feed;
-    size_t   state_len, feed_len;
-    char     json[REPLAY_JSON_MAX];
-    char     unplayable[160];   /* "" when it can play on this ROM set */
-    uint32_t frames;
-    bool     fast;
-    uint32_t seek;              /* run unpaced until the board reaches this frame */
-    const game_profile_t *old_profile;
-    int      old_sps;
-    int32_t  old_set[FOLLOW_SET_WORDS];
-    replay_natives_t native;    /* its rounds in the game's formats */
-    char     error[160];
-} replay_play_t;
-
-static replay_play_t g_replay_play;
 
 static inline bool replay_playing(void) { return g_replay_play.on; }
 
-/* Run without pacing: fast-forward, or a seek not yet reached. */
+/* Playing as a follower of the replay's feed (the run loop waits on it). */
+static inline bool replay_play_follows(void) { return g_replay_play.on && !g_replay_play.native_on; }
+
+/* Run without pacing: fast-forward, or a seek not yet reached. The game's own
+ * view also runs unpaced through the boot to the first round (seek 1). */
 static inline bool replay_play_unpaced(void) {
     const replay_play_t *P = &g_replay_play;
-    return P->on && !g_follow.ended && !g_follow.split && (P->fast || g_follow.frame < P->seek);
+    if (!P->on) return false;
+    if (P->native_on) return !g_native_play.ended && (P->fast || g_native_play.total < P->seek);
+    return !g_follow.ended && !g_follow.split && (P->fast || g_follow.frame < P->seek);
 }
 
 static inline void replay__close(void) {
@@ -885,6 +977,9 @@ static inline void replay__close(void) {
     P->state = P->feed = NULL;
     P->state_len = P->feed_len = 0;
     replay__natives_free(&P->native);
+    memset(P->nround, 0, sizeof P->nround);
+    P->nrounds = 0;
+    P->native_frames = 0;
     P->loaded = false;
 }
 
@@ -943,6 +1038,40 @@ static inline void replay__open_native(mz_zip_archive *z) {
     }
 }
 
+/* The rounds the game's own code can play: those it keyed ("keyed":1 in
+ * round.json), as game_native_round_t over P->native's buffers. */
+static inline void replay__native_rounds(void) {
+    replay_play_t *P = &g_replay_play;
+    P->nrounds = 0;
+    P->native_frames = 0;
+    for (int k = 0; k < P->native.n; k++) {
+        const replay_native_t *r = &P->native.round[k];
+        int keyed = 0;
+        uint32_t frames = 0;
+        if (!json_get_int(r->json, "keyed", &keyed) || !keyed) continue;
+        json_get_u32(r->json, "key_frames", &frames);
+        game_native_round_t *in = &P->nround[P->nrounds++];
+        memset(in, 0, sizeof *in);
+        for (int i = 0; i < r->nparts; i++) {
+            in->part[i].name = r->name[i];
+            in->part[i].addr = r->addr[i];
+            in->part[i].data = r->data[i];
+            in->part[i].len  = r->len[i];
+        }
+        in->nparts = r->nparts;
+        snprintf(in->json, sizeof in->json, "%.*s", (int)sizeof in->json - 1, r->json);
+        P->native_frames += frames ? frames - 1 : 0;
+    }
+}
+
+/* Does the next start play in the game's own code? */
+static inline bool replay__view_native(const game_profile_t *prof) {
+    const replay_play_t *P = &g_replay_play;
+    bool can = prof && prof->native_play && P->nrounds > 0;
+    if (!P->feed) return can;
+    return can && P->view != REPLAY_VIEW_INPUTS;
+}
+
 /* Can this replay play here? "" if so, else why not, into P->unplayable. */
 static inline void replay__check_playable(void) {
     replay_play_t *P = &g_replay_play;
@@ -957,6 +1086,8 @@ static inline void replay__check_playable(void) {
         snprintf(P->unplayable, sizeof P->unplayable, "it is a %s replay; %s is loaded", romset, here);
     else if (!profile_by_id(profile))
         snprintf(P->unplayable, sizeof P->unplayable, "this build has no %s profile", profile);
+    else if (!P->feed && !replay__view_native(profile_by_id(profile)))
+        snprintf(P->unplayable, sizeof P->unplayable, "no round of it is in a form the game can play");
 }
 
 /* Open a replay file's bytes (copied). NULL, or why not; the label is then in
@@ -982,15 +1113,18 @@ static inline const char *replay_open(const void *data, size_t n) {
             if ((unsigned char)P->json[i] < 0x20) P->json[i] = ' ';
         mz_free(json);
         replay__open_native(&z);
+        replay__native_rounds();
     }
     mz_zip_reader_end(&z);
     uint32_t format = 0;
-    if (!json || !P->state || !P->feed) { replay__close(); return "not a replay (a part is missing)"; }
+    if (!P->state != !P->feed) { free(P->state); free(P->feed); P->state = P->feed = NULL; }
+    if (!json || (!P->feed && !P->native.n)) { replay__close(); return "not a replay (a part is missing)"; }
     if (!json_get_u32(P->json, "format", &format) || format > REPLAY_FORMAT) {
         replay__close();
         return "a replay from a newer build";
     }
     json_get_u32(P->json, "frames", &P->frames);
+    if (!P->feed) P->frames = P->native_frames;
     P->loaded = true;
     replay__check_playable();
     return NULL;
@@ -1020,10 +1154,39 @@ static inline const char *replay__join(emu_thread_ctx_t *ctx) {
     return err;
 }
 
+/* The game's own view stops: its rounds out of the profile, attract's jump as
+ * the player had it. */
+static inline void replay__native_end(void) {
+    replay_play_t *P = &g_replay_play;
+    if (P->native_on && P->native_prof && P->native_prof->native_play) P->native_prof->native_play(NULL, 0);
+    P->native_on   = false;
+    P->native_prof = NULL;
+    g_match_replay       = P->old_match_replay;
+    g_match_replay_stage = P->old_match_stage;
+    g_replay_stage_pin   = -1;
+}
+
+/* The game's own view from its start: a cold boot, the rounds to the profile,
+ * and attract sent straight to its replay fight. Mutex held. */
+static inline const char *replay__native_begin(void) {
+    replay_play_t *P = &g_replay_play;
+    if (g_netplay.reset_board) g_netplay.reset_board(g_netplay.reset_ctx);
+    input_reset();
+    P->native_prof = g_active_profile;
+    P->native_on   = true;
+    const char *err = g_active_profile->native_play(P->nround, P->nrounds);
+    if (err) return err;
+    g_match_replay       = 1;
+    g_match_replay_stage = -1;
+    P->seek = 1;
+    return NULL;
+}
+
 /* Put the board back as the player had it: profile, settings, battery, a cold
  * boot. Mutex held. `boot` false when a reset follows anyway (a session's). */
 static inline void replay__restore(bool boot) {
     replay_play_t *P = &g_replay_play;
+    replay__native_end();
     follow_stop();
     g_active_profile      = P->old_profile;
     g_emu_steps_per_slice = P->old_sps;
@@ -1049,17 +1212,26 @@ static inline const char *replay_play_start(emu_thread_ctx_t *ctx) {
     if (!P->on) {
         P->old_profile = g_active_profile;
         P->old_sps     = g_emu_steps_per_slice;
+        P->old_match_replay = g_match_replay;
+        P->old_match_stage  = g_match_replay_stage;
         follow_settings(P->old_set);
         backup_ram_detach();   /* the replay's battery is in its state */
         replay_rec_break("a replay is playing");
         follow_lead_break("a replay is playing");
     }
+    replay__native_end();   /* a restart from either view */
     g_active_profile = profile_by_id(profile);
     if (g_hle_extra_session_off) g_hle_extra_session_off();   /* --gems-*: not the board it was */
-    if (g_netplay.reset_board) g_netplay.reset_board(g_netplay.reset_ctx);   /* the profile's hooks */
-    input_reset();
     P->on = true;
-    const char *err = replay__join(ctx);
+    const char *err;
+    if (replay__view_native(g_active_profile)) {
+        follow_stop();
+        err = replay__native_begin();
+    } else {
+        if (g_netplay.reset_board) g_netplay.reset_board(g_netplay.reset_ctx);   /* the profile's hooks */
+        input_reset();
+        err = replay__join(ctx);
+    }
     if (err) {
         snprintf(P->error, sizeof P->error, "%s", err);
         replay__restore(true);
@@ -1086,6 +1258,7 @@ static inline void replay_game_loaded(void) {
     replay_play_t *P = &g_replay_play;
     replay_rec_break("game loaded");
     if (!P->on) return;
+    replay__native_end();
     follow_stop();
     g_emu_steps_per_slice = P->old_sps;
     follow_settings_put(P->old_set);
@@ -1093,8 +1266,17 @@ static inline void replay_game_loaded(void) {
     if (P->loaded) replay__check_playable();
 }
 
+/* "native" / "inputs" to REPLAY_SAVE_* or REPLAY_VIEW_*; -1 when neither. */
+static inline int replay_format_parse(const char *s, bool view) {
+    if (!strcmp(s, "native")) return view ? REPLAY_VIEW_NATIVE : REPLAY_SAVE_NATIVE;
+    if (!strcmp(s, "inputs")) return view ? REPLAY_VIEW_INPUTS : REPLAY_SAVE_INPUTS;
+    if (view && !strcmp(s, "auto")) return REPLAY_VIEW_AUTO;
+    return -1;
+}
+
 #ifndef __EMSCRIPTEN__
-/* The record switch, kept in <user dir>/replay.cfg ("record=1"). */
+/* The record switch and the save format, kept in <user dir>/replay.cfg
+ * ("record=1", "format=native|inputs"). */
 static inline bool replay__cfg_path(char *out, size_t cap) {
     if (!backup_ram_user_dir(out, cap)) return false;
     size_t n = strlen(out);
@@ -1107,8 +1289,12 @@ static inline void replay_settings_load(void) {
     if (!replay__cfg_path(path, sizeof path)) return;
     FILE *f = fopen(path, "r");
     if (!f) return;
-    while (fgets(line, sizeof line, f))
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = '\0';
         if (!strncmp(line, "record=", 7)) g_replay_rec.want = atoi(line + 7) != 0;
+        int fmt = !strncmp(line, "format=", 7) ? replay_format_parse(line + 7, false) : -1;
+        if (fmt >= 0) g_replay_rec.format = fmt;
+    }
     fclose(f);
 }
 
@@ -1120,7 +1306,8 @@ static inline void replay_settings_save(void) {
     backup_ram_mkdir(dir);
     FILE *f = fopen(path, "w");
     if (!f) return;
-    fprintf(f, "record=%d\n", g_replay_rec.want ? 1 : 0);
+    fprintf(f, "record=%d\nformat=%s\n", g_replay_rec.want ? 1 : 0,
+            g_replay_rec.format == REPLAY_SAVE_INPUTS ? "inputs" : "native");
     fclose(f);
 }
 #endif
@@ -1153,10 +1340,19 @@ static inline const char *replay_native_install(emu_thread_ctx_t *ctx, int k) {
     return err;
 }
 
-/* Go to `frame`: from the start again if it is behind, then unpaced. */
+/* Go to `frame`: from the start again if it is behind, then unpaced. In the
+ * game's own view a frame is one of its key player's, counted over every round. */
 static inline const char *replay_play_seek(emu_thread_ctx_t *ctx, uint32_t frame) {
     replay_play_t *P = &g_replay_play;
     if (!P->on) return "no replay is playing";
+    if (P->native_on) {
+        if (frame < g_native_play.total || g_native_play.ended) {
+            const char *err = replay__native_begin();
+            if (err) return err;
+        }
+        P->seek = frame ? frame : 1;
+        return NULL;
+    }
     if (frame < g_follow.frame || g_follow.split || g_follow.ended) {
         const char *err = replay__join(ctx);
         if (err) return err;
@@ -1165,17 +1361,51 @@ static inline const char *replay_play_seek(emu_thread_ctx_t *ctx, uint32_t frame
     return NULL;
 }
 
-/* {"on","frame","frames","ended","split","why","fast","seeking"} */
+/* The view a start would play now, or is playing: "native" or "inputs". */
+static inline const char *replay__view_name(void) {
+    const replay_play_t *P = &g_replay_play;
+    if (P->on) return P->native_on ? "native" : "inputs";
+    char profile[32] = "";
+    json_get_str(P->json, "profile", profile, sizeof profile);
+    return P->loaded && replay__view_native(profile_by_id(profile)) ? "native" : "inputs";
+}
+
+/* {"on","frame","frames","ended","split","why","fast","seeking","view",...}:
+ * frames are the feed's, or in the game's own view its key player's. */
+typedef struct { uint32_t frame, frames; bool ended, split; } replay__pos_t;
+
+static inline replay__pos_t replay__pos(const replay_play_t *P, bool nat) {
+    replay__pos_t r = {0};
+    if (nat) {
+        r.frame = g_native_play.total;
+        r.frames = g_native_play.total_frames;
+        r.ended = g_native_play.ended;
+        return r;
+    }
+    r.frames = P->frames;
+    if (!P->on) return r;
+    r.frame = g_follow.frame;
+    r.ended = g_follow.ended;
+    r.split = g_follow.split;
+    return r;
+}
+
 static inline void replay_play_status(char *out, size_t cap) {
     const replay_play_t *P = &g_replay_play;
+    bool nat = P->on && P->native_on;
     char why[160];
-    json_escape(why, sizeof why, g_follow.why);
+    json_escape(why, sizeof why, nat ? "" : g_follow.why);
+    replay__pos_t pos = replay__pos(P, nat);
+    uint32_t frame = pos.frame, frames = pos.frames;
+    bool ended = pos.ended, split = pos.split;
     snprintf(out, cap,
              "{\"on\":%d,\"loaded\":%d,\"frame\":%u,\"frames\":%u,\"ended\":%d,\"split\":%d,"
-             "\"why\":\"%s\",\"fast\":%d,\"seeking\":%d,\"native_rounds\":%d}",
-             P->on ? 1 : 0, P->loaded ? 1 : 0, P->on ? g_follow.frame : 0, P->frames,
-             P->on && g_follow.ended ? 1 : 0, P->on && g_follow.split ? 1 : 0, P->on ? why : "",
-             P->fast ? 1 : 0, P->on && g_follow.frame < P->seek ? 1 : 0, P->native.n);
+             "\"why\":\"%s\",\"fast\":%d,\"seeking\":%d,\"native_rounds\":%d,\"view\":\"%s\","
+             "\"keyed_rounds\":%d,\"round\":%d,\"rounds\":%d,\"has_inputs\":%d}",
+             P->on ? 1 : 0, P->loaded ? 1 : 0, frame, frames, ended ? 1 : 0, split ? 1 : 0,
+             P->on ? why : "", P->fast ? 1 : 0, P->on && frame < P->seek ? 1 : 0, P->native.n,
+             replay__view_name(), P->nrounds, nat ? g_native_play.round + 1 : 0,
+             nat ? g_native_play.rounds : 0, P->feed ? 1 : 0);
 }
 
 #endif /* REPLAY_H */
