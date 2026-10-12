@@ -89,14 +89,6 @@ static uint32_t model2a_zero_read_cb(mem_region_t *r, uint32_t addr, int size) {
     return 0;
 }
 
-/* model2.cpp tgpid_r */
-static uint32_t model2a_tgpid_read_cb(mem_region_t *r, uint32_t addr, int size) {
-    static const uint8_t id[16] = { 0,'T','A','H', 0,'A','K','O', 0,'Z','A','K', 0,'M','T','K' };
-    uint32_t off = addr - r->base, v = 0;
-    for (int k = 0; k < size && off + (uint32_t)k < 16u; k++) v |= (uint32_t)id[off + (uint32_t)k] << (8 * k);
-    return v;
-}
-
 /* ---- Texture and luma RAM ------------------------------------------------ */
 
 /* The regions carry no data pointer (their windows are twice the buffer, and
@@ -180,9 +172,6 @@ static inline void model2a_install(memory_bus_t *bus,
         r->read_cb = model2a_ctl_read_cb;
         r->write_cb = model2a_ctl_write_cb;
     }
-    if ((r = mem_add_region(bus, "TGP_ID", 0x00980030u, 0x10u, NULL, 1)))
-        r->read_cb = model2a_tgpid_read_cb;
-
     static const struct { const char *name; uint32_t base; } tex[] = {
         { "TEXRAM0_2A", 0x12000000u }, { "TEXRAM0_2A_M", 0x12200000u },
         { "TEXRAM1_2A", 0x12400000u }, { "TEXRAM1_2A_M", 0x12600000u },

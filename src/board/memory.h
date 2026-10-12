@@ -259,12 +259,24 @@ static void coprogram_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int
     if (size == 4) cop_write(val);
 }
 
-/* Buffer RAM repeats every 128 KB up to 0x97FFFF (MAME .mirror(0x60000)).
- * STF never addresses a mirror. */
+/* The coprocessor ID at 0x980030, on every board (MAME tgpid_r, in
+ * model2_base_mem; "Top Skater reads here and discards the result"). STF never
+ * reads it. */
+static uint32_t tgp_id_read_cb(mem_region_t *r, uint32_t addr, int size) {
+    static const uint8_t id[16] = { 0,'T','A','H', 0,'A','K','O', 0,'Z','A','K', 0,'M','T','K' };
+    uint32_t off = addr - r->base, v = 0;
+    for (int k = 0; k < size && off + (uint32_t)k < 16u; k++) v |= (uint32_t)id[off + (uint32_t)k] << (8 * k);
+    return v;
+}
+
+/* Buffer RAM repeats every 128 KB up to 0x97FFFF (MAME .mirror(0x60000)), and
+ * the coprocessor ID sits beside COPRO_CTL. STF touches neither. */
 static void mem__add_base_extras(memory_bus_t *bus) {
     static const char *const name[3] = { "BUFF_RAM_M1", "BUFF_RAM_M2", "BUFF_RAM_M3" };
     for (uint32_t i = 0; i < 3u; i++)
         mem_add_region(bus, name[i], BUFF_RAM_BASE + 0x20000u * (i + 1u), BUFF_RAM_SIZE, bus->buff_ram, 0);
+    mem_region_t *r = mem_add_region(bus, "TGP_ID", TGP_ID_BASE, TGP_ID_SIZE, NULL, 1);
+    if (r) r->read_cb = tgp_id_read_cb;
 }
 
 /* COPRO_CTL (0x980000): plain registers, except that 0x980004 reads the COP's
