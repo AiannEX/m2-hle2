@@ -1,10 +1,10 @@
-# Bubblegum fixes: an audit (Pinboard #245, refreshed in #674)
+# Bubblegum fixes: an audit (Pinboard #245, refreshed in #674, scanned again in #682)
 
 This file lists the places where m2-hle2 patches a symptom and the board has a simpler rule underneath. A patch here means a list of model numbers or addresses, a fitted threshold, a hook that pokes RAM, or a per-game switch for something every board does.
 
-The first audit was of master at `28d3563` (2026-09-30). This refresh is of master at `dab0dbf` (2026-10-12), after Sega Rally (Model 2A) came up and Daytona, Virtua Cop and House of the Dead were prepared. Line numbers are as of `dab0dbf`. Nothing in `src/` was changed by either audit.
+The first audit was of master at `28d3563` (2026-09-30). The refresh was of master at `dab0dbf` (2026-10-12), after Sega Rally (Model 2A) came up and Daytona, Virtua Cop and House of the Dead were prepared. #678 fixed four items. #682 scanned the tree again: #678's branch with master `c279795` merged in (#663, #666 and #669 had landed in between). Sections 1 to 6 keep their `dab0dbf` line numbers unless a line says otherwise, and section 7 uses `c279795` + #678. Nothing in `src/` was changed by any of the audits.
 
-Sections 1 to 4 list the open items, ranked by how many games they touch. Section 5 says what became of the first audit, and section 6 lists what was looked at and left alone on purpose.
+Sections 1 to 4 list the open items, ranked by how many games they touch. Section 5 says what became of the first audit, and section 6 lists what was looked at and left alone on purpose. Section 7 holds what the #682 scan found that no earlier audit listed.
 
 ---
 
@@ -87,13 +87,13 @@ The first two are cheap: make them follow the file's NaN rule (`:76-104`), then 
 
 ### 2.3 The display list goes through the game's model catalogue
 
-`geo3d_scan_geo_list` maps an object's address back to a model-table entry (`geo3d.h:1232-1243`, `geo3d_lookup_by_pol`) and decodes through it (`:1372-1387`). Every profile sets `mesh_ptr_subtract` / `mesh_ptr_add` to the same 0x02000010 / 0x10. That pair is the board's own rule written as constants: the mesh is at polygon ROM `(oba & 0x7FFFFF) * 4` (MAME `geo_object_data`).
+`geo3d_scan_geo_list` maps an object's address back to a model-table entry (`geo3d.h:1197-1209` as of `c279795`, `geo3d__geol_object` → `geo3d_lookup_by_pol`) and decodes through it (`:1440`). Every profile sets `mesh_ptr_subtract` / `mesh_ptr_add` to the same 0x02000010 / 0x10. That pair is the board's own rule written as constants: the mesh is at polygon ROM `(oba & 0x7FFFFF) * 4` (MAME `geo_object_data`).
 
-Sega Rally has no table and already reads the mesh at the object's address (`game_render.h:2432-2440`, taken whenever `model_idx < 0`). So one board has two draw paths, and only the table path has the mesh cache and the colour from table+4.
+Sega Rally has no table and already reads the mesh at the object's address (`game_render.h:2434-2445` as of `c279795`, taken whenever `model_idx < 0`). So one board has two draw paths, and only the table path has the mesh cache and the colour from table+4.
 
-`MODEL_ENTRY_SIZE` is fixed at 16 (`geo3d.h:39`), but Daytona's entries are 20 bytes (`daytona.h:74-76`). Every Daytona entry after the first would be misread. Today that is latent: Daytona, Virtua Cop and House of the Dead have a `load_fn` but no `install_fn`, so none of them boots yet, and only the object viewer reads their tables.
+~~`MODEL_ENTRY_SIZE` is fixed at 16, but Daytona's entries are 20 bytes.~~ **Fixed on master by #663 (`f1a832e`).** `board/model_table.h:35-37` has three entry layouts (1995's, Virtua Cop's, Daytona's 20-byte one). `game_quirks_t.model_layout` picks one (`daytona.h:79`, `vcop.h:63`), and every table reader goes through `model_entry_read`. #666 (`37a8a3e`) added `model_mesh_resolve` (`model_table.h:109-118`), which refuses a polygon-RAM pointer instead of reading it as ROM.
 
-**Fix:** game frames always read at oba. Keep the table for the object viewer, the explorer and labels, with a stride per profile.
+**Fix:** game frames always read at oba. Keep the table for the object viewer, the explorer and labels; the per-profile stride is already there.
 
 ### 2.4 The GEO, as the board has it
 
@@ -191,7 +191,112 @@ These were checked and are deliberate, measured or proven board-identical:
   - `sharc_coli.h` and `sharc_zanzou.h`;
   - `savestate.h` and `rollback.h`.
 
+## 7. Found by the #682 scan
+
+This is a fresh scan of the board, core and renderer, looking for shared behaviour gated on one game, fitted values, and places we answer differently from MAME. It leaves out everything in sections 1 to 4. Line numbers are of `c279795` + #678. Each item is tagged with what fixing it takes:
+
+- **doc**: a comment or document only.
+- **cheap**: no STF frame, timing or netplay change.
+- **MAME**: needs a MAME check first, or moves STF.
+
+MAME references are to `claude_mame/mame/src/mame/sega/model2.cpp` unless another file is named.
+
+### 7.1 The board variant is a label nothing reads
+
+- **`game_profile_t.board` is never read** (`game_profile.h:247`). Every profile sets it (`sfight.h:877`, `fvipers.h:228`, `srallyc.h:171`, `daytona.h:69` and the rest), but no code tests `->board`. Three pieces of 2A hardware therefore exist only because Sega Rally's installer calls them:
+  - The 2A map: `model2a_install` (`srallyc.h:140`, its only caller). It sets up the TGP ports, `TGP_ID`, the 16-bit texture RAM, `POLY_COUNT`, the UART at 0x01C80000 and the luma lane.
+  - The 2B COP firmware pointer: `g_sharc_copro_rom = rs->copro_data` is set by hand in `sfight.h:182` and `fvipers.h:157`. A 2B profile that forgets it gets `sharc_sincos`'s host `sinf`/`cosf` fallback (`sharc.h:192-194`) in place of the ROM tables, silently.
+  - The 2A savestate parts (next item).
+
+  Who it affects: the next 2A game (VF2, Virtua Cop 2, Dynamite Cop). It would run on the 2B map with the SHARC HLE and no TGP. **cheap**: it belongs in the board-level install of §2.2, keyed on `board`. STF is unchanged.
+- **2A and CPU state are saved under Sega Rally's id only.** `srallyc.h:159-163` registers `IO5649`, `TGP` and `I960FRAC` with `savestate_extra("srallyc", …)`. `savestate.h:401` and `rollback.h:114-115` write an extra part only when the active profile's id matches. `g_tgp` and `g_io5649` are board state, and `g_i960_cyc_frac` (`i960.h:117`) is CPU state. A second 2A game would lose all three on a save, a load, a rollback or a replay seek: the "loaded state drew no 3D" bug that the comment at `srallyc.h:160` describes. **cheap**: make them core parts, saved when the hardware is attached. That changes `LAYOUT`, so old Sega Rally states stop loading.
+
+### 7.2 The 315-5649 I/O chip is Sega Rally's only
+
+- `input.h:276` attaches the 315-5649 model (`io_5649.h`) only when `quirks.io_5649` is set, and only `srallyc.h:200` sets it. Every other profile gets `input_io_read_cb` (`input.h:246-253`), which serves IN0-IN2 and answers anything else from the plain buffer. MAME fits the same chip to 2B, with `eeprom_w` on port A and `in0_r` on port B (`model2.cpp:3206-3210`, the model2b config).
+- Three behaviours go missing with it:
+  - Port A's control bit switching IN0's top half to the EEPROM (`io_5649.h:170`).
+  - The direction register.
+  - The status register: MAME's `315_5649.cpp` answers 0x0C at register 0x0D. We answer 0xFF or the last write (`input.h:252`, `io_5649.h:181`).
+- `io_5649.h:170` also reads the EEPROM's DO as 1 always, where MAME `in0_r` (`:1913-1919`) reads a real 93C46. Neither path has an EEPROM.
+- Who it affects: STF (all four profiles), FV, m2snake and homebrew on 2B, and Sega Rally's EEPROM. **MAME**: check whether STF or FV touch port A or the EEPROM. If they do, attaching the chip moves them.
+
+### 7.3 Memory map against MAME
+
+| What | Ours | MAME | Games | Tag |
+|---|---|---|---|---|
+| bufferram at reset | zeros (`memory.h:661`, the bus memset) | filled with `0x07800f0f`, an END word (`:300-303`) | every game. A list walk into unwritten bufferram stops at once in MAME, but runs through zeros here. | **MAME** (boot frames) |
+| bufferram mirrors | only 0x900000-0x91FFFF (`memory.h:712`) | `.mirror(0x60000)`: also 0x920000, 0x940000, 0x960000 (`:1377`) | any game that uses a mirror. Ours reads 0 and drops writes. | **cheap**, if the unmapped log shows that STF never touches them |
+| 2B COP function port 0x880000-0x883FFF | the word goes in as written; reads pop a reply (`memory.h:253-259`) | `copro_function_port_w` puts `(offset>>2)&0xff` in bits 23-30 (`:703-709`), write-only. Our 2A path already does (`model2a.h:45`, `tgp.h:857`). | every 2B game | **MAME**: check what STF writes there. If it already writes whole command words, the encoding is the same and only the read differs. |
+| texram0 alias at 0x10F00000 | aliased (`constants.h:146-154`, `memory.h:757`) | not mapped; the 2B texture maps start at 0x11000000 (`:1745`) | STF uploads through it. The comment says object 3545 went blank without it. | **MAME**: a fitted alias MAME does not have. Find out how MAME gets object 3545's tiles. |
+| coprocessor ID 0x980030 | 2A only (`model2a.h:183`); reads 0 on 2B | `tgpid_r` in `model2_base_mem` (`:1381`), every variant | Top Skater reads it (2C) | **cheap** |
+| polygon count 0x10400000 | unmapped | `polygon_count_r` (`model2_v.cpp:314`) | any game that reads it | **cheap** |
+| board timers | write and read masked to 20 bits (`irq_timer.h:156`, `:165`); `TIMERS_SIZE` 0x15 aliases 0x10-0x14 onto timer 0 | 32 bits with the write mask, 0xF00000-0xF0000F only (`:116-125`) | a game that arms a timer above 0xFFFFF | **MAME** (`rand` reads the timers) |
+| sound UART control writes | dropped (`sound.h:693`); TxRDY/RxRDY ignore TxEN/RxE | i8251 honours mode and command | a driver that disables TX | **MAME** |
+| 2A texture RAM | a read returns texel n (`model2a.h:125-130`); writes narrower than 32 bits are dropped (`:112`) | `.ram()` returns the raw dword; `tex0_w` takes any width (`:1610`) | 2A games | **cheap** (STF untouched) |
+| `MAIN_DATA` writable, GEO/GEO_PROGRAM reads return stored bytes | `memory.h:754`, `:601-603` | ROM; `geo_r` 0, `geo_prg_r` 0xFFFFFFFF (`:1124`, `:1156`) | none known | **cheap** |
+
+### 7.4 The GEO walk and the renderer
+
+- **Every list starts from STF's camera.** `geo3d.h:1367-1373` resets the raster state for each list: identity matrix, focal 280, light (0,0,1), window 496×384. Only the mode, LOD and z-adjust carry over (`g_geol_held`). MAME's `render_frame_start` (`model2_v.cpp:741-763`) resets only the polygon list, `polygon_z` and `cur_window`, so focus, light, matrices, window and raster centre stay set from earlier lists. Who it affects: any game that sets these once, or not on every frame. **MAME**: STF sets them in every list, so a frame diff should show no change; confirm with `grade-zsort` before trusting that.
+- **More than 512 objects a frame are dropped without a word.** `MAX_GEO_MODELS` 512 (`geo3d.h:36`) ends the walk (`:1379`), and direct data past `GEO3D_DIRECT_WORDS` is dropped (`:1239`). MAME has no cap. Who it affects: busy scenes in racing games and Daytona. **cheap**: log a WARN when the cap is hit, then size it.
+- **The tile pens skip colorxlat until a game fills it.** `tile_pen_lut` (`tile_renderer.h:482-496`) shows the raw palette colour (`c5 << 3`) while colorxlat's luma-0x40 row is all zero. MAME always goes through colorxlat and gamma, which gives black then. Who it affects: every game's boot frames, and any program that never loads colorxlat (homebrew). **MAME**: it moves STF's pictures before colorxlat loads, and only those.
+- **The fill shader shades faces that have no luma base.** `game_render.h:649-650` (and `:664-665`, `:791-792`, `:804-805`) is `rgb = clamp(color.rgb * al * 2.0, …)`, an invented ×2. When a face has no texture LOD, the mip level is picked from screen derivatives (`:630-631`, `:774-775`). Only faces that are not from a display list reach these: the object viewer and m2snake. **cheap**, alongside the m2snake walker below.
+- `geo3d.h:1721-1726` takes the texture LOD from the patched oracle's `model2_v.cpp:470-480` (the M2-X11 note). Stock MAME uses the coarsest level. **doc**: this is deliberate, but nothing says so.
+
+### 7.5 The COP
+
+- **13 firmware commands that read arguments or reply have no case** in `sharc_exec.h`. They fall to the default (`:1817`), which logs them and gives them 0 arguments, so their arguments are then run as commands (§3):
+
+  | Opcode | Command | Arguments in | Replies |
+  |---|---|---|---|
+  | 0x0C801919 | `Fn_sqr_r` | 1 | 1 |
+  | 0x0D801B1B-0x10002020 | the C-accumulator group: `put_c`, `add_c`, `sub_c`, `mul_c`, `div_c` | 1 each | — |
+  | (same group) | `get_c` | 0 | 1 |
+  | 0x14002828 | `Fn_tri_shin` | 3 | 3 |
+  | 0x15002A2A | `Fn_get_inner` | 6 | 1 |
+  | 0x23804747 | `Fn_mul_matrix_rev` | 12 | — |
+  | 0x2E805D5D | `Fn_sub3` (its sibling `add3` is ported) | 6 | 3 |
+  | 0x3B007676 | `Fn_get_glo_ang_zyx` | 0 | 3 |
+  | 0x3C807979 | `Fn_ziku_rot` | ≥5 | — |
+  | 0x3D007A7A | `Fn_mul_matrix3` | 9 | — |
+  | 0x3D807B7B | `Fn_scrn_clip` | 5 | 1 |
+  | 0x3E007C7C / 0x3E807D7D | `load_inner_3x3` / `store_inner_3x3` | 2 each | — |
+  | 0x3F007E7E | `Fn_mul_matrix_inner3` | 2 | — |
+
+  The table is `stf-sharc/cpres1.asm:245-334`. Its `in=` notes are wrong for 0x55, 0x70 and 0x74, so take the counts from the handler bodies.
+  - STF never sends these commands. FV's firmware is the same library, and other 2B games probably are too.
+  - The other dispatch slots with no case are bare `rts` in this firmware, so the default is harmless for them.
+  - **cheap**: port them from cpres1, with a `cop_test` case each. That also settles most of §3's argument-table item.
+- **The bone table's index is masked.** `pm_bone[(int)args[0] & 0xF]` (`sharc_exec.h:1630`, `:1662`, `:1669`) wraps past 16, where the firmware addresses PM `0x21F20 + 12n` directly. Slot indices of 16 or more are ignored silently (`:1137`, `:1151`, `:1540`). **cheap** (a WARN); STF stays below 16.
+- **Accumulation order not yet held to the firmware.** These add in one expression, where `Fn_trans` adds one term at a time:
+  - `0x1C803939` (`:1172-1174`);
+  - `0x3A007474`'s trans (`:1658`);
+  - the rotation builds at `:1065-1067` and `:1608-1610`.
+
+  `match-replay` holds the attract fight bit-identical, so any of them that it reaches already agree. **MAME** (`cop_replay` on a capture that reaches them).
+- `Fn_initialize` (`:1494`) resets only `stack_top`. The firmware also resets the current-slot pointer (DM 0x3033F = 0x305A0). It probably does not matter to the HLE model. **doc**.
+- Checked and right: every handler's sqrt, atan2, asin and division goes through `sharc_fw_*`. `0x35806B6B` replies 0 on both of the firmware's exits.
+
+### 7.6 Shared code fitted to m2snake
+
+These add to "The homebrew display-list walker" in §4. Every `geo_displaylist` program sees them, and no commercial game does. They are **cheap**, and they go when that walker goes:
+
+- `game_frame.h:84-85` walks from a fixed 0x10000 ("every m2-snake homebrew uses read_start 0x10000") and ignores `g_geodl_snap_rstart`, which the board walk at `:91` uses.
+- `game_frame.h:161-164` forces `g_geo_wireframe = 0; g_backface_cull = 0;`, overwriting the player's settings for the rest of the session.
+- `game_frame.h:168` turns off the in-between-frame lerp.
+- `GEO3D_NEAR_CULL`, the 1.5-unit reject and the ×2 boost (`geo3d.h:623-661`, `:696`) sit in the shared emit helpers. They are gated on `g_geo_flat_color`, not on m2snake.
+
+### 7.7 Looked at in #682 and found right
+
+- These are STF-only features, and gated as such: the profile-id checks in `sky_eye.h:106-107`/`:272`, `gems.h:297`/`:531`, `netplay.h:2280-2289` (PS3 cross-play), `main_libretro.c:2118` and `main_web.c:1077`.
+- These profile fields are genuinely per game: `vs_rematch`, `enemy_ranks`, `attract_replay`, `match_info`, `native_*`, `in_play`, `model_table_*` / `model_layout`, `any_program`, `preliminary`, `parent_zip_name`.
+- These match MAME: the 0x400000 sound bank register (`sound.h:536-541`, `model2snd_ctrl`), the IRQ pin grouping, timer expiry and the idle value, `fifo_control_r`, the tile and char mirrors, the 2A luma lane, the TGP FIFO and upload paths.
+- These match `model2rd.ipp`: specular, luminance, the backface cull, the window slice order, and the texel → luma → colorxlat → gamma chain in the fill shader.
+
 ## Doc drift found on the way
+
+- `model2a.h:20-23` says the 2A I/O is served "when the profile sets quirks.io_5649" (§7.2), and lists the sound UART as still to do. That move is done at `:199-215`. Found in #682.
 
 - `fvipers.h:217-221` still lists `_700000_loop` as a hook to port. It was removed in #254.
 - `fvipers.h:166-168`: the data-window comment contradicts its code (§2.2).
@@ -217,7 +322,9 @@ The sound pin (§2.1) and the board install (§2.2) were looked at and are not c
 ## Suggested order
 
 1. **The cheap fixes that move no STF frame.** The asin clamp and the empty 0x68 handler are done (see above). The sound pin (§2.1) and the board install (§2.2) are left, and are not cheap: they move FV, Sega Rally and homebrew, and need a protocol bump. For each, run `cop_replay`, `match-replay` and `det_digest`.
-2. **The COP argument table by dispatch index, and keeping unread replies (§3).** Both are ROM-free and testable with `cop_test` / `cop_replay`.
+2. **The COP argument table by dispatch index, and keeping unread replies (§3).** Both are ROM-free and testable with `cop_test` / `cop_replay`. Port the 13 missing firmware commands (§7.5) in the same pass.
+   - These #682 items move no STF frame and can go alongside: the 2A savestate parts made board parts (§7.1), a WARN at the GEO object cap (§7.4), and the 0x980030 and 0x10400000 reads (§7.3).
+   - These need MAME first: the 315-5649 on 2B (§7.2), the bufferram fill, the 2B function port and the 0x10F00000 alias (§7.3), and the per-list GEO reset (§7.4).
 3. **The model catalogue out of the game draw (§2.3).** Run `grade-models`, `grade-stages` and `grade-zsort`. This also unblocks Daytona's 20-byte table.
 4. **Real call frames, then table interrupts for STF (§1.1, §1.2).** These remove `EMU_IRQ_TABLE_MAX_SLICES` and the STF interrupt path. Re-grade everything and bump the protocol.
 5. **Board i960 costs for every game (§1.3).** This has the biggest payoff: Sega Rally loses its factor, and STF's `rand` matches the board. It also has the biggest re-grade, so do it last, once the cost model is final.
