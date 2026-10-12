@@ -22,15 +22,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Byte offsets within an entry, and the entry's size. */
+/* Byte offsets within an entry, and the entry's size. mat_at_zero: a header
+ * address of 0 is the textures ROM's first record, not "no headers" (Virtua
+ * Cop's model 0; noclip's modelTable.matAtZero, js/model.js). */
 typedef struct {
     uint8_t stride, uv, mat, mesh;
+    bool    mat_at_zero;
 } model_layout_t;
 
 /* Initializers, not compound literals: MSVC takes no compound literal in a
  * static initializer. In an expression, cast: (model_layout_t)MODEL_LAYOUT_1995. */
 #define MODEL_LAYOUT_1995    { .stride = 16, .uv = 0, .mat = 4, .mesh = 8 }
-#define MODEL_LAYOUT_VCOP    { .stride = 16, .uv = 4, .mat = 8, .mesh = 0 }
+#define MODEL_LAYOUT_VCOP    { .stride = 16, .uv = 4, .mat = 8, .mesh = 0, .mat_at_zero = true }
 #define MODEL_LAYOUT_DAYTONA { .stride = 20, .uv = 4, .mat = 8, .mesh = 0 }
 
 /* Where the table is in main_data, how many entries, and their layout. */
@@ -49,6 +52,14 @@ typedef struct {
 static inline model_table_t model_table_make(uint32_t off, uint32_t count, model_layout_t layout) {
     if (!layout.stride) layout = (model_layout_t)MODEL_LAYOUT_1995;
     return (model_table_t){ off, count, layout };
+}
+
+/* Same table, field by field (the layout's flag leaves padding memcmp would read). */
+static inline bool model_table_same(const model_table_t *a, const model_table_t *b) {
+    return a->off == b->off && a->count == b->count &&
+           a->layout.stride == b->layout.stride && a->layout.uv == b->layout.uv &&
+           a->layout.mat == b->layout.mat && a->layout.mesh == b->layout.mesh &&
+           a->layout.mat_at_zero == b->layout.mat_at_zero;
 }
 
 static inline uint32_t model_table__rd32(const uint8_t *p) {

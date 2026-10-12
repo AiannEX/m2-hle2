@@ -1397,6 +1397,12 @@ typedef struct {
  * entry, with the object command's texture addresses over the two streams.
  * mat_ptr and uv_ptr are 0 without a textures ROM. False when the model has
  * no mesh in the polygon ROM (model_mesh_resolve). */
+/* Whether a model-table model has a texture header stream at mat_ptr: any
+ * address but 0, and 0 too where the table says so (model_layout_t). */
+static inline bool geo3d_model_have_mat(const geo3d_models_t *md, uint32_t mat_ptr) {
+    return mat_ptr != 0 || md->table.layout.mat_at_zero;
+}
+
 static inline bool geo3d_model_streams(const geo3d_models_t *md, int model_idx,
                                        uint32_t *mesh_offset, uint32_t *mat_ptr, uint32_t *uv_ptr) {
     model_entry_t e;
@@ -1909,7 +1915,7 @@ static inline bool geo3d_decode_streams(geo3d_decode_walk_t *w) {
         }
     } else {
         if (!geo3d_model_streams(md, w->model_idx, &w->mesh_offset, &w->mat_word, &w->uv_word)) return false;
-        w->have_mat = w->mat_word != 0;
+        w->have_mat = md->materials && geo3d_model_have_mat(md, w->mat_word);
         w->have_uv  = w->uv_word != 0;
     }
     return true;
@@ -2084,6 +2090,91 @@ static inline void geo3d_decode_model(const geo3d_models_t *md, int model_idx,
     geo3d_split_reset();
     for (int i = 0; i < ia.n_idx - 8; i += 4) geo3d_decode_face(&w, i);
     geo3d_emit_state_reset();
+}
+
+/* ---- What a model's decode reads ---------------------------------------------
+ * noclip's decodeModel (js/model.js) after meshOffsetOf, walked with this
+ * decoder's own pieces (geo3d_decode_streams, geo3d_ia_walk, geo3d_tho_step,
+ * geo3d_texhdr_words, geo3d_uv_read), for a model-table model in the polygon
+ * ROM: the records, every textures-ROM byte whose value the faces use, in
+ * order, and what the faces come to. A header is read whenever the model has a
+ * header stream; the UV pairs only for a textured face, as far as the ROM
+ * holds them. NOCLIP-SYNC.md §6.5; tests/prepared_test.c checks it. */
+typedef struct {
+    int       records;            /* vertex-pair records walked, the end one included */
+    int       faces, textured;    /* faces with corners A and B, and of those the textured */
+    int       palette_max;        /* highest colour index of any header read; -1: none */
+    uint32_t *reads;              /* textures-ROM byte indices, the first reads_cap of n_reads */
+    int       n_reads, reads_cap;
+    uint32_t *tri_face;           /* each triangle's face (faces so far), the first tris_cap */
+    int       n_tris, tris_cap;
+} geo3d_mesh_reads_t;
+
+static inline void geo3d_reads_bytes(geo3d_mesh_reads_t *r, uint32_t byte, int n) {
+    for (int k = 0; k < n; k++, r->n_reads++)
+        if (r->n_reads < r->reads_cap) r->reads[r->n_reads] = byte + (uint32_t)k;
+}
+
+static inline void geo3d_reads_tris(geo3d_mesh_reads_t *r, int n) {
+    for (int k = 0; k < n; k++, r->n_tris++)
+        if (r->n_tris < r->tris_cap) r->tri_face[r->n_tris] = (uint32_t)r->faces;
+}
+
+/* A face's header, the stream moved on past it; false for untextured or none. */
+static inline bool geo3d_reads_header(geo3d_decode_walk_t *w, uint32_t at, geo3d_mesh_reads_t *r) {
+    if (!w->have_mat) return false;
+    uint32_t hw = w->mat_rec;
+    w->mat_rec += geo3d_tho_step(at);
+    uint16_t th[4];
+    if (!geo3d_texhdr_words(w->md->materials, w->md->materials_size, hw, th)) return false;
+    geo3d_reads_bytes(r, hw * 2u, 8);
+    geo3d_texhdr_t h = geo3d_texhdr_decode(th);
+    if ((int)h.matidx > r->palette_max) r->palette_max = (int)h.matidx;
+    return h.textured;
+}
+
+/* A textured face's points, the UV stream moved on past them either way. */
+static inline void geo3d_reads_uv(geo3d_decode_walk_t *w, bool tri_cnt, bool textured, geo3d_mesh_reads_t *r) {
+    if (w->have_uv && textured) {
+        float uvu[4], uvv[4];
+        int n = geo3d_uv_read(w->md->materials, w->md->materials_size, w->uv_word, tri_cnt, true, uvu, uvv);
+        for (int k = 0; k < n; k++) geo3d_reads_bytes(r, (w->uv_word + (uint32_t)k * 2u) * 2u, 4);
+    }
+    w->uv_word += tri_cnt ? 6u : 8u;    /* nv (pv,pu) pairs */
+}
+
+/* One face-loop iteration, as geo3d_decode_face takes it: a face needs A and
+ * B, and is a quad's two triangles, a triangle's one, or a lone edge's none. */
+static inline void geo3d_reads_face(geo3d_decode_walk_t *w, int i, geo3d_mesh_reads_t *r) {
+    const geo3d_ia_t *ia = w->ia;
+    const int n_sv = ia->n_sv, fi = i / 4;
+    int ai = ia->idx[i], bi = ia->idx[i + 1], ci = ia->idx[i + 2], di = ia->idx[i + 3];
+    bool tri_cnt = (fi < ia->n_qt && ia->qt[fi] == 2);
+
+    bool textured = geo3d_reads_header(w, geo3d_ia_attr(ia, fi), r);
+    geo3d_reads_uv(w, tri_cnt, textured, r);
+
+    if (ai < 0 || ai >= n_sv || bi < 0 || bi >= n_sv) return;
+    bool has_c = (ci >= 0 && ci < n_sv), has_d = (di >= 0 && di < n_sv);
+    geo3d_reads_tris(r, (tri_cnt || !has_c || !has_d) ? (has_c ? 1 : 0) : 2);
+    if (textured) r->textured++;
+    r->faces++;
+}
+
+/* Model model_idx's reads into r (its buffers and caps set by the caller).
+ * False when the model has no mesh in the polygon ROM; r->n_tris 0 is the
+ * decode drawing nothing (decodeModel's null). */
+static inline bool geo3d_mesh_reads(const geo3d_models_t *md, int model_idx, geo3d_mesh_reads_t *r) {
+    static geo3d_ia_t ia;
+    geo3d_decode_walk_t w = { .md = md, .model_idx = model_idx, .ia = &ia };
+    r->records = r->faces = r->textured = r->n_reads = r->n_tris = 0;
+    r->palette_max = -1;
+    if (md->obj_mesh || !geo3d_decode_streams(&w)) return false;
+    geo3d_ia_walk(&ia, w.polygons, w.polygons_size, w.mesh_offset, NULL);
+    r->records = ia.n_qt;
+    w.mat_rec = w.mat_word;
+    for (int i = 0; i < ia.n_idx - 8; i += 4) geo3d_reads_face(&w, i, r);
+    return true;
 }
 
 /* ---- Direct data -------------------------------------------------------------
@@ -2867,7 +2958,7 @@ static inline bool geo3d_mesh_build(geo3d_cmesh_t *m, uint32_t mesh_offset,
 static inline bool geo3d_models_same(const geo3d_models_t *a, const geo3d_models_t *b) {
     return a->polygons == b->polygons && a->materials == b->materials && a->main_data == b->main_data &&
            a->polygons_size == b->polygons_size && a->materials_size == b->materials_size &&
-           memcmp(&a->table, &b->table, sizeof a->table) == 0 &&
+           model_table_same(&a->table, &b->table) &&
            a->mesh_ptr_subtract == b->mesh_ptr_subtract && a->mesh_ptr_add == b->mesh_ptr_add;
 }
 
@@ -2892,7 +2983,8 @@ static geo3d_cmesh_t *geo3d_mesh_get(const geo3d_models_t *md, int model_idx,
     *m = (geo3d_cmesh_t){ .model_idx = model_idx, .mat_ptr = mat_ptr, .uv_ptr = uv_ptr, .md = *md };
     m->md.obj_mesh = NULL;
     m->md.obj_mesh_size = 0;
-    if (!geo3d_mesh_build(m, mesh_offset, mat_ptr != 0, uv_ptr != 0)) { m->used = false; return NULL; }
+    bool have_mat = md->materials && geo3d_model_have_mat(md, mat_ptr);
+    if (!geo3d_mesh_build(m, mesh_offset, have_mat, uv_ptr != 0)) { m->used = false; return NULL; }
     m->used = true;
     g_geo3d_mesh_count++;
     g_geo3d_mesh_builds++;
@@ -2930,7 +3022,7 @@ static int geo3d_mesh_for_draw(const geo3d_models_t *md, int model_idx,
     if (!md->main_data || !md->polygons) return GEO3D_DRAW_NONE;
     uint32_t mesh_offset, mat_ptr, uv_ptr;
     if (!geo3d_model_streams(md, model_idx, &mesh_offset, &mat_ptr, &uv_ptr)) return GEO3D_DRAW_NONE;
-    bool have_mat = mat_ptr != 0, have_uv = uv_ptr != 0;
+    bool have_mat = md->materials && geo3d_model_have_mat(md, mat_ptr), have_uv = uv_ptr != 0;
     /* Streams in texture RAM change under the cache: decode those every time. */
     if ((have_mat && (mat_ptr & 0x800000u)) || (have_uv && (uv_ptr & 0x800000u)))
         return GEO3D_DRAW_FULL;

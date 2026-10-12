@@ -136,3 +136,21 @@ noclip turns an entry's mesh pointer into a polygon-ROM offset with `meshOffsetO
 | hotd | 7465 | 0 | 0xf2dfe35c |
 
 Daytona's 27 polygon-RAM entries are skipped on both sides, so 3163 + 27 = 3190. Their offsets wrap to 0xFE0000xx, past the 16 MB polygon ROM, so `decodeModel` returns null for them. `model_mesh_resolve` refuses them before doing the arithmetic, so neither side ever reads them as ROM.
+
+### 6.5 Decoding the mesh (Pinboard #669)
+
+After `meshOffsetOf`, noclip's `decodeModel` walks the records, then runs the face loop over the texture header stream (at `matPtr` * 2, moved by each record's signed step in attribute bits 12..16) and the UV stream (at `uvPtr` * 2, moved by three or four pairs every face). It reads a header whenever the model has a stream, and the points only for a textured face, as far as the ROM holds them. A face counts when its corners A and B exist. It becomes two triangles as a quad, one as a triangle, and none as a lone edge.
+
+m2-hle2's decoder (`geo3d_decode_model`) is built from the same pieces: `geo3d_ia_walk`, `geo3d_tho_step`, `geo3d_texhdr_words` and `geo3d_uv_read`. `geo3d_mesh_reads` (`board/geo3d.h`) walks a model-table model with those same pieces and reports what noclip reports. That is the records walked, every textures-ROM byte whose value a face uses (in order), the faces and the textured ones, the highest colour index, and which face each triangle came from.
+
+One difference was found and fixed. noclip reads Virtua Cop's headers at address 0 (`modelTable.matAtZero`; model 0's `mat` is 0), while m2-hle2 took 0 to mean no headers. That cost 243 textured faces. `model_layout_t.mat_at_zero` now says so for Virtua Cop's layout, and `geo3d_model_have_mat` applies it in the decoder and the mesh cache. Daytona's one `mat` of 0 stays without headers on both sides.
+
+`prepared_test` decodes every ROM-backed mesh and compares it with noclip's master (aefb324). noclip's numbers come from `decodeModel` run under node with the polygon and textures ROMs wrapped, so every index read is logged. The FNV-1a covers, per mesh, its index, offset and record count, the count and indices of the textures-ROM bytes read, then 0xFFFFFFFF for a null decode, or else `faceCount`, `texturedFaces`, `paletteMax`, the triangle count and each triangle's face.
+
+| set | meshes | null | records | faces | textured | FNV-1a |
+|---|---|---|---|---|---|---|
+| vcop | 1234 | 0 | 61375 | 57495 | 57002 | 0xae157b11 |
+| daytona | 3163 | 813 | 203300 | 163823 | 138791 | 0x5195b8e6 |
+| hotd | 7465 | 0 | 466634 | 378760 | 367185 | 0xdc922fa1 |
+
+On vcop and daytona no header address is in texture RAM (bit 23), negative, or past the ROM, and no set's UV stream starts in texture RAM, so the board's texture-RAM path never comes into it. Daytona's 813 null meshes are ones whose faces are all lone edges or lack A or B; both sides decode them to nothing. The 27 polygon-RAM entries (2139-2165) have no ROM mesh and are skipped.
