@@ -259,6 +259,14 @@ static void coprogram_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int
     if (size == 4) cop_write(val);
 }
 
+/* Buffer RAM repeats every 128 KB up to 0x97FFFF (MAME .mirror(0x60000)).
+ * STF never addresses a mirror. */
+static void mem__add_base_extras(memory_bus_t *bus) {
+    static const char *const name[3] = { "BUFF_RAM_M1", "BUFF_RAM_M2", "BUFF_RAM_M3" };
+    for (uint32_t i = 0; i < 3u; i++)
+        mem_add_region(bus, name[i], BUFF_RAM_BASE + 0x20000u * (i + 1u), BUFF_RAM_SIZE, bus->buff_ram, 0);
+}
+
 /* COPRO_CTL (0x980000): plain registers, except that 0x980004 reads the COP's
  * reply-FIFO status (cop_fifo_status), which boot code polls for ready. */
 static uint32_t copro_ctl_read_cb(mem_region_t *r, uint32_t addr, int size) {
@@ -710,6 +718,7 @@ static inline void mem_add_regions(memory_bus_t *bus, uint8_t *rom_data, size_t 
       if (r) { r->read_cb = coprogram_read_cb; r->write_cb = coprogram_write_cb; } }
     mem_add_region(bus, "COPRO_SHARC_IOP", COPRO_SHARC_IOP_BASE, COPRO_SHARC_IOP_SIZE, bus->copro_sharc,   0);
     mem_add_region(bus, "BUFF_RAM",        BUFF_RAM_BASE,        BUFF_RAM_SIZE,        bus->buff_ram,      0);
+    mem__add_base_extras(bus);
     /* Wire BUFF_RAM into the SHARC as DM[0x01400000]: the i960 writes animation
      * blobs to BUFF_RAM (0x00900000); 0x25004A4A reads them by word offset.
      * cop_reset() zeroed the field, so set it here (after reset, after alloc). */

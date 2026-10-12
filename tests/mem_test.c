@@ -64,6 +64,11 @@ int main(void) {
     mem_write32(&bus, MAIN_DATA_BASE + 0x4000, 0xCAFEF00D);
     CHECK(mem_read32(&bus, MAIN_DATA_BASE + 0x4000) == 0xCAFEF00D, "MAIN_DATA round-trip");
 
+    /* Buffer RAM repeats every 128 KB up to 0x97FFFF (MAME .mirror(0x60000)). */
+    mem_write32(&bus, BUFF_RAM_BASE + 0x60010, 0x5A5AA5A5);
+    CHECK(mem_read32(&bus, BUFF_RAM_BASE + 0x10) == 0x5A5AA5A5, "bufferram mirror at 0x960000");
+    CHECK(mem_read32(&bus, BUFF_RAM_BASE + 0x20010) == 0x5A5AA5A5, "bufferram mirror at 0x920000");
+
     /* TEXRAM mirror aliases the same buffer. */
     mem_write32(&bus, TEXRAM0_BASE + 0x100, 0x11223344);
     CHECK(mem_read32(&bus, TEXRAM0_MIRROR_BASE + 0x100) == 0x11223344, "TEXRAM0 mirror aliases base");
