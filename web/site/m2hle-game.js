@@ -48,13 +48,16 @@ const m2hleGame = (() => {
   const desc = document.querySelector('meta[name="description"]');
   if (desc) desc.content = 'Play ' + game.title + ' in your browser, with your own copy of the game.';
 
-  /* The arcade (arcade/stf-arcade.mjs) is the Fly's board and ranking, which are
-   * Sonic the Fighters': another game keeps its own save (m2hle-save.js). Named
-   * with this script's own ?v=, as index.html names everything. */
-  if (id === 'sfight' && document.currentScript) {
+  /* The arcade (arcade/stf-arcade.mjs): a shared board per game, and whether this
+   * browser keeps the game's own. ?game= tells it which board and which words: Sega
+   * Rally's own, not the Fly's, which are Sonic the Fighters'. Named with this
+   * script's own ?v=, as index.html names everything. */
+  if (document.currentScript) {
     const s = document.createElement('script');
+    const q = new URLSearchParams(new URL(document.currentScript.src).search);
+    q.set('game', id);
     s.type = 'module';
-    s.src = 'arcade/stf-arcade.mjs' + new URL(document.currentScript.src).search;
+    s.src = 'arcade/stf-arcade.mjs?' + q;
     document.head.append(s);
   }
 

@@ -1216,8 +1216,8 @@ EMSCRIPTEN_KEEPALIVE const char *web_replay_status(void) {
 /* The page is going (pagehide): keep the newest backup RAM. */
 EMSCRIPTEN_KEEPALIVE void web_backup_flush(void) { backup_ram_flush(); }
 
-/* Whether the set's backup RAM goes in localStorage (m2hle-save.js: a game whose
- * page asks first, Sega Rally). Off, the board still has it for this visit, blank
+/* Whether the set's backup RAM goes in localStorage (the arcade's keepSave: Sega
+ * Rally asks first). Off, the board still has it for this visit, blank
  * at the load, and nothing is written; turned on mid-game, what the board holds
  * now is stored. Before a load it decides how that load opens it. */
 EMSCRIPTEN_KEEPALIVE void web_backup_keep(int on) {

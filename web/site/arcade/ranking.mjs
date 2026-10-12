@@ -60,16 +60,16 @@ export function writeRanking(backup, entries) {
   return backup;
 }
 
-/* The best 8 of both tables. The same entry (all 16 bytes) counts once; equal
- * times keep the one that was on the table first. */
-export function mergeRanking(table, incoming) {
+/* The best 8 (or `size`) of both tables. The same entry (all its bytes) counts once;
+ * equal times keep the one that was on the table first. */
+export function mergeRanking(table, incoming, size = ENTRIES) {
   const seen = new Set(table.map((e) => e.hex));
   const all = table.slice();
   for (const e of incoming) {
     if (!seen.has(e.hex)) { seen.add(e.hex); all.push(e); }
   }
   all.sort((a, b) => a.time - b.time);
-  return all.slice(0, ENTRIES);
+  return all.slice(0, size);
 }
 
 /* Entries in `mine` that `base` does not have: what a player set since loading the board. */
