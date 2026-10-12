@@ -145,17 +145,17 @@ All of it is gated on `g_geo_flat_color` / `geo_displaylist`, so no game sees it
 
 | Item | Now |
 |---|---|
-| The z-sort's patches over the half rule (recede bound, `zsort_standing`, keep-depth, coplanar layers, tie layer, same-matrix runs, held pairs) | **Done (#247, PR #159).** Game frames draw at the board's key (`geo3d_flat_depth`). `zsort_standing`, keep-depth, the tie layer, the runs and the held pairs are gone from `src/`. The round-intro grader (#249/#287) holds all fourteen stages against MAME. There the key is nearer MAME by 539,225 changed pixels to 3,496, and no clipping or bending is left. |
+| The z-sort's patches over the half rule (recede bound, `zsort_standing`, keep-depth, coplanar layers, tie layer, same-matrix runs, held pairs) | **Done (#247, PR #159, `e8332c0`).** Game frames draw at the board's key (`geo3d_flat_depth`). `zsort_standing`, keep-depth, the tie layer, the runs and the held pairs are gone from `src/`. The round-intro grader (#249/#287) holds all fourteen stages against MAME. There the key is nearer MAME by 539,225 changed pixels to 3,496, and no clipping or bending is left. |
 | Mode 0 at the head of a model falls back to the nearest corner | **Done** on the game path: `g_geo3d_flat_prev_z` carries across objects and is reset each frame, as `polygon_z` is. The old fallback is left only in the half rule. |
-| Vblank and timers by wait hooks | **Done (#253, PR #163).** The vblank is on the cycle clock, the timers are live, and every wait hook is gone. |
-| COP ready bit hooked per game (STF 0xF3C, FV 0x190C) | **Done (#252).** `cop_fifo_status` serves 0x980004 for every game. |
-| The COP-stream renderer (shadow floor, eye-bake, camera sign dials, `tgp_bone`) | **Done (#251, PR #162).** Direct data is walked and the fallback is deleted. |
-| `SANITIZE` | **Gone (#252).** |
-| `0x28805151` pushes zeros | **Ported (#252)**: `Fn_get_glo_ang`. |
-| `cop_read` on an empty FIFO | **Logs an underflow at WARN (#252).** It still answers 0, since nothing models the stall. |
-| `ldtime` returns 0 | **Returns the cycle count.** |
-| `_700000_loop`, `warning_skip_addr`, FV model table, fov | **Settled (#254)**, as recorded in the first audit. |
-| `m68k_exec.h` calling its cycle count "approximate" | **Fixed**: it now says it is held to MAME's cycle-level 68000. |
+| Vblank and timers by wait hooks | **Done (#253, PR #163, `77e67ca`).** The vblank is on the cycle clock, the timers are live, and every wait hook is gone. |
+| COP ready bit hooked per game (STF 0xF3C, FV 0x190C) | **Done (#252, `c59b997`).** `cop_fifo_status` serves 0x980004 for every game. |
+| The COP-stream renderer (shadow floor, eye-bake, camera sign dials, `tgp_bone`) | **Done (#251, PR #162, `3d457aa`).** Direct data is walked and the fallback is deleted. |
+| `SANITIZE` | **Gone (#252, `c59b997`).** |
+| `0x28805151` pushes zeros | **Ported (#252, `c59b997`)**: `Fn_get_glo_ang` (`sharc_exec.h:1779-1789`). |
+| `cop_read` on an empty FIFO | **Logs an underflow at WARN (#252, `cop.h:211-217`).** It still answers 0, since nothing models the stall. |
+| `ldtime` returns 0 | **Returns the cycle count** (`i960_exec.h:906-909`). |
+| `_700000_loop`, `warning_skip_addr`, FV model table, fov | **Settled (#254, `ee9f6c8`)**, as recorded in the first audit. |
+| `m68k_exec.h` calling its cycle count "approximate" | **Mostly fixed**: `m68k_exec.h:661` says it is held to MAME's cycle-level 68000, but the field's own comment (`m68k.h:45`) still says "approximate". Comment only. |
 | zclip / clip planes, the homebrew HUD reject | **Still open**: §2.4 and §4. |
 
 ### Left over from the half rule
@@ -198,6 +198,7 @@ These were checked and are deliberate, measured or proven board-identical:
 - CLAUDE.md (HLE Hooks) says FV has its own `co_processor_error_hang` hook. FV's table has only its frame-pace hook.
 - `fvipers.h:217-221` still lists `_700000_loop` as a hook to port. It was removed in #254.
 - `fvipers.h:166-168`: the data-window comment contradicts its code (§2.2).
+- `m68k.h:45` calls the 68000's cycle count "approximate" (§5).
 - `m2snake.h:18-21` describes the no-frame-hook 60 Hz pacing from before #253.
 - `game_profile.h:146-151` says `geo_displaylist` is "required for non-STF games". Sega Rally and m2-pacman use the board's GEO walk.
 - The scanner section's header comment (`geo3d.h:888-894`) is stale, and so is the line reject's "-6" (`:690`).
