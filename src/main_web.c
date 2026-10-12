@@ -1285,9 +1285,15 @@ EMSCRIPTEN_KEEPALIVE int web_report_hold(int on) {
     g_web_paused = on != 0;
     return g_web_paused ? 1 : 0;
 }
-EMSCRIPTEN_KEEPALIVE int      web_shot_w(void)    { return g_web_shot ? g_web_shot_w : 0; }
-EMSCRIPTEN_KEEPALIVE int      web_shot_h(void)    { return g_web_shot ? g_web_shot_h : 0; }
-EMSCRIPTEN_KEEPALIVE uint8_t *web_shot_data(void) { return g_web_shot; }
+/* Every getter asks web_report_allowed() again: a room can start between the
+ * arm and the read, and then the picture is dropped, not handed out. */
+static bool web_shot_ready(void) {
+    if (!web_report_allowed()) web_shot_free();
+    return g_web_shot != NULL;
+}
+EMSCRIPTEN_KEEPALIVE int      web_shot_w(void)    { return web_shot_ready() ? g_web_shot_w : 0; }
+EMSCRIPTEN_KEEPALIVE int      web_shot_h(void)    { return web_shot_ready() ? g_web_shot_h : 0; }
+EMSCRIPTEN_KEEPALIVE uint8_t *web_shot_data(void) { return web_shot_ready() ? g_web_shot : NULL; }
 
 /* After the swapchain pass: the game's rectangle (top-left origin, as sokol's
  * viewport has it) out of the default framebuffer, flipped to top first. */
@@ -1322,6 +1328,10 @@ static void web_shot_take(int ox, int oy, int w, int h) {
 /* The game's picture, or the whole canvas under the lobby; then the state, if the
  * page asked for one, whether or not a picture came back. */
 static void web_shot_done(const web_picture_t *pic) {
+    if (!web_report_allowed()) {   /* armed offline, but a room or a match has started since */
+        g_web_shot_want = g_web_shot_state = false;
+        return;
+    }
     if (pic->lobby) web_shot_take(0, 0, sapp_width(), sapp_height());
     else            web_shot_take(pic->ox, pic->oy, pic->w, pic->h);
     if (g_web_shot_state) web_state_save_now();
@@ -1359,8 +1369,13 @@ EMSCRIPTEN_KEEPALIVE const char *web_report_info(void) {
              (unsigned long long)g_emu_frames);
     return buf;
 }
-EMSCRIPTEN_KEEPALIVE uint8_t    *web_state_data(void)  { return g_web_state_buf; }
-EMSCRIPTEN_KEEPALIVE int         web_state_len(void)   { return (int)g_web_state_len; }
+/* As the picture's getters: a state saved offline is not handed out online. */
+static bool web_state_ready(void) {
+    if (!web_report_allowed()) web_state_free();
+    return g_web_state_buf != NULL;
+}
+EMSCRIPTEN_KEEPALIVE uint8_t    *web_state_data(void)  { return web_state_ready() ? g_web_state_buf : NULL; }
+EMSCRIPTEN_KEEPALIVE int         web_state_len(void)   { return web_state_ready() ? (int)g_web_state_len : 0; }
 EMSCRIPTEN_KEEPALIVE const char *web_state_error(void) { return g_web_state_err; }
 
 /* Not under a follower or a replay, whose board is the feed's. `data` is the

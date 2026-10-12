@@ -174,6 +174,7 @@ const m2hleReport = (() => {
   }
 
   async function reportZip() {
+    if (!allowed()) { toggle(false); return; }   /* a room started: no state leaves the page */
     const enc = new TextEncoder();
     const files = [
       { name: 'report.txt', bytes: enc.encode(reportText() + '\n') },
@@ -230,6 +231,7 @@ const m2hleReport = (() => {
     }
     if (held) M._web_report_hold(0);
     held = false;
+    report = null;   /* the picture and the state go with the panel */
     if ($('rp-img').src) URL.revokeObjectURL($('rp-img').src);
     $('canvas').focus();
   }
@@ -239,6 +241,7 @@ const m2hleReport = (() => {
   /* A .sta, or a report's zip with one inside. True if the file was one of ours. */
   async function loadFile(file) {
     if (!file || !M || !/\.(sta|zip)$/i.test(file.name)) return false;
+    if (!allowed()) { m2hleTools.printErr('state not loaded: not while playing online'); return true; }
     const bytes = new Uint8Array(await file.arrayBuffer());
     const sta = /\.sta$/i.test(file.name) ? bytes : unzipEntry(bytes, 'state.sta');
     if (!sta) {
