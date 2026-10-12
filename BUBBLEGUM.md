@@ -1,10 +1,10 @@
-# Bubblegum fixes: an audit (Pinboard #245, refreshed in #674, scanned again in #682)
+# Bubblegum fixes: an audit (Pinboard #245, refreshed in #674, scanned again in #682 and #697)
 
 This file lists the places where m2-hle2 patches a symptom and the board has a simpler rule underneath. A patch here means a list of model numbers or addresses, a fitted threshold, a hook that pokes RAM, or a per-game switch for something every board does.
 
 The first audit was of master at `28d3563` (2026-09-30). The refresh was of master at `dab0dbf` (2026-10-12), after Sega Rally (Model 2A) came up and Daytona, Virtua Cop and House of the Dead were prepared. #678 fixed four items. #682 scanned the tree again: #678's branch with master `c279795` merged in (#663, #666 and #669 had landed in between). Sections 1 to 6 keep their `dab0dbf` line numbers unless a line says otherwise, and section 7 uses `c279795` + #678. Nothing in `src/` was changed by any of the audits.
 
-Sections 1 to 4 list the open items, ranked by how many games they touch. Section 5 says what became of the first audit, and section 6 lists what was looked at and left alone on purpose. Section 7 holds what the #682 scan found that no earlier audit listed.
+Sections 1 to 4 list the open items, ranked by how many games they touch. Section 5 says what became of the first audit, and section 6 lists what was looked at and left alone on purpose. Section 7 holds what the #682 scan found that no earlier audit listed, and section 8 what the #697 scan found after #694.
 
 ---
 
@@ -278,8 +278,73 @@ These add to "The homebrew display-list walker" in §4. Every `geo_displaylist` 
 
 - `netplay.h:2280` is `bool stf = strncmp(g_active_profile->id, "sfight", 6) == 0;`, so `sfight_homebrew` (m2-pacman and any other program on STF's set) counts as STF. On the official server (`netplay_server_is_official`, `:2281`) it takes `RPCN_PS3_COM_ID` and joins the PS3 port's rooms, where the boards cannot agree. Who it affects: homebrew on STF's set (`sfight_homebrew`: m2-pacman and the like) online on the official server; STF's `sfight` and `sfight_console` match either way. **netplay**: an exact compare, as `gems.h:531` does, would stop `sfight_homebrew` counting as STF, so such a player would no longer be put in the PS3 rooms. That is a change in netplay behaviour, not a cheap fix.
 
+## 8. Found by the #697 scan
+
+The #697 scan was of `idea-694-cheap-fixes` at `bc29b61`, and the line numbers here are that commit's. It skipped everything sections 1 to 7 already list. It looked for two kinds of code: code that only works for one game, and shared code built around one game. Each finding below was checked against the source and, where a tag says so, against MAME (`model2.cpp`, `model2_v.cpp`, `model2rd.ipp`) or the firmware (`stf-sharc/cpres1.asm`). The tags are those of section 7. Nothing in `src/` was changed.
+
+### 8.1 Match results come only from STF's hook
+
+- **The result of a match comes from one place.** `g_versus_result` (`hle_hooks.h:28`) is set only by STF's observer at 0xDC3C (`sfight.h:285`). §6 keeps that hook, and it is right for STF. What §6 does not say is that the board-level code relies on the result too:
+  - the run loop hands it to the replay and to lockstep (`emu_thread.h:942-945`);
+  - a room of three or more rotates its queue only on a result (`netplay_room_rolls`, `netplay.h:3431`);
+  - the go-again prompt, a VS rematch and GGPO's result count wait for it (`emu_ggpo.h:183`);
+  - a replay ends `REPLAY_TAIL_FRAMES` after it (`replay.h:833-840`).
+- **Who it affects:** FV, Sega Rally and homebrew. Each gets its own hashed com id (`comid_resolve`, `com_id.h:304`), so it can host and join rooms. It never sees a result, though:
+  - a room of three never rotates;
+  - the go-again prompt never comes up;
+  - a replay ends only when the session does.
+- **A replay of another game is always dropped.** Native recording is the default (`replay.h:40-43`). The recorder (`replay.h:668-669`) drops a recording that has no native round, and only STF's profiles fill those (`native_*`, `match_info` at `sfight.h:884` and `sfight_console.h:373`). So FV, Sega Rally and homebrew online matches never leave a replay, unless the player picks the snapshot format.
+- **GGPO turns on VS mode without asking the profile.** `emu_ggpo.h:362` sets `g_vs_mode = 1` for every P2P session. The RPCN path checks `quirks.vs_rematch` first (`netplay_room_vs_mode`, `netplay.h:965`). `g_vs_mode` is read only by STF's hook at 0xE584 today, so no other game moves. A game that gets its own rematch hook would get VS mode in GGPO whatever its profile says.
+- **Tag: netplay.** The fix is a per-profile result hook, the way `match_info` already works, plus a snapshot fallback for games without native rounds. That changes what rooms and replays do for those games.
+
+### 8.2 The GEO walk against MAME's
+
+These are board-level and affect every game drawn by the board's walk: STF, FV, Sega Rally and m2-pacman.
+
+| What | Ours | MAME | Games | Tag |
+|---|---|---|---|---|
+| GEO command 0x0E (`geo_test`) | `geo3d__geol_skip` has no case for it (`geo3d.h:1313-1321`) and returns 0. `geodl_apply_state` also has none (`memory.h:533-541`), so its default advances a single word. | 32 FIFO-test words, a block count, then three words per block (`model2_v.cpp:2264-2300`, dispatched at `:2497`). | Any game whose display list carries the self-test. A frame carrying it reaches no END and draws no 3D, and the state pass reads the test words as commands. None we run is known to send it at frame time. | **cheap**: drawing only; the i960 never reads the walk |
+| An object's link count (`obc`) | Only `oba`, argument 2, is read (`geo3d.h:1203`). The mesh ends at the first all-zero attribute word (`:1534`, `:1583`), capped at `GEO3D_IA_MAX_VPS` 4096 (`:46`). | `geo_parse_np_*` loops `obc` links (`model2_v.cpp:1222`), and an `obc` of 0 means 0xFFFFF (`:1939-1941`, for VOn and Gunblade). | Every game. An object whose `obc` stops short of the zero word is drawn whole here. One whose mesh has no zero word runs on into the next. | **MAME**: STF's models end on the zero word at J = 1.0 (`grade-models`), so check a game that relies on `obc` |
+| Microtexture | `geo3d_texhdr_decode` (`geo3d.h:1610-1630`) ignores th0 bits 10-12 and th2 bits 13-15. | `model2_v.cpp:672-675` takes them, and `model2rd.ipp:126-130`/`:324-328` blend the microtexture in by distance. | The racing games (Sega Rally's road, Daytona, Indy 500). STF's headers carry 0 there as far as the explorer shows. | **MAME** |
+| Texture ROM addressing | `geo3d_tex_word` (`geo3d.h:1145-1149`) fails a read past the end of the ROM. The direct-data path then drops the polygon (`:2437`). | The address is masked with `texture_rom_mask` and always reads (`model2_v.cpp:429`, `:450`). | Any game whose texture points address past its ROM, which mirrors on the board. | **MAME** |
+| A model with no texture header | Its colour is a hash of the material pointer (`material_ptr_to_color`, `geo3d.h:174-176`), used at `:1216`. A model from polygon RAM is a flat 0.7 grey (`:1218`). | The face takes its colour from the header and the colour tables like any other. | Any game that draws such a model: a debug colour reaches the game frame. | **MAME**: check whether any game frame draws one |
+| A model with `tpa` or `tha` = 0 | Taken as "this model has no stream" (`geo3d.h:1966-1972`: `have_uv = uv_word != 0`, and the same for the header). | Address 0 is an ordinary address. | Any game that puts a stream at address 0 of texture ROM. Unlikely, since the table starts there. | doc |
+| The walk's guard | `guard < 0x8000u` (`geo3d.h:1388`): a list of more than 32768 commands, jumps included, stops without END and draws no 3D. | No cap. | A game with a very long list, or a jump loop. MAME would hang on the loop. | doc |
+
+### 8.3 The COP
+
+- **`Fn_kage_mat` divides on the host** (`sharc_exec.h:482`, `float inv = 1.0f / s_;`). The comment says "recips + Newton-Raphson", and the firmware does that inline: `recips`, then three refinement steps (cpres1 PM 0x20D1F, `cpres1.asm:4633-4642`). CLAUDE.md says the COP's arithmetic must go through `sharc_fw_*` and never through host maths. The firmware's sequence is not the `_L205D0` call that `sharc_fw_div` follows, so it needs its own helper.
+  - **Who it affects:** every game that draws kage shadows (STF, FV). The kage matrices go into the display list, so the change moves only low bits of the shadows. CLAUDE.md records `cop_replay` as exact for this command on a select capture.
+  - **Tag: MAME.** Run `cop_replay` before and after, to see whether any word moves.
+- **The motion spline returns `v0` when `span <= 0`** (`sharc_exec.h:897-913`). The firmware has no such test (`Fn_fcurve_spl`, `cpres1.asm:5708` on). It divides by span/30 through `_L205D0` whatever the span. **Tag: MAME.** It matters only if a game sends a zero or negative span. STF's motion arguments are exact in `grade-motion`, so STF does not.
+
+### 8.4 Loading and profile choice
+
+- **A ROM directory has no TGP tables.** `romset_load_dir` and `romset_save_dir` (`rom_loader.h:261-302`) know seven files, and `tgp_tables` (`:238`) is not among them. Only `srallyc_load` fills that region (`srallyc.h:112-114`), and only from a zip. So `--export-roms` of Sega Rally writes a directory that boots with no TGP tables: `tgp.h:106` reads 0 for every table entry. **Who it affects:** every Model 2A set loaded from a directory, which today means Sega Rally. **cheap**: add an eighth file.
+- **The desktop keeps the current profile for a set nobody knows.** `select_profile_for_zip` (`main.c:184-199`) returns true when `profile_for_rom_set` finds nothing and the set is not a prepared one. The zip then loads under the profile already active: `sfight_console` at startup. `main_sdl.c:328-333` and `main_libretro.c:477-482` refuse such a set with `profile_missing_message`. **Who it affects:** any Model 2 set without a profile, opened in the desktop window or with `--rom`; it runs under STF's hooks. **cheap**: refuse it as the other frontends do.
+- **Homebrew is recognised only on STF's set.** `profile_program_matches` (`game_profile.h:386-399`) returns true for any profile that names no `irq_handler`, and only `sfight.h:856` names any. It also assumes the handlers sit at vectors 12-15 (`table + 36 + (4 + pin) * 4`). A homebrew program on FV's or Sega Rally's set therefore runs that game's HLE hooks inside its own code. That is the trap `sfight_homebrew` exists to avoid. **Who it affects:** homebrew on any set but STF's. **cheap**: give FV and Sega Rally their handler addresses, or test the hooks' own words. No STF frame moves.
+
+### 8.5 Input
+
+- **The service switch is on the wrong bit for STF, FV and m2snake.** `sfight.h:831`, `fvipers.h:257` and `m2snake.h:124` map `GAME_INPUT_SERVICE` to IN0 bit 0x04. In MAME, 0x04 is the test switch (`PORT_SERVICE_NO_TOGGLE`) and SERVICE1 is 0x08 (`model2.cpp:1960-1961`). `srallyc.h:182-183` follows MAME. `sfight_homebrew.h:284` takes STF's map. So "service" opens the test menu in those games, and no input can give a service credit.
+  - **Who it affects:** STF (both profiles), FV, m2snake and STF homebrew.
+  - **Tag: netplay.** A frame does not move, but the bit is part of netplay's canonical input word, so a mixed-build session would read each other's service button differently. A bot or script that sends "service" to reach the test menu would also need the new name.
+
+### 8.6 The prepared sets (Daytona, Virtua Cop, HOTD)
+
+These boards do not run yet (`preliminary`), so the items are notes for whoever brings them up.
+
+- `daytona.h:24-51` and `vcop.h:20-36` list no `ROM_TGP_TABLES`, though MAME's `MODEL2_CPU_BOARD` (`model2.cpp:3487-3490`) is part of every model2o set.
+- `RAM2_SIZE` 0x40000 (`constants.h:44-45`) is 2A/2B's. On model2o, 0x200000-0x21FFFF is RAM and 0x220000-0x23FFFF is the program ROM's second half (`model2.cpp:1620-1621`).
+- MAME delays an interrupt-enable write by 80 ns, "vcop2 needs this" (`irq_enable_w`, `model2.cpp:1254-1261`). `irqt_enable_write` (`irq_timer.h:76-79`) applies it at once. **MAME**: this would move STF's interrupt timing, so it is not cheap, and it is §1.2 territory.
+
 ## Doc drift found on the way
 
+- Found in #697:
+  - The header of `geo3d.h` (`:4-7`) describes the COP capture-stream scanner and a decoder in `game_render.h`, both gone (#251, #339).
+  - `io_5649.h:4` names Daytona as a 315-5649 board. Daytona is model2o, with the Model 1 I/O (`model2.cpp:8004`, `:1622`).
+  - `hotd.h:10-15` says sound.h "should take it as it is". The 2C's UART sits at 0x01C80000, and `sound.h:656-660` knows that address only through the region name `UART_2A`.
+  - `m68k_exec.h:1243-1245` says a Bcc with displacement 0xFF is "treat as 16-bit for 68000 safety", but the code fetches 32 bits. On a 68000 it is an address error (§4, exceptions).
 - `model2a.h:20-23` says the 2A I/O is served "when the profile sets quirks.io_5649" (§7.2), and lists the sound UART as still to do. That move is done at `:199-215`. Found in #682.
 
 - `fvipers.h:217-221` still lists `_700000_loop` as a hook to port. It was removed in #254.
@@ -335,6 +400,7 @@ Left, with the reason:
 2. **The COP argument table by dispatch index, and keeping unread replies (§3).** Both are ROM-free and testable with `cop_test` / `cop_replay`.
    - These #682 items move no STF frame and are done in #694 (above): the bufferram mirrors, 0x980030, the GEO reads, the data ROM and the 2A texture RAM (§7.3), the GEO cap WARN (§7.4) and the bone slot WARN (§7.5). The 2A savestate parts (§7.1) wait for §2.2, and 0x10400000 (§7.3) for a MAME check.
    - These need MAME first: the 315-5649 on 2B (§7.2), the bufferram fill, the 2B function port and the 0x10F00000 alias (§7.3), and the per-list GEO reset (§7.4).
+   - The #697 items: the cheap ones are 0x0E in the GEO walk (§8.2), the ROM directory's TGP tables, refusing an unknown set on the desktop, and homebrew detection on FV and Sega Rally (§8.4). Before them, the result hook for other games (§8.1) and the service bit (§8.5) need the netplay decision, and obc, microtexture, texture ROM masking and the two COP items (§8.2, §8.3) need MAME or `cop_replay` first.
 3. **The model catalogue out of the game draw (§2.3).** Run `grade-models`, `grade-stages` and `grade-zsort`. This also unblocks Daytona's 20-byte table.
 4. **Real call frames, then table interrupts for STF (§1.1, §1.2).** These remove `EMU_IRQ_TABLE_MAX_SLICES` and the STF interrupt path. Re-grade everything and bump the protocol.
 5. **Board i960 costs for every game (§1.3).** This has the biggest payoff: Sega Rally loses its factor, and STF's `rand` matches the board. It also has the biggest re-grade, so do it last, once the cost model is final.
