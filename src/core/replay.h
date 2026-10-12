@@ -30,6 +30,14 @@
  * tail, after the result, can still have been a guess when it is written; the
  * file plays them as they ran, frame checks and all.
  *
+ * Each round the game plays is also kept in the game's own replay formats
+ * (Pinboard #602), as the profile takes them (game_profile_t.native_take):
+ *   native/round-NN/<part>   one file per part, byte for byte as the game
+ *                            keeps it at its address
+ *   native/round-NN/round.json   what the round was, and each part's address
+ * replay.json says how many rounds there are ("native_rounds"). An open
+ * replay's round goes back into the board with replay_native_install.
+ *
  * The zip is made beside the board (a writer thread; the web build has none and
  * makes it at once) and saved as <p1>-vs-<p2>-<local date>-<time>.m2replay, in
  * the replay folder (native) or handed to the page (web_replay_take).
@@ -52,6 +60,71 @@
 #define REPLAY_MIN_FRAMES  600u
 #define REPLAY_JSON_MAX    4096
 #define REPLAY_NAME_MAX    24
+#define REPLAY_NATIVE_MAX  32      /* rounds a replay keeps in the game's formats */
+#define REPLAY_NATIVE_JSON 1024
+
+/* A round in the game's own formats, owned (the profile's buffers are not). */
+typedef struct {
+    int      nparts;
+    char     name[GAME_NATIVE_PARTS_MAX][32];
+    uint32_t addr[GAME_NATIVE_PARTS_MAX];
+    uint8_t *data[GAME_NATIVE_PARTS_MAX];
+    uint32_t len[GAME_NATIVE_PARTS_MAX];
+    char     json[REPLAY_NATIVE_JSON];
+} replay_native_t;
+
+typedef struct {
+    replay_native_t *round;
+    int              n, cap;
+} replay_natives_t;
+
+static inline void replay__native_free(replay_native_t *r) {
+    for (int i = 0; i < r->nparts; i++) free(r->data[i]);
+    r->nparts = 0;
+}
+
+/* Drop rounds from `keep` on. */
+static inline void replay__natives_cut(replay_natives_t *v, int keep) {
+    while (v->n > keep) replay__native_free(&v->round[--v->n]);
+}
+
+static inline void replay__natives_free(replay_natives_t *v) {
+    replay__natives_cut(v, 0);
+    free(v->round);
+    v->round = NULL;
+    v->cap = 0;
+}
+
+/* A new empty round at the end, or NULL. */
+static inline replay_native_t *replay__natives_add(replay_natives_t *v) {
+    if (v->n >= REPLAY_NATIVE_MAX) return NULL;
+    if (v->n == v->cap) {
+        int cap = v->cap ? v->cap * 2 : 4;
+        replay_native_t *b = (replay_native_t *)realloc(v->round, (size_t)cap * sizeof *b);
+        if (!b) return NULL;
+        v->round = b;
+        v->cap   = cap;
+    }
+    replay_native_t *r = &v->round[v->n++];
+    memset(r, 0, sizeof *r);
+    return r;
+}
+
+/* The round as the profile handed it, copied. */
+static inline bool replay__native_copy(replay_native_t *r, const game_native_round_t *in) {
+    snprintf(r->json, sizeof r->json, "%s", in->json);
+    for (int i = 0; i < in->nparts && i < GAME_NATIVE_PARTS_MAX; i++) {
+        const game_native_part_t *p = &in->part[i];
+        r->data[i] = (uint8_t *)malloc(p->len ? p->len : 1);
+        if (!r->data[i]) return false;
+        memcpy(r->data[i], p->data, p->len);
+        snprintf(r->name[i], sizeof r->name[i], "%s", p->name);
+        r->addr[i] = p->addr;
+        r->len[i]  = p->len;
+        r->nparts  = i + 1;
+    }
+    return true;
+}
 
 typedef struct {
     char     p1[REPLAY_NAME_MAX], p2[REPLAY_NAME_MAX], recorded_by[REPLAY_NAME_MAX];
@@ -72,6 +145,7 @@ typedef struct {
     uint8_t      *snap, *feed;
     size_t        snap_len, feed_len;
     replay_meta_t meta;
+    replay_natives_t native;
     char          dir[512];
 } replay_job_t;
 
@@ -90,6 +164,7 @@ typedef struct {
     bool     latched;
     uint32_t tail;              /* frames still to record after the result; 0 = none yet */
     replay_meta_t meta;
+    replay_natives_t native;    /* the match's rounds in the game's formats */
     uint8_t *snap;
     size_t   snap_cap, snap_len;
     replay_job_t job;
@@ -123,6 +198,7 @@ typedef struct {
     bool     full, held_known, set_known, board_known;
     uint32_t frame, slice, held, board, tail;
     int32_t  set[FOLLOW_SET_WORDS];
+    int      native_n;
     replay_meta_t meta;
 } replay_mark_t;
 
@@ -252,7 +328,7 @@ static inline void replay__json_fight(const replay_meta_t *m, char *out, size_t 
 }
 
 /* replay.json: one flat object, so json_min.h reads every field back. */
-static inline size_t replay__json(const replay_meta_t *m, char *out, size_t cap) {
+static inline size_t replay__json(const replay_meta_t *m, int native_n, char *out, size_t cap) {
     char date[40] = "";
     time_t t = (time_t)m->when;
     struct tm *tm = gmtime(&t);
@@ -276,6 +352,7 @@ static inline size_t replay__json(const replay_meta_t *m, char *out, size_t cap)
     replay__json_str(out, cap, &n, "ended", m->why);
     replay__json_int(out, cap, &n, "frames", m->frames);
     replay__json_int(out, cap, &n, "seconds", (m->frames + 30) / 60);
+    replay__json_int(out, cap, &n, "native_rounds", native_n);
     for (int i = 0; i < FOLLOW_SET_WORDS; i++) {
         char key[16];
         snprintf(key, sizeof key, "set%d", i);
@@ -287,10 +364,37 @@ static inline size_t replay__json(const replay_meta_t *m, char *out, size_t cap)
 
 /* ---- The zip ---------------------------------------------------------------- */
 
+/* native/round-NN/round.json: the profile's summary, with where each part goes. */
+static inline size_t replay__native_json(const replay_native_t *r, char *out, size_t cap) {
+    size_t n = strlen(r->json);
+    if (n < 2 || r->json[n - 1] != '}') n = (size_t)snprintf(out, cap, "{\"parts\":[");
+    else n = (size_t)snprintf(out, cap, "%.*s,\"parts\":[", (int)(n - 1), r->json);
+    for (int i = 0; i < r->nparts && n < cap; i++)
+        n += (size_t)snprintf(out + n, cap - n, "%s{\"file\":\"%s\",\"addr\":%u,\"len\":%u}",
+                              i ? "," : "", r->name[i], r->addr[i], r->len[i]);
+    if (n < cap) n += (size_t)snprintf(out + n, cap - n, "]}\n");
+    return n < cap ? n : cap - 1;
+}
+
+static inline bool replay__zip_native(mz_zip_archive *z, const replay_natives_t *v) {
+    char path[96], json[REPLAY_NATIVE_JSON + 1024];
+    for (int k = 0; k < v->n; k++) {
+        const replay_native_t *r = &v->round[k];
+        snprintf(path, sizeof path, "native/round-%02d/round.json", k + 1);
+        size_t jn = replay__native_json(r, json, sizeof json);
+        if (!mz_zip_writer_add_mem(z, path, json, jn, MZ_DEFAULT_LEVEL)) return false;
+        for (int i = 0; i < r->nparts; i++) {
+            snprintf(path, sizeof path, "native/round-%02d/%s", k + 1, r->name[i]);
+            if (!mz_zip_writer_add_mem(z, path, r->data[i], r->len[i], MZ_DEFAULT_LEVEL)) return false;
+        }
+    }
+    return true;
+}
+
 /* The replay as a zip on the heap (mz_free it), or NULL. */
 static inline void *replay__zip(const replay_job_t *j, size_t *out_len) {
     char json[REPLAY_JSON_MAX];
-    size_t jn = replay__json(&j->meta, json, sizeof json);
+    size_t jn = replay__json(&j->meta, j->native.n, json, sizeof json);
     mz_zip_archive z;
     memset(&z, 0, sizeof z);
     void *buf = NULL;
@@ -299,6 +403,7 @@ static inline void *replay__zip(const replay_job_t *j, size_t *out_len) {
     bool ok = mz_zip_writer_add_mem(&z, "replay.json", json, jn, MZ_DEFAULT_LEVEL)
            && mz_zip_writer_add_mem(&z, "state.sta", j->snap, j->snap_len, MZ_BEST_SPEED)
            && mz_zip_writer_add_mem(&z, "inputs.feed", j->feed, j->feed_len, MZ_DEFAULT_LEVEL)
+           && replay__zip_native(&z, &j->native)
            && mz_zip_writer_finalize_heap_archive(&z, &buf, out_len);
     mz_zip_writer_end(&z);
     if (!ok) { mz_free(buf); buf = NULL; *out_len = 0; }
@@ -329,6 +434,7 @@ static inline void replay__job_free(replay_job_t *j) {
     free(j->snap);
     free(j->feed);
     j->snap = j->feed = NULL;
+    replay__natives_free(&j->native);
 }
 
 /* Write the finished replay out: a file natively, the page's slot on the web. */
@@ -466,6 +572,7 @@ static inline void replay__begin(emu_thread_ctx_t *ctx) {
     R->held_known = R->set_known = R->board_known = false;
     R->tail = 0;
     R->id++;
+    replay__natives_cut(&R->native, 0);
     replay__meta_begin(&R->meta);
     uint8_t h[FOLLOW_HDR_BYTES] = {0};
     memcpy(h, FOLLOW_MAGIC, 8);
@@ -490,6 +597,7 @@ static inline void replay_rec_finish(const char *why) {
     snprintf(R->meta.why, sizeof R->meta.why, "%s", why);
     if (R->meta.winner < 0 && R->frame < REPLAY_MIN_FRAMES) {
         LOG_INFO("replay: dropped (%s after %u frames, no result)", why, R->frame);
+        replay__natives_cut(&R->native, 0);
         free(R->feed);
         R->feed = NULL;
         R->len = R->cap = 0;
@@ -500,6 +608,8 @@ static inline void replay_rec_finish(const char *why) {
     j->feed = R->feed;  j->feed_len = R->len;
     j->snap = R->snap;  j->snap_len = R->snap_len;
     j->meta = R->meta;
+    j->native = R->native;
+    memset(&R->native, 0, sizeof R->native);
     if (!replay_dir(j->dir, sizeof j->dir)) j->dir[0] = '\0';
     R->feed = NULL;  R->len = R->cap = 0;
     R->snap = NULL;  R->snap_cap = R->snap_len = 0;   /* the next one measures again */
@@ -581,12 +691,26 @@ static inline void replay_slice_begin(emu_thread_ctx_t *ctx) {
     replay__rec_state();
 }
 
+/* A round the profile kept in the game's formats this slice: the replay takes
+ * it. Taken every slice, recording or not, so a stale one never waits for the
+ * next replay; the hook and the take fall in one slice, so GGPO's saves, which
+ * are between frames, never split them. */
+static inline void replay__take_native(void) {
+    replay_rec_t *R = &g_replay_rec;
+    if (!g_active_profile || !g_active_profile->native_take) return;
+    game_native_round_t round;
+    if (!g_active_profile->native_take(&round) || !R->on) return;
+    replay_native_t *r = replay__natives_add(&R->native);
+    if (r && !replay__native_copy(r, &round)) replay__natives_cut(&R->native, R->native.n - 1);
+}
+
 static inline void replay_slice_end(emu_thread_ctx_t *ctx, bool frame_end) {
     replay_rec_t *R = &g_replay_rec;
     if (R->latched) {
         g_input.use_net = R->use_net_was;
         R->latched = false;
     }
+    replay__take_native();
     if (!R->on) return;
     if (!frame_end) { R->slice++; return; }
     uint8_t p[12];
@@ -660,6 +784,7 @@ static inline void replay_ggpo_mark(int at) {
     m->board = R->board; m->board_known = R->board_known;
     memcpy(m->set, R->set, sizeof m->set);
     m->set_known = R->set_known;
+    m->native_n = R->native.n;
     m->meta = R->meta;
 }
 
@@ -677,10 +802,12 @@ static inline void replay_ggpo_rewind(int at) {
         R->board = m->board; R->board_known = m->board_known;
         memcpy(R->set, m->set, sizeof R->set);
         R->set_known = m->set_known;
+        replay__natives_cut(&R->native, m->native_n);
         R->meta = m->meta;
         return;
     }
     R->on = false;
+    replay__natives_cut(&R->native, 0);
     free(R->feed);
     R->feed = NULL;
     R->len = R->cap = 0;
@@ -737,6 +864,7 @@ typedef struct {
     const game_profile_t *old_profile;
     int      old_sps;
     int32_t  old_set[FOLLOW_SET_WORDS];
+    replay_natives_t native;    /* its rounds in the game's formats */
     char     error[160];
 } replay_play_t;
 
@@ -756,6 +884,7 @@ static inline void replay__close(void) {
     free(P->feed);
     P->state = P->feed = NULL;
     P->state_len = P->feed_len = 0;
+    replay__natives_free(&P->native);
     P->loaded = false;
 }
 
@@ -763,6 +892,55 @@ static inline void *replay__extract(mz_zip_archive *z, const char *name, size_t 
     int i = mz_zip_reader_locate_file(z, name, NULL, 0);
     *n = 0;
     return i < 0 ? NULL : mz_zip_reader_extract_to_heap(z, (mz_uint)i, n, 0);
+}
+
+/* One part named in a round's round.json, read into the round. */
+static inline void replay__open_part(mz_zip_archive *z, replay_native_t *r, int k, const char *part) {
+    char file[32] = "", path[96];
+    uint32_t addr = 0, len = 0;
+    if (!json_get_str(part, "file", file, sizeof file) || !file[0] || strchr(file, '/')) return;
+    json_get_u32(part, "addr", &addr);
+    snprintf(path, sizeof path, "native/round-%02d/%s", k + 1, file);
+    size_t n = 0;
+    void *data = replay__extract(z, path, &n);
+    if (!data) return;
+    json_get_u32(part, "len", &len);
+    if (n != len || r->nparts >= GAME_NATIVE_PARTS_MAX) { mz_free(data); return; }
+    int i = r->nparts;
+    r->data[i] = (uint8_t *)malloc(n ? n : 1);
+    if (r->data[i]) memcpy(r->data[i], data, n);
+    mz_free(data);
+    if (!r->data[i]) return;
+    snprintf(r->name[i], sizeof r->name[i], "%s", file);
+    r->addr[i] = addr;
+    r->len[i]  = (uint32_t)n;
+    r->nparts  = i + 1;
+}
+
+/* The replay's rounds in the game's formats, as many as replay.json says. */
+static inline void replay__open_native(mz_zip_archive *z) {
+    replay_play_t *P = &g_replay_play;
+    uint32_t rounds = 0;
+    json_get_u32(P->json, "native_rounds", &rounds);
+    for (uint32_t k = 0; k < rounds && k < REPLAY_NATIVE_MAX; k++) {
+        char path[96];
+        snprintf(path, sizeof path, "native/round-%02u/round.json", k + 1);
+        size_t jn = 0;
+        char *json = (char *)replay__extract(z, path, &jn);
+        replay_native_t *r = json ? replay__natives_add(&P->native) : NULL;
+        if (!r) { mz_free(json); break; }
+        snprintf(r->json, sizeof r->json, "%.*s", (int)jn, json);
+        /* "parts":[{...},{...}]: each object on its own */
+        for (const char *p = strstr(json, "\"parts\""); p && (p = strchr(p, '{')) != NULL; ) {
+            const char *e = strchr(p, '}');
+            if (!e || (size_t)(e - json) >= jn) break;
+            char part[256];
+            snprintf(part, sizeof part, "%.*s", (int)(e - p + 1), p);
+            replay__open_part(z, r, (int)k, part);
+            p = e + 1;
+        }
+        mz_free(json);
+    }
 }
 
 /* Can this replay play here? "" if so, else why not, into P->unplayable. */
@@ -795,7 +973,6 @@ static inline const char *replay_open(const void *data, size_t n) {
     char *json = (char *)replay__extract(&z, "replay.json", &jn);
     P->state = (uint8_t *)replay__extract(&z, "state.sta", &P->state_len);
     P->feed  = (uint8_t *)replay__extract(&z, "inputs.feed", &P->feed_len);
-    mz_zip_reader_end(&z);
     if (json) {
         size_t k = jn < sizeof P->json - 1 ? jn : sizeof P->json - 1;
         memcpy(P->json, json, k);
@@ -804,7 +981,9 @@ static inline const char *replay_open(const void *data, size_t n) {
         for (size_t i = 0; i < k; i++)
             if ((unsigned char)P->json[i] < 0x20) P->json[i] = ' ';
         mz_free(json);
+        replay__open_native(&z);
     }
+    mz_zip_reader_end(&z);
     uint32_t format = 0;
     if (!json || !P->state || !P->feed) { replay__close(); return "not a replay (a part is missing)"; }
     if (!json_get_u32(P->json, "format", &format) || format > REPLAY_FORMAT) {
@@ -946,6 +1125,34 @@ static inline void replay_settings_save(void) {
 }
 #endif
 
+/* Put round `k` (1-based) of the open replay into the board, in the game's
+ * own formats, where the game reads it (the profile's native_put): for STF the
+ * next attract replay is that round, and the credits' slot for its stage holds
+ * it. The player's board, not a replay's or a session's. Mutex held. */
+static inline const char *replay_native_install(emu_thread_ctx_t *ctx, int k) {
+    const replay_play_t *P = &g_replay_play;
+    if (!P->loaded) return "no replay is open";
+    if (P->unplayable[0]) return P->unplayable;
+    if (k < 1 || k > P->native.n) return "the replay has no such round in the game's format";
+    if (P->on) return "a replay is playing; stop it first";
+    if (netplay_in_room() || netplay_active() || g_replay_ggpo.on) return "leave the online match first";
+    if (follow_following()) return "the board is following another";
+    if (!g_active_profile || !g_active_profile->native_put) return "this game takes no rounds back";
+    const replay_native_t *r = &P->native.round[k - 1];
+    game_native_round_t in;
+    memset(&in, 0, sizeof in);
+    for (int i = 0; i < r->nparts; i++) {
+        in.part[i].name = r->name[i];
+        in.part[i].addr = r->addr[i];
+        in.part[i].data = r->data[i];
+        in.part[i].len  = r->len[i];
+    }
+    in.nparts = r->nparts;
+    const char *err = g_active_profile->native_put(ctx->bus, &in);
+    if (!err) follow_lead_break("a replay round was put in");
+    return err;
+}
+
 /* Go to `frame`: from the start again if it is behind, then unpaced. */
 static inline const char *replay_play_seek(emu_thread_ctx_t *ctx, uint32_t frame) {
     replay_play_t *P = &g_replay_play;
@@ -965,10 +1172,10 @@ static inline void replay_play_status(char *out, size_t cap) {
     json_escape(why, sizeof why, g_follow.why);
     snprintf(out, cap,
              "{\"on\":%d,\"loaded\":%d,\"frame\":%u,\"frames\":%u,\"ended\":%d,\"split\":%d,"
-             "\"why\":\"%s\",\"fast\":%d,\"seeking\":%d}",
+             "\"why\":\"%s\",\"fast\":%d,\"seeking\":%d,\"native_rounds\":%d}",
              P->on ? 1 : 0, P->loaded ? 1 : 0, P->on ? g_follow.frame : 0, P->frames,
              P->on && g_follow.ended ? 1 : 0, P->on && g_follow.split ? 1 : 0, P->on ? why : "",
-             P->fast ? 1 : 0, P->on && g_follow.frame < P->seek ? 1 : 0);
+             P->fast ? 1 : 0, P->on && g_follow.frame < P->seek ? 1 : 0, P->native.n);
 }
 
 #endif /* REPLAY_H */
