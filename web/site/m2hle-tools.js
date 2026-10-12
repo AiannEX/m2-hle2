@@ -171,7 +171,7 @@ const m2hleTools = (() => {
 
   function consoleText() {
     const which = ['general', 'warning', 'error'].filter((k) => shown[k]);
-    const out = ['Sonic the Fighters (m2-hle web) -- console', ...systemInfo(),
+    const out = [m2hleGame.title + ' (m2-hle web) -- console', ...systemInfo(),
                  'Showing    ' + which.join(', ') + (dropped ? '   (' + dropped + ' older lines were discarded)' : ''), ''];
     for (const l of lines) if (shown[l.level]) out.push(shownText(l));
     return out.join('\n');
@@ -436,7 +436,7 @@ const m2hleTools = (() => {
   }
 
   function reportText(m, findings) {
-    const out = ['Sonic the Fighters (m2-hle web) -- lag check', ...systemInfo(), ''];
+    const out = [m2hleGame.title + ' (m2-hle web) -- lag check', ...systemInfo(), ''];
     for (const f of findings) {
       out.push('[' + f.level.toUpperCase() + '] ' + f.title, '    ' + f.evidence);
       for (const t of f.tips) out.push('    - ' + t);

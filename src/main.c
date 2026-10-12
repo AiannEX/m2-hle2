@@ -1663,6 +1663,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             int r = enemy_rank_parse(d);
             if (r >= -1) g_enemy_rank = r;
             else LOG_WARN("--enemy-rank %s: expected cabinet, easy, normal, hard, hardest, extra1 or extra2", d);
+        } else if (i + 1 < argc && io5649_wheel_option(argv[i], argv[i + 1])) {
+            i++;                      /* a 315-5649 wheel's pot: centre, range, speed (io_5649.h) */
         } else if (strcmp(argv[i], "--run") == 0) {
             g_autorun = 1;
         } else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc) {

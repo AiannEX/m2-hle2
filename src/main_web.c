@@ -562,6 +562,10 @@ static void web_push_audio(void) {
 
 /* ---- sokol_app callbacks -------------------------------------------------- */
 
+/* --profile=ID (?game= on the page): the game this page plays, picked before
+ * the ROM is asked for, since the profile names the files. */
+static char g_web_profile_arg[32];
+
 static void init(void) {
     log_init();
     LOG_INFO("m2-hle web %s starting", M2HLE_VERSION);
@@ -571,6 +575,11 @@ static void init(void) {
     bp_init();
     wp_init();
     if (g_profile_count > 0) g_active_profile = g_profiles[0];
+    if (g_web_profile_arg[0]) {
+        const game_profile_t *p = profile_by_id(g_web_profile_arg);
+        if (p) g_active_profile = p;
+        else LOG_WARN("web: no profile '%s'", g_web_profile_arg);
+    }
 
     sg_setup(&(sg_desc){
         .environment = sglue_environment(),
@@ -971,6 +980,13 @@ sapp_desc sokol_main(int argc, char *argv[]) {
          * the interpolated ones), --pictures-all never gives them up. */
         else if (!strcmp(a, "--pictures-board-rate")) g_web_pictures = WEB_PICTURES_BOARD_RATE;
         else if (!strcmp(a, "--pictures-all"))        g_web_pictures = WEB_PICTURES_ALL;
+        else if (!strncmp(a, "--profile=", 10))       snprintf(g_web_profile_arg, sizeof g_web_profile_arg, "%s", a + 10);
+        /* --wheel-center=N, --wheel-range=N, --wheel-speed=N (board/io_5649.h). */
+        else if (!strncmp(a, "--wheel-", 8) && strchr(a, '=')) {
+            char opt[32];
+            size_t n = (size_t)(strchr(a, '=') - a);
+            if (n < sizeof opt) { memcpy(opt, a, n); opt[n] = 0; io5649_wheel_option(opt, a + n + 1); }
+        }
     }
     return (sapp_desc){
         .init_cb      = init,

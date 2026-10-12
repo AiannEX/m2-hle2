@@ -49,6 +49,11 @@ $('canvas').addEventListener('webglcontextlost', (e) => {
  * files by checksum, so it knows exactly which ones the zip does not hold. */
 function explainMissing(missing) {
   const names = missing.split(' ').filter(Boolean);
+  if (m2hleGame.id !== 'sfight') {
+    return names.length === 0
+      ? 'That file could not be read as a zip. Choose your ' + m2hleGame.id + '.zip.'
+      : 'This zip is missing ' + names[0] + ', which ' + m2hleGame.title + ' needs.';
+  }
   if (names.length === 0) {
     return 'That file could not be read as a zip. Choose your merged sfight.zip or schamp.zip.';
   }
@@ -323,7 +328,8 @@ var Module = {
   canvas: $('canvas'),
   /* ?args=--fill-ref,--no-mesh-cache reaches main_web.c as argv: the switches that
    * turn one render optimisation off each, for finding which one drew it wrong. */
-  arguments: (params.get('args') || '').split(',').filter((a) => /^--[a-z-]+$/.test(a)),
+  arguments: (params.get('args') || '').split(',').filter((a) => /^--[a-z-]+$/.test(a))
+    .concat(m2hleGame.args),   /* the game, and Sega Rally's wheel (m2hle-game.js) */
   locateFile: (path) => versioned(path),      /* m2hle.wasm */
   /* Everything the emulator prints, into the Console (and on to devtools). */
   print: m2hleTools.print,

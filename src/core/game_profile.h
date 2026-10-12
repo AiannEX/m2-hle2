@@ -153,6 +153,12 @@ typedef struct {
      * vector from the interrupt control register, the handler from the table
      * the PRCB names. For a program whose handlers no profile knows. */
     bool     irq_vectors;
+
+    /* The I/O board is a 315-5649 with a wheel, pedals and a gear lever
+     * (io_5649.h): input_attach serves its analog mux and gearbox, driven by
+     * the held bits named in `wheel`. */
+    bool     io_5649;
+    struct { uint32_t left, right, accel, brake, shift_up, shift_down; } wheel;
 } game_quirks_t;
 
 /* ---- Loader / installer function-pointer types --------------------------- */

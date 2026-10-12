@@ -274,6 +274,20 @@ static struct retro_core_option_v2_definition option_defs[] = {
       NULL, "online",
       { { "1", NULL }, { "2", NULL }, { "3", NULL }, { "4", NULL }, { "5", NULL }, { "6", NULL }, { "8", NULL }, { NULL, NULL } },
       "2" },
+    { "m2hle_wheel_range", "Wheel: full lock", NULL,
+      "Sega Rally's wheel pot: how far from centre the wheel reads at full lock, in A/D steps. Less is a gentler "
+      "wheel. The owner's manual's spec is past 0x2D left and 0xD3 right of a 0x80 centre, which 0x58 meets. "
+      "Online, every board reads the spec.",
+      NULL, NULL,
+      { { "0x58", "0x58 (manual spec)" }, { "0x30", NULL }, { "0x40", NULL }, { "0x4C", NULL }, { "0x68", NULL },
+        { "0x7F", NULL }, { NULL, NULL } },
+      "0x58" },
+    { "m2hle_wheel_speed", "Wheel: turn speed", NULL,
+      "How many A/D steps a frame the wheel turns while left or right is held, and returns when let go.",
+      NULL, NULL,
+      { { "10", "10 (full lock in 9 frames)" }, { "4", NULL }, { "6", NULL }, { "8", NULL }, { "14", NULL },
+        { "20", NULL }, { "255", "Instant" }, { NULL, NULL } },
+      "10" },
     { NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
 };
 
@@ -292,9 +306,17 @@ static int lr_option_scale(const char *v) {
          : !strcmp(v, "quadruple") ? 4 : !strcmp(v, "fullscreen") ? 0 : 2;
 }
 
+/* A 315-5649 wheel's pot (io_5649.h), for Sega Rally. */
+static void lr_read_wheel_options(void) {
+    const char *v;
+    if ((v = lr_var("m2hle_wheel_range"))) io5649_wheel_option("--wheel-range", v);
+    if ((v = lr_var("m2hle_wheel_speed"))) io5649_wheel_option("--wheel-speed", v);
+}
+
 /* The options that take effect as they change. */
 static void lr_read_live_options(void) {
     const char *v;
+    lr_read_wheel_options();
     if ((v = lr_var("m2hle_resolution"))) {
         opt.scale = lr_option_scale(v);
         if (opt.scale > LR_MAX_SCALE) opt.scale = LR_MAX_SCALE;
@@ -365,6 +387,8 @@ static void lr_set_options(void) {
         { "m2hle_heat_guard", "Heat guard; " LR_DEFAULT_HEAT "|off|80|85|90" },
         { "m2hle_online",     "Online play; retroarch|rpcn|ggpo" },
         { "m2hle_net_delay",  "Input delay (frames); 2|1|3|4|5|6|8" },
+        { "m2hle_wheel_range", "Wheel: full lock; 0x58|0x30|0x40|0x4C|0x68|0x7F" },
+        { "m2hle_wheel_speed", "Wheel: turn speed; 10|4|6|8|14|20|255" },
         { NULL, NULL },
     };
     size_t o = 0;

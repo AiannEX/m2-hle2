@@ -12,15 +12,16 @@
 #include "game_profile.h"
 #include "sfight.h"
 #include "sfight_console.h"
-/* The web build (M2HLE_WEB) registers Sonic the Fighters and nothing else: it
- * exists to play that game over RPCN, and a set that cannot be played online
- * there is only download size. Left out, not hidden. See WEB-PORT.md. Both STF
- * profiles are there, since each is its own lobby space. */
+/* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
+ * play over RPCN, and Sega Rally for srally.sonicthefighte.rs (the page's
+ * ?game=srallyc, web/site/m2hle-game.js). Any other set is only download size:
+ * left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
+ * each is its own lobby space. */
+#include "srallyc.h"
 #ifndef M2HLE_WEB
 #include "fvipers.h"
 #include "m2snake.h"
 #include "sfight_homebrew.h"
-#include "srallyc.h"
 #endif
 /* Future: vf2.h, daytona.h, vcop.h, ... */
 
@@ -29,11 +30,11 @@
 const game_profile_t *const g_profiles[] = {
     &sfight_console_profile,
     &sfight_profile,
+    &srallyc_profile,
 #ifndef M2HLE_WEB
     &fvipers_profile,
     &m2snake_profile,
     &sfight_homebrew_profile,
-    &srallyc_profile,
 #endif
 };
 

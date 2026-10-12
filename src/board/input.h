@@ -32,6 +32,7 @@
 
 #include "constants.h"
 #include "game_profile.h"
+#include "io_5649.h"
 #include "log.h"
 #include "memory.h"
 
@@ -252,13 +253,28 @@ static uint32_t input_io_read_cb(mem_region_t *r, uint32_t addr, int size) {
     }
 }
 
+static uint32_t input_board_held(void) { return g_input.use_net ? g_input.net_held : g_input.held; }
+static int      input_board_from_net(void) { return g_input.use_net; }
+
+/* A 315-5649 board (a wheel): io_5649.h serves the ports and takes the writes. */
+static inline void input_attach_5649(mem_region_t *r) {
+    const game_quirks_t *q = &g_active_profile->quirks;
+    g_io5649_controls = (io5649_controls_t){ q->wheel.left, q->wheel.right, q->wheel.accel,
+                                             q->wheel.brake, q->wheel.shift_up, q->wheel.shift_down };
+    g_io5649_held_fn     = input_board_held;
+    g_io5649_from_net_fn = input_board_from_net;
+    r->read_cb  = io5649_read_cb;
+    r->write_cb = io5649_write_cb;
+}
+
 /* Install the I/O read callback on the bus's I/O region. Call after the ROM is
  * installed (install_fn re-inits the bus). Writes (coin-meter strobe at IO+0x00,
  * IO+0x40) keep hitting the plain buffer — harmless. */
 static inline void input_attach(memory_bus_t *bus) {
     for (int i = 0; i < bus->region_count; i++) {
         if (bus->regions[i].base == IO_BASE) {
-            bus->regions[i].read_cb = input_io_read_cb;
+            if (g_active_profile && g_active_profile->quirks.io_5649) input_attach_5649(&bus->regions[i]);
+            else bus->regions[i].read_cb = input_io_read_cb;
             mem_regions_changed(bus);
             LOG_INFO("input: I/O port read callback attached @ 0x%08X", IO_BASE);
             return;

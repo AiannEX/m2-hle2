@@ -16,8 +16,10 @@
  * Texture and luma land in the same buffers the 2B regions fill, in the same
  * layout, so the renderer reads one format whichever board wrote it.
  *
- * Still to do for 2A: the sound UART sits at 0x01C80000 (2B: 0x009C0000) and
- * the I/O board is a 315-5649 with analog inputs (Sega Rally's wheel).
+ * The I/O board is a 315-5649 with analog inputs (Sega Rally's wheel), served
+ * by io_5649.h when the profile sets quirks.io_5649.
+ *
+ * Still to do for 2A: the sound UART sits at 0x01C80000 (2B: 0x009C0000).
  */
 #ifndef MODEL2A_H
 #define MODEL2A_H
