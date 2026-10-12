@@ -777,8 +777,8 @@ static inline void mem_add_regions(memory_bus_t *bus, uint8_t *rom_data, size_t 
     mem_add_region(bus, "IO",              IO_BASE,              IO_SIZE,              bus->io,            0);
     mem_add_region(bus, "SERIAL",          SERIAL_BASE,          SERIAL_SIZE,          bus->serial,        0);
     mem_add_region(bus, "BACK",            BACK_BASE,            BACK_SIZE,            bus->back,          0);
-    mem_add_region(bus, "MAIN_DATA",       MAIN_DATA_BASE,       MAIN_DATA_SIZE,       bus->main_data,     0);
-    mem_add_region(bus, "XTRA_DATA",       XTRA_DATA_BASE,       XTRA_DATA_SIZE,       bus->xtra_data,     0);
+    mem_add_region(bus, "MAIN_DATA",       MAIN_DATA_BASE,       MAIN_DATA_SIZE,       bus->main_data,     1);
+    mem_add_region(bus, "XTRA_DATA",       XTRA_DATA_BASE,       XTRA_DATA_SIZE,       bus->xtra_data,     1);
     mem_add_region(bus, "UNKNOWN_VID",     UNKNOWN_VID_BASE,     UNKNOWN_VID_SIZE,     bus->unknown_vid,   0);
     mem_add_region(bus, "TEXRAM0_A",       TEXRAM0_ALIAS_BASE,   TEXRAM0_SIZE,         bus->texram0,       0);
     mem_add_region(bus, "TEXRAM0",         TEXRAM0_BASE,         TEXRAM0_SIZE,         bus->texram0,       0);

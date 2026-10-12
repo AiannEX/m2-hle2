@@ -60,9 +60,11 @@ int main(void) {
     CHECK(mem_read32(&bus, RAM_BASE + 0x30) == 0xDEADBEEF, "write32/read32 round-trip");
     CHECK(mem_read8(&bus, RAM_BASE + 0x33) == 0xDE, "write32 is little-endian (high byte last)");
 
-    /* Heap region round-trip (MAIN_DATA). */
-    mem_write32(&bus, MAIN_DATA_BASE + 0x4000, 0xCAFEF00D);
-    CHECK(mem_read32(&bus, MAIN_DATA_BASE + 0x4000) == 0xCAFEF00D, "MAIN_DATA round-trip");
+    /* MAIN_DATA is data ROM: a profile fills the buffer, the CPU only reads it. */
+    memcpy(bus.main_data + 0x4000, "\x0D\xF0\xFE\xCA", 4);
+    CHECK(mem_read32(&bus, MAIN_DATA_BASE + 0x4000) == 0xCAFEF00D, "MAIN_DATA reads its buffer");
+    mem_write32(&bus, MAIN_DATA_BASE + 0x4000, 0x12345678);
+    CHECK(mem_read32(&bus, MAIN_DATA_BASE + 0x4000) == 0xCAFEF00D, "MAIN_DATA ignores a CPU write");
 
     /* Buffer RAM repeats every 128 KB up to 0x97FFFF (MAME .mirror(0x60000)). */
     mem_write32(&bus, BUFF_RAM_BASE + 0x60010, 0x5A5AA5A5);
