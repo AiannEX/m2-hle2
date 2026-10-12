@@ -595,7 +595,9 @@
 <script src="m2hle-page.js?v=@M2HLE_VERSION@"></script>
 <script async src="m2hle.js?v=@M2HLE_VERSION@"></script>
 <!-- The arcade: asks whether to share high scores and usage, and if so boots the game on
-     the shared board (play.sonicthefighte.rs repository). The game runs without it. -->
-<script type="module" src="https://arcade.sonicthefighte.rs/stf-arcade.mjs"></script>
+     the shared board. arcade/ is a copy of the play.sonicthefighte.rs repository's
+     src/public client; only its API calls leave this site. The game runs without it. -->
+<meta name="stf-arcade-api" content="https://arcade.sonicthefighte.rs">
+<script type="module" src="arcade/stf-arcade.mjs?v=@M2HLE_VERSION@"></script>
 </body>
 </html>
