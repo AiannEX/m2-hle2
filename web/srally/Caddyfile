@@ -15,6 +15,12 @@
 :8080 {
 	encode zstd gzip
 
+	# The page, with Sega Rally's title and description in its head: a link
+	# preview reads them without running the page's scripts (web/stamp-site.cmake,
+	# Pinboard #673). Every other file is play's own.
+	rewrite / /srally.html
+	rewrite /index.html /srally.html
+
 	reverse_proxy https://play.sonicthefighte.rs {
 		header_up Host {upstream_hostport}
 		header_down -Server
@@ -26,7 +32,7 @@
 
 	# Every asset is loaded with ?v=<version>; only the page itself must be
 	# revalidated, or a browser keeps the old version list for ten minutes.
-	@index path / /index.html
+	@index path / /index.html /srally.html
 	header @index {
 		Cache-Control "no-cache"
 		-Expires

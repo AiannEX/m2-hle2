@@ -2,7 +2,10 @@
 
 The Sega Rally page is play.sonicthefighte.rs under another name: the same files,
 and `web/site/m2hle-game.js` picks Sega Rally when the host name starts `srally.`.
-So the site holds no build of its own. A Caddy container on the RPCN droplet
+So the site holds no build of its own. One file differs: for `/` it serves
+`srally.html`, which the build writes beside `index.html` with Sega Rally's
+title and description, so a link preview (which runs no script) names Sega
+Rally (Pinboard #673). A Caddy container on the RPCN droplet
 (`srally-web`, on the `proxy` network) proxies play.sonicthefighte.rs, and srally
 is always whatever the pages workflow last published (Pinboard #649). Until #649
 it served a copy of `build_web/site` deployed by hand, which fell behind play.
