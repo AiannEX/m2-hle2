@@ -1402,7 +1402,7 @@ static void window_game_rect(int *ox, int *oy, int *w, int *h) {
     if (avail_h < 1) avail_h = 1;
     /* Letterbox against whatever is actually being shown: the stream's
      * target has its own aspect, chosen by --av-size. */
-    int src_w = s_av_mirror ? av_stream_width()  : VIDEO_WIDTH;
+    int src_w = s_av_mirror ? av_stream_width()  : post_shader_picture_width();
     int src_h = s_av_mirror ? av_stream_height() : VIDEO_HEIGHT;
     game_render_letterbox(sapp_width(), avail_h, src_w, src_h, ox, oy, w, h);
     *oy += menu_h;

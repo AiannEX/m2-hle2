@@ -131,7 +131,8 @@ static inline void shader_ui_builtin_items(post_shader_mode_t m) {
         shader_ui_save();
     }
     igSetItemTooltip("The CRT filter, with the tone curve measured from a real Model 2B board's video: "
-                     "the same colours, brighter mid-tones. Costs GPU time.");
+                     "the same colours, brighter mid-tones; with the board's ghosting and noise, "
+                     "and the picture 4:3, as its monitor shows it. Costs GPU time.");
 }
 
 /* The Video menu, in the main menu bar. */
