@@ -50,6 +50,7 @@ const m2hleKeys = (() => {
     { id: 'pause', label: 'Pause',     acts: [],        page: true },
   ];
   for (const a of ACTIONS) a.mask = (a.acts || [a.act]).reduce((m, i) => m | (1 << i), 0);
+  for (const a of ACTIONS) a.label = m2hleGame.labels[a.id] || a.label;
   const P2_OFFSET = 10;
 
   /* The desktop build's keys (src/board/input.h), which are MAME's. */

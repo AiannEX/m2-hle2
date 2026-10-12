@@ -10,7 +10,13 @@
  * textures loaded. Interrupts go through the program's own table (irq_vectors):
  * the vblank handler at 0x5A0490 clears the texture-upload budget flag at
  * 0x202004 and arms timer 2, and without it the course and title textures were
- * never uploaded. No wheel (the 315-5649 I/O board's analog ports), no hooks.
+ * never uploaded. No hooks.
+ *
+ * Controls: the 315-5649 I/O board's wheel, pedals and four-speed lever
+ * (board/io_5649.h). LEFT / RIGHT turn the wheel, B1 is the accelerator, B2
+ * the brake, UP / DOWN shift a gear, B3 is VIEW CHANGE (the VR button). The
+ * wheel's pot is adjustable (--wheel-center / --wheel-range / --wheel-speed);
+ * the default is the owner's manual's spec.
  */
 #ifndef PROFILES_SRALLYC_H
 #define PROFILES_SRALLYC_H
@@ -27,6 +33,8 @@
 #include "memory.h"
 #include "model2a.h"
 #include "i960.h"
+#include "io_5649.h"
+#include "savestate_reg.h"
 
 #define SRALLYC_PAIR_32(dest, dest_sz, lo, crc_lo, hi, crc_hi, half_sz, offset) \
     do { \
@@ -147,6 +155,8 @@ static inline void srallyc_install(const romset_t *rs, i960_cpu_t *cpu, memory_b
         uint32_t start_ip_ptr = srallyc_read32(rs->maincpu, prcb + PRCB_START_IP);
         if (start_ip_ptr < rs->maincpu_size) cpu->sfr.ip = srallyc_read32(rs->maincpu, start_ip_ptr);
     }
+    io5649_reset();
+    savestate_extra("srallyc", "IO5649", &g_io5649, sizeof g_io5649);
     LOG_INFO("srallyc_install: PRCB=0x%08X initial IP=0x%08X", prcb, cpu->sfr.ip);
 }
 
@@ -158,12 +168,34 @@ static const game_profile_t srallyc_profile = {
     .load_fn         = srallyc_load,
     .install_fn      = srallyc_install,
     .hook_count      = 0,
+    .input = {
+        /* IN0 is the cabinet's: COIN1 0x01, TEST 0x04, SERVICE 0x08, VR 0x20,
+         * START 0x40 (MAME INPUT_PORTS_START(srallyc)). Byte 1 is not a port
+         * here: io_5649.h reads it as the wheel, pedals and lever (quirks.wheel)
+         * and serves IN1 as the gearbox. */
+        .bits = {
+            [GAME_INPUT_P1_COIN]  = 0x00000001,
+            [GAME_INPUT_TEST]     = 0x00000004,
+            [GAME_INPUT_SERVICE]  = 0x00000008,
+            [GAME_INPUT_P1_B3]    = 0x00000020,
+            [GAME_INPUT_P1_START] = 0x00000040,
+            [GAME_INPUT_P1_B1]    = 0x00000100,
+            [GAME_INPUT_P1_B2]    = 0x00000200,
+            [GAME_INPUT_P1_DOWN]  = 0x00001000,
+            [GAME_INPUT_P1_UP]    = 0x00002000,
+            [GAME_INPUT_P1_RIGHT] = 0x00004000,
+            [GAME_INPUT_P1_LEFT]  = 0x00008000,
+        },
+    },
     .quirks = {
         .enable_68k_sound = true,
         /* The program's own interrupt table: its vblank handler (0x5A0490)
          * clears the texture-upload budget flag at 0x202004 and arms timer 2. */
         .irq_vectors      = true,
         .board_vblank     = true,
+        .io_5649          = true,
+        .wheel = { .left = 0x8000, .right = 0x4000, .accel = 0x0100, .brake = 0x0200,
+                   .shift_up = 0x2000, .shift_down = 0x1000 },
     },
 };
 

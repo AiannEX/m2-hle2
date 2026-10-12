@@ -222,42 +222,40 @@ static inline uint32_t tgp_prog_rd(uint32_t ea) {
 /* I/O space: with bank bits 22-23 set, all of it is external memory (bank bit 23
  * the copro_data ROM, bit 22 bufferram); otherwise only the table ports answer
  * (MAME's view over 0x0000-0xFFFF hides them while a bank is selected). */
+static inline uint32_t tgp_io_bank_rd(uint32_t ea) {
+    uint32_t adr = (g_tgp.bank_reg & 0xFF0000u) | ea;
+    if (adr & 0x800000u)
+        return g_tgp_copro_words ? tgp_le32(g_tgp_copro_data, adr & (g_tgp_copro_words - 1u)) : 0u;
+    if (adr & 0x400000u)
+        return g_tgp_bufferram ? tgp_le32(g_tgp_bufferram, adr & 0x7FFFu) : 0u;
+    return 0u;
+}
+
 static inline uint32_t tgp_io_rd(uint32_t ea) {
     ea &= 0xFFFFu;
-    if (g_tgp.bank_reg & 0xC00000u) {
-        uint32_t adr = (g_tgp.bank_reg & 0xFF0000u) | ea;
-        if (adr & 0x800000u)
-            return g_tgp_copro_words ? tgp_le32(g_tgp_copro_data, adr & (g_tgp_copro_words - 1u)) : 0u;
-        if (adr & 0x400000u)
-            return g_tgp_bufferram ? tgp_le32(g_tgp_bufferram, adr & 0x7FFFu) : 0u;
-        return 0u;
-    }
-    switch (ea) {
-    case 0x20: case 0x21: case 0x22: case 0x23: return tgp_sincos_r(ea - 0x20u);
-    case 0x24: case 0x25: case 0x26: case 0x27: return tgp_atan_r();
-    case 0x28: case 0x29: return tgp_inv_r(ea - 0x28u);
-    case 0x2A: case 0x2B: return tgp_isqrt_r(ea - 0x2Au);
-    default: return 0u;
+    if (g_tgp.bank_reg & 0xC00000u) return tgp_io_bank_rd(ea);
+    if (ea >= 0x20u && ea < 0x24u) return tgp_sincos_r(ea - 0x20u);
+    if (ea >= 0x24u && ea < 0x28u) return tgp_atan_r();
+    if (ea >= 0x28u && ea < 0x2Au) return tgp_inv_r(ea - 0x28u);
+    if (ea >= 0x2Au && ea < 0x2Cu) return tgp_isqrt_r(ea - 0x2Au);
+    return 0u;
+}
+
+static inline void tgp_io_bank_wr(uint32_t ea, uint32_t v) {
+    uint32_t adr = (g_tgp.bank_reg & 0xFF0000u) | ea;
+    if ((adr & 0x400000u) && g_tgp_bufferram) {
+        uint8_t *p = g_tgp_bufferram + (size_t)(adr & 0x7FFFu) * 4u;
+        p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
     }
 }
 
 static inline void tgp_io_wr(uint32_t ea, uint32_t v) {
     ea &= 0xFFFFu;
-    if (g_tgp.bank_reg & 0xC00000u) {
-        uint32_t adr = (g_tgp.bank_reg & 0xFF0000u) | ea;
-        if ((adr & 0x400000u) && g_tgp_bufferram) {
-            uint8_t *p = g_tgp_bufferram + (size_t)(adr & 0x7FFFu) * 4u;
-            p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
-        }
-        return;
-    }
-    switch (ea) {
-    case 0x20: case 0x21: case 0x22: case 0x23: g_tgp.sincos_base = v; break;
-    case 0x24: case 0x25: case 0x26: case 0x27: tgp_atan_w(ea - 0x24u, v); break;
-    case 0x28: case 0x29: g_tgp.inv_base = v; break;
-    case 0x2A: case 0x2B: g_tgp.isqrt_base = v; break;
-    default: break;
-    }
+    if (g_tgp.bank_reg & 0xC00000u) { tgp_io_bank_wr(ea, v); return; }
+    if (ea >= 0x20u && ea < 0x24u)      g_tgp.sincos_base = v;
+    else if (ea >= 0x24u && ea < 0x28u) tgp_atan_w(ea - 0x24u, v);
+    else if (ea >= 0x28u && ea < 0x2Au) g_tgp.inv_base = v;
+    else if (ea >= 0x2Au && ea < 0x2Cu) g_tgp.isqrt_base = v;
 }
 
 /* Register file (model2.cpp copro_tgp_rf_map): 1 = input FIFO, 2 = output
@@ -281,69 +279,68 @@ static inline void tgp_rf_wr(uint32_t r, uint32_t v) {
 
 /* ---- Registers ----------------------------------------------------------- */
 
+/* The float registers a, b, d and p, each with views of its exponent and
+ * mantissa at the next two numbers (0x10, 0x13, 0x19, 0x1C); NULL for the rest. */
+static inline uint32_t *tgp_fp_reg(uint32_t r, uint32_t *part) {
+    static const uint8_t base[4] = { 0x10, 0x13, 0x19, 0x1C };
+    uint32_t *const regs[4] = { &g_tgp.a, &g_tgp.b, &g_tgp.d, &g_tgp.p };
+    for (int k = 0; k < 4; k++)
+        if (r >= base[k] && r < base[k] + 3u) { *part = r - base[k]; return regs[k]; }
+    return NULL;
+}
+
+/* The 16-bit address registers; NULL for the rest. Only b0, b1, x0 and x1
+ * read back. */
+static inline uint16_t *tgp_u16_reg(uint32_t r) {
+    switch (r) {
+    case 0x00: return &g_tgp.b0;
+    case 0x01: return &g_tgp.b1;
+    case 0x02: return &g_tgp.x0;
+    case 0x03: return &g_tgp.x1;
+    case 0x05: return &g_tgp.i0;
+    case 0x06: return &g_tgp.i1;
+    case 0x08: return &g_tgp.sp;
+    case 0x3C: return &g_tgp.mask;
+    default:   return NULL;
+    }
+}
+
 static inline uint32_t tgp_read_reg(uint32_t r) {
     r &= 0x3Fu;
     if (r >= 0x20u && r < 0x30u) return tgp_rf_rd(r & 0x1Fu);
+    uint32_t part;
+    const uint32_t *f = tgp_fp_reg(r, &part);
+    if (f) return part == 0 ? *f : part == 1 ? tgp_get_exp(*f) : tgp_get_mant(*f);
+    if (r <= 0x03u) return *tgp_u16_reg(r);
     switch (r) {
-    case 0x00: return g_tgp.b0;
-    case 0x01: return g_tgp.b1;
-    case 0x02: return g_tgp.x0;
-    case 0x03: return g_tgp.x1;
     case 0x0C: return g_tgp.c0;
     case 0x0D: return g_tgp.c1;
-    case 0x10: return g_tgp.a;
-    case 0x11: return tgp_get_exp(g_tgp.a);
-    case 0x12: return tgp_get_mant(g_tgp.a);
-    case 0x13: return g_tgp.b;
-    case 0x14: return tgp_get_exp(g_tgp.b);
-    case 0x15: return tgp_get_mant(g_tgp.b);
-    case 0x19: return g_tgp.d;
-    case 0x1A: return tgp_get_exp(g_tgp.d);
-    case 0x1B: return tgp_get_mant(g_tgp.d);
-    case 0x1C: return g_tgp.p;
-    case 0x1D: return tgp_get_exp(g_tgp.p);
-    case 0x1E: return tgp_get_mant(g_tgp.p);
     case 0x1F: return g_tgp.sft;
     case 0x34: return g_tgp.rpc;
     default:   return 0u;
     }
 }
 
+/* c0 / c1, with the status flag that says the counter is at 1. */
+static inline void tgp_write_counter(uint8_t *c, uint32_t flag, uint32_t v) {
+    *c = (uint8_t)v;
+    if (*c == 1) g_tgp.st |= flag; else g_tgp.st &= ~flag;
+}
+
 static inline void tgp_write_reg(uint32_t r, uint32_t v) {
     r &= 0x3Fu;
     if (r >= 0x20u && r < 0x30u) { tgp_rf_wr(r & 0x1Fu, v); return; }
+    uint32_t part;
+    uint32_t *f = tgp_fp_reg(r, &part);
+    if (f) { *f = part == 0 ? v : part == 1 ? tgp_set_exp(*f, v) : tgp_set_mant(*f, v); return; }
+    uint16_t *h = tgp_u16_reg(r);
+    if (h) { *h = (uint16_t)v; return; }
     switch (r) {
-    case 0x00: g_tgp.b0 = (uint16_t)v; break;
-    case 0x01: g_tgp.b1 = (uint16_t)v; break;
-    case 0x02: g_tgp.x0 = (uint16_t)v; break;
-    case 0x03: g_tgp.x1 = (uint16_t)v; break;
-    case 0x05: g_tgp.i0 = (uint16_t)v; break;
-    case 0x06: g_tgp.i1 = (uint16_t)v; break;
-    case 0x08: g_tgp.sp = (uint16_t)v; break;
     case 0x0A: g_tgp.vsm = (uint8_t)(v & 7u); g_tgp.vsmr = (uint16_t)((8u << g_tgp.vsm) - 1u); break;
-    case 0x0C:
-        g_tgp.c0 = (uint8_t)v;
-        if (g_tgp.c0 == 1) g_tgp.st |= TGP_F_ZC0; else g_tgp.st &= ~(uint32_t)TGP_F_ZC0;
-        break;
-    case 0x0D:
-        g_tgp.c1 = (uint8_t)v;
-        if (g_tgp.c1 == 1) g_tgp.st |= TGP_F_ZC1; else g_tgp.st &= ~(uint32_t)TGP_F_ZC1;
-        break;
-    case 0x10: g_tgp.a = v; break;
-    case 0x11: g_tgp.a = tgp_set_exp(g_tgp.a, v); break;
-    case 0x12: g_tgp.a = tgp_set_mant(g_tgp.a, v); break;
-    case 0x13: g_tgp.b = v; break;
-    case 0x14: g_tgp.b = tgp_set_exp(g_tgp.b, v); break;
-    case 0x15: g_tgp.b = tgp_set_mant(g_tgp.b, v); break;
-    case 0x19: g_tgp.d = v; break;
-    case 0x1A: g_tgp.d = tgp_set_exp(g_tgp.d, v); break;
-    case 0x1B: g_tgp.d = tgp_set_mant(g_tgp.d, v); break;
-    case 0x1C: g_tgp.p = v; break;
-    case 0x1D: g_tgp.p = tgp_set_exp(g_tgp.p, v); break;
-    case 0x1E: g_tgp.p = tgp_set_mant(g_tgp.p, v); break;
+    case 0x0C: tgp_write_counter(&g_tgp.c0, TGP_F_ZC0, v); break;
+    case 0x0D: tgp_write_counter(&g_tgp.c1, TGP_F_ZC1, v); break;
     case 0x1F: g_tgp.sft = (uint8_t)v; break;
     case 0x34: g_tgp.rpc = (uint8_t)v; break;
-    case 0x3C: g_tgp.mask = (uint16_t)v; break;
     default: break;
     }
 }
@@ -361,75 +358,105 @@ static inline void tgp_sz_fp(uint32_t v) {
     g_tgp.alu_stset = (v & 0x7FFFFFFFu) ? ((v & 0x80000000u) ? TGP_F_SGD : 0u) : TGP_F_ZRD;
 }
 
-static inline void tgp_alu_pre(uint32_t alu) {
+/* cfxd: float to integer, rounded as the mode register's bits 1-2 say. */
+static inline uint32_t tgp_cfx(float f) {
+    switch ((g_tgp.m >> 1) & 3u) {
+    case 0:  return tgp_f2i(roundf(f));
+    case 1:  return tgp_f2i(ceilf(f));
+    case 2:  return tgp_f2i(floorf(f));
+    default: return tgp_f2i(f);
+    }
+}
+
+/* The integer ops (committed by post_1). False if `alu` is not one. */
+static inline bool tgp_alu_int(uint32_t alu) {
     tgp_state_t *t = &g_tgp;
     uint8_t sft = t->sft;
+    uint32_t r;
     switch (alu) {
-    case 0x00: break;
-    case 0x01: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = t->d & t->a; tgp_sz_int(t->alu_r1); break;  /* andd */
-    case 0x02: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = t->d | t->a; tgp_sz_int(t->alu_r1); break;  /* orad */
-    case 0x03: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = t->d ^ t->a; tgp_sz_int(t->alu_r1); break;  /* eord */
-    case 0x04: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = ~t->d;       tgp_sz_int(t->alu_r1); break;  /* notd */
-    case 0x05:                                                                                         /* fcpd */
-        t->alu_stmask = TGP_ALU_FLAGS;
-        tgp_sz_fp(tgp_f2u(tgp_u2f(t->d) - tgp_u2f(t->a)));
-        break;
-    case 0x06: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = tgp_f2u(tgp_u2f(t->d) + tgp_u2f(t->a)); tgp_sz_fp(t->alu_r1); break; /* fadd */
-    case 0x07: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = tgp_f2u(tgp_u2f(t->d) - tgp_u2f(t->a)); tgp_sz_fp(t->alu_r1); break; /* fsbd */
-    case 0x08: t->alu_stmask = 0; t->alu_r1 = tgp_f2u(tgp_u2f(t->a) * tgp_u2f(t->b)); t->alu_stset = 0; break;               /* fml */
-    case 0x09:                                                                                         /* fmsd */
-        t->alu_stmask = TGP_ALU_FLAGS;
-        t->alu_r1 = tgp_f2u(tgp_u2f(t->d) + tgp_u2f(t->p));
-        t->alu_r2 = tgp_f2u(tgp_u2f(t->a) * tgp_u2f(t->b));
-        tgp_sz_fp(t->alu_r1);
-        break;
-    case 0x0A:                                                                                         /* fmrd */
-        t->alu_stmask = TGP_ALU_FLAGS;
-        t->alu_r1 = tgp_f2u(tgp_u2f(t->d) - tgp_u2f(t->p));
-        t->alu_r2 = tgp_f2u(tgp_u2f(t->a) * tgp_u2f(t->b));
-        tgp_sz_fp(t->alu_r1);
-        break;
-    case 0x0B: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = t->d & 0x7FFFFFFFu; tgp_sz_fp(t->alu_r1); break;                 /* fabd */
-    case 0x0C: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = tgp_f2u(tgp_u2f(t->d) + tgp_u2f(t->p)); tgp_sz_fp(t->alu_r1); break; /* fsmd */
-    case 0x0D:                                                                                         /* fspd */
-        t->alu_stmask = TGP_ALU_FLAGS;
-        t->alu_r1 = t->p;
-        t->alu_r2 = tgp_f2u(tgp_u2f(t->a) * tgp_u2f(t->b));
-        tgp_sz_fp(t->alu_r1);
-        break;
-    case 0x0E: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = tgp_f2u((float)(int32_t)t->d); tgp_sz_int(t->alu_r1); break;    /* cxfd */
-    case 0x0F: {                                                                                       /* cfxd */
-        t->alu_stmask = TGP_ALU_FLAGS;
-        float f = tgp_u2f(t->d);
-        switch ((t->m >> 1) & 3u) {
-        case 0: t->alu_r1 = tgp_f2i(roundf(f)); break;
-        case 1: t->alu_r1 = tgp_f2i(ceilf(f));  break;
-        case 2: t->alu_r1 = tgp_f2i(floorf(f)); break;
-        default: t->alu_r1 = tgp_f2i(f);        break;
-        }
-        tgp_sz_int(t->alu_r1);
-        break;
-    }
-    case 0x10: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = tgp_f2u(tgp_u2f(t->d) / tgp_u2f(t->a)); tgp_sz_fp(t->alu_r1); break; /* fdvd */
-    case 0x11: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = t->d ? t->d ^ 0x80000000u : 0u; tgp_sz_fp(t->alu_r1); break;      /* fned */
-    case 0x13: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = tgp_f2u(tgp_u2f(t->b) + tgp_u2f(t->a)); tgp_sz_fp(t->alu_r1); break; /* d = b + a */
-    case 0x14: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = tgp_f2u(tgp_u2f(t->b) - tgp_u2f(t->a)); tgp_sz_fp(t->alu_r1); break; /* d = b - a */
+    case 0x01: r = t->d & t->a; break;                          /* andd */
+    case 0x02: r = t->d | t->a; break;                          /* orad */
+    case 0x03: r = t->d ^ t->a; break;                          /* eord */
+    case 0x04: r = ~t->d; break;                                /* notd */
+    case 0x0E: r = tgp_f2u((float)(int32_t)t->d); break;        /* cxfd */
+    case 0x0F: r = tgp_cfx(tgp_u2f(t->d)); break;               /* cfxd */
     /* Shifts by 32 or more are undefined in C; the chip's answer is not known,
      * so take the one x86 gives (count mod 32), as MAME does in practice. */
-    case 0x16: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = t->d >> (sft & 31u); tgp_sz_int(t->alu_r1); break;                         /* lsrd */
-    case 0x17: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = t->d << (sft & 31u); tgp_sz_int(t->alu_r1); break;                         /* lsld */
-    case 0x18: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = (uint32_t)((int32_t)t->d >> (sft & 31u)); tgp_sz_int(t->alu_r1); break;    /* asrd */
-    case 0x19: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = t->d << (sft & 31u); tgp_sz_int(t->alu_r1); break;                         /* asld */
-    case 0x1A: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = t->d + t->a; tgp_sz_int(t->alu_r1); break;   /* addd */
-    case 0x1B: t->alu_stmask = TGP_ALU_FLAGS; t->alu_r1 = t->d - t->a; tgp_sz_int(t->alu_r1); break;   /* subd */
-    default: {
-        static uint32_t warned;
-        if (!(warned & (1u << (alu & 31u)))) {
-            warned |= 1u << (alu & 31u);
-            LOG_WARN("TGP: unhandled alu op %02X at %03X", alu, g_tgp.ppc);
-        }
-        break;
+    case 0x16: r = t->d >> (sft & 31u); break;                  /* lsrd */
+    case 0x17: case 0x19: r = t->d << (sft & 31u); break;       /* lsld, asld */
+    case 0x18: r = (uint32_t)((int32_t)t->d >> (sft & 31u)); break;   /* asrd */
+    case 0x1A: r = t->d + t->a; break;                          /* addd */
+    case 0x1B: r = t->d - t->a; break;                          /* subd */
+    default:   return false;
     }
+    t->alu_stmask = TGP_ALU_FLAGS;
+    t->alu_r1 = r;
+    tgp_sz_int(r);
+    return true;
+}
+
+static inline float tgp_fa(void) { return tgp_u2f(g_tgp.a); }
+static inline float tgp_fb(void) { return tgp_u2f(g_tgp.b); }
+static inline float tgp_fd(void) { return tgp_u2f(g_tgp.d); }
+static inline float tgp_fp(void) { return tgp_u2f(g_tgp.p); }
+
+/* The multiply-accumulate ops: d op p into r1, a * b into r2. */
+static inline void tgp_alu_mac(uint32_t alu) {
+    tgp_state_t *t = &g_tgp;
+    t->alu_stmask = TGP_ALU_FLAGS;
+    t->alu_r1 = alu == 0x09 ? tgp_f2u(tgp_fd() + tgp_fp())     /* fmsd */
+              : alu == 0x0A ? tgp_f2u(tgp_fd() - tgp_fp())     /* fmrd */
+              : t->p;                                          /* fspd */
+    t->alu_r2 = tgp_f2u(tgp_fa() * tgp_fb());
+    tgp_sz_fp(t->alu_r1);
+}
+
+/* The floating-point ops whose result goes to d (committed by post_2). False
+ * if `alu` is not one. */
+static inline bool tgp_alu_fp_d(uint32_t alu) {
+    tgp_state_t *t = &g_tgp;
+    uint32_t r;
+    switch (alu) {
+    case 0x06: r = tgp_f2u(tgp_fd() + tgp_fa()); break;         /* fadd */
+    case 0x07: r = tgp_f2u(tgp_fd() - tgp_fa()); break;         /* fsbd */
+    case 0x0B: r = t->d & 0x7FFFFFFFu; break;                   /* fabd */
+    case 0x0C: r = tgp_f2u(tgp_fd() + tgp_fp()); break;         /* fsmd */
+    case 0x10: r = tgp_f2u(tgp_fd() / tgp_fa()); break;         /* fdvd */
+    case 0x11: r = t->d ? t->d ^ 0x80000000u : 0u; break;       /* fned */
+    case 0x13: r = tgp_f2u(tgp_fb() + tgp_fa()); break;         /* d = b + a */
+    case 0x14: r = tgp_f2u(tgp_fb() - tgp_fa()); break;         /* d = b - a */
+    default:   return false;
+    }
+    t->alu_stmask = TGP_ALU_FLAGS;
+    t->alu_r1 = r;
+    tgp_sz_fp(r);
+    return true;
+}
+
+/* The rest of the floating-point ops. False if `alu` is not one. */
+static inline bool tgp_alu_fp(uint32_t alu) {
+    tgp_state_t *t = &g_tgp;
+    switch (alu) {
+    case 0x05:                                                  /* fcpd */
+        t->alu_stmask = TGP_ALU_FLAGS;
+        tgp_sz_fp(tgp_f2u(tgp_fd() - tgp_fa()));
+        return true;
+    case 0x08:                                                  /* fml */
+        t->alu_stmask = 0;
+        t->alu_r1 = tgp_f2u(tgp_fa() * tgp_fb());
+        t->alu_stset = 0;
+        return true;
+    case 0x09: case 0x0A: case 0x0D: tgp_alu_mac(alu); return true;
+    default: return tgp_alu_fp_d(alu);
+    }
+}
+
+static inline void tgp_alu_pre(uint32_t alu) {
+    if (alu == 0x00 || tgp_alu_int(alu) || tgp_alu_fp(alu)) return;
+    static uint32_t warned;
+    if (!(warned & (1u << (alu & 31u)))) {
+        warned |= 1u << (alu & 31u);
+        LOG_WARN("TGP: unhandled alu op %02X at %03X", alu, g_tgp.ppc);
     }
 }
 
@@ -508,245 +535,273 @@ static inline void tgp_pcs_pop(void) {
     for (int i = 0; i != 3; i++) g_tgp.pcs[i] = g_tgp.pcs[i + 1];
 }
 
-/* ---- One instruction (MAME execute_run) ----------------------------------
- * Returns false when it stalled on an empty input FIFO: the pc is back on the
+/* ---- One instruction (MAME execute_run) ---------------------------------- */
+
+/* What an opcode handler leaves tgp_step to do. */
+typedef enum {
+    TGP_STEP_NEXT,    /* done: apply the repeat count */
+    TGP_STEP_STALL,   /* a FIFO read found nothing: undo the fetch */
+    TGP_STEP_REP,     /* rep: MAME's rep_start skips the repeat count and post_1 */
+} tgp_step_t;
+
+static inline void tgp_op_lab(uint32_t op) {
+    tgp_state_t *t = &g_tgp;
+    uint32_t r1 = op & 0x1FFu, r2 = (op >> 9) & 0x1FFu;
+    uint32_t alu = (op >> 21) & 0x1Fu, sub = (op >> 18) & 7u;
+    tgp_alu_pre(alu);
+    uint32_t v1, v2;
+    switch (sub) {
+    case 0: case 1:                                 /* lab mem, mem (e) */
+        v1 = tgp_data_rd(TGP_EA0(r1));
+        v2 = tgp_io_rd(TGP_EA1(r2));
+        break;
+    case 3:                                         /* lab mem, mem + 0x200 */
+        v1 = tgp_data_rd(TGP_EA0(r1));
+        v2 = tgp_data_rd(TGP_EA1(r2) + 0x200u);
+        break;
+    case 4:                                         /* lab mem + 0x200, mem */
+        v1 = tgp_data_rd(TGP_EA0(r1) + 0x200u);
+        v2 = tgp_data_rd(TGP_EA1(r2));
+        break;
+    default:
+        LOG_WARN("TGP: unhandled lab subop %u at %03X", sub, t->ppc);
+        tgp_alu_post_1(alu);
+        tgp_alu_post_2(alu);
+        return;
+    }
+    TGP_POST0(r1);
+    TGP_POST1(r2);
+    t->a = v1;
+    t->b = v2;
+    tgp_alu_post_1(alu);
+    tgp_alu_post_2(alu);
+}
+
+/* mov subops 0-5: memory to memory. */
+static inline void tgp_mov_mem(uint32_t alu, uint32_t sub, uint32_t r1, uint32_t r2) {
+    uint32_t v;
+    switch (sub) {
+    case 0: case 1: v = tgp_data_rd(TGP_EA0(r1)); break;           /* mov mem, mem (e) */
+    case 2:         v = tgp_io_rd(TGP_EA0(r1)); break;             /* mov mem (e), mem */
+    case 3:         v = tgp_data_rd(TGP_EA0(r1)); break;           /* mov mem, mem + 0x200 */
+    case 4:         v = tgp_data_rd(TGP_EA0(r1) + 0x200u); break;  /* mov mem + 0x200, mem */
+    default:        v = tgp_prog_rd(TGP_EA0(r1)); break;           /* mov mem (o), mem */
+    }
+    TGP_POST0(r1);
+    tgp_alu_post_1(alu);
+    if (sub <= 1) tgp_write_io_1(r2, v);
+    else          tgp_write_internal_1(r2, v, sub == 3);
+}
+
+/* mov subop 7, forms 0, 1 and 6: from a register, which may be the FIFO.
+ * False when it stalled. */
+static inline bool tgp_mov_from_reg(uint32_t alu, uint32_t k, uint32_t r1, uint32_t r2) {
+    uint32_t v = tgp_read_reg(k == 6 ? r1 : r2);
+    if (g_tgp.stall) return false;
+    tgp_alu_post_1(alu);
+    if (k == 0)      tgp_write_internal_1(r1, v, false);  /* mov reg, mem */
+    else if (k == 1) tgp_write_io_1(r1, v);               /* mov reg, mem (e) */
+    else             tgp_write_reg(r2, v);                /* mov reg, reg */
+    return true;
+}
+
+/* mov subop 7: to or from a register. False when it stalled. */
+static inline bool tgp_mov_reg(uint32_t alu, uint32_t r1, uint32_t r2) {
+    uint32_t k = r2 >> 6, v;
+    switch (k) {
+    case 0: case 1: case 6: return tgp_mov_from_reg(alu, k, r1, r2);
+    case 2: v = tgp_data_rd(TGP_EA1(r1) + 0x200u); TGP_POST1(r1); break;   /* mov mem + 0x200, reg */
+    case 3: v = tgp_data_rd(TGP_EA1(r1)); TGP_POST1(r1); break;            /* mov mem, reg */
+    case 4: v = tgp_io_rd(TGP_EA1(r1)); TGP_POST1(r1); break;              /* mov mem (e), reg */
+    case 5: v = tgp_prog_rd(TGP_EA0(r1)); TGP_POST0(r1); break;            /* mov mem (o), reg */
+    default:
+        tgp_alu_post_1(alu);
+        LOG_WARN("TGP: unhandled ld/mov subop 7/%u at %03X", k, g_tgp.ppc);
+        return true;
+    }
+    tgp_alu_post_1(alu);
+    tgp_write_reg(r2, v);
+    return true;
+}
+
+static inline tgp_step_t tgp_op_mov(uint32_t op) {   /* ld / mov */
+    uint32_t r1 = op & 0x1FFu, r2 = (op >> 9) & 0x1FFu;
+    uint32_t alu = (op >> 21) & 0x1Fu, sub = (op >> 18) & 7u;
+    tgp_alu_pre(alu);
+    if (sub <= 5) {
+        tgp_mov_mem(alu, sub, r1, r2);
+    } else if (sub == 7) {
+        if (!tgp_mov_reg(alu, r1, r2)) return TGP_STEP_STALL;
+    } else {
+        tgp_alu_post_1(alu);
+        LOG_WARN("TGP: unhandled ld/mov subop %u at %03X", sub, g_tgp.ppc);
+    }
+    tgp_alu_post_2(alu);
+    return TGP_STEP_NEXT;
+}
+
+static inline void tgp_op_li(uint32_t op) {          /* lipl / lia / lib / lid */
+    tgp_state_t *t = &g_tgp;
+    switch ((op >> 24) & 3u) {
+    case 0: t->p = (t->p & 0xFF000000u) | (op & 0xFFFFFFu); break;
+    case 1: t->a = tgp_sext(op, 24); break;
+    case 2: t->b = tgp_sext(op, 24); break;
+    case 3: t->d = tgp_sext(op, 24); break;
+    }
+}
+
+static inline tgp_step_t tgp_op_ctl(uint32_t op) {   /* rep / clr0 / clr1 / set */
+    tgp_state_t *t = &g_tgp;
+    uint32_t alu = (op >> 20) & 0x1Fu;
+    tgp_alu_pre(alu);
+    switch ((op >> 17) & 7u) {
+    case 0:                                         /* clr0 */
+        if (op & 0x0004u) t->a = 0;
+        if (op & 0x0008u) t->b = 0;
+        if (op & 0x0010u) t->d = 0;
+        break;
+    case 1: break;                                  /* clr1: flag mapping unknown */
+    case 2: {                                       /* rep */
+        uint32_t n = (op & 0x8000u) ? tgp_read_reg(op) : op;
+        if (t->stall) return TGP_STEP_STALL;
+        t->r = (uint8_t)n;
+        return TGP_STEP_REP;
+    }
+    case 3: break;                                  /* set: flag mapping unknown (0x800 = interrupt enable) */
+    default:
+        LOG_WARN("TGP: unimplemented opcode 0F/%u at %03X", (op >> 17) & 7u, t->ppc);
+        break;
+    }
+    tgp_alu_post_1(alu);
+    return TGP_STEP_NEXT;
+}
+
+static inline bool tgp_cond(uint32_t cond) {
+    tgp_state_t *t = &g_tgp;
+    switch (cond) {
+    case 0x00: return t->st & TGP_F_ZRD;                        /* zrd */
+    case 0x01: return !(t->st & TGP_F_SGD);                     /* ged */
+    case 0x02: return t->st & (TGP_F_ZRD | TGP_F_SGD);          /* led */
+    case 0x0A: return t->gpio0;
+    case 0x0B: return t->gpio1;
+    case 0x0C: return t->gpio2;
+    case 0x10: return !(t->st & TGP_F_ZC0);                     /* c0 != 1 */
+    case 0x11: return !(t->st & TGP_F_ZC1);
+    case 0x12: return t->gpio3;
+    case 0x16: return true;                                     /* alw */
+    default: {
+        static uint32_t warned;
+        if (!(warned & (1u << cond))) {
+            warned |= 1u << cond;
+            LOG_WARN("TGP: unimplemented condition %02X at %03X", cond, t->ppc);
+        }
+        return false;
+    }
+    }
+}
+
+/* brul / bsul's target: a register (which may stall) or memory. */
+static inline bool tgp_branch_target(uint32_t op, uint32_t *v) {
+    if (op & 0x4000u) { *v = tgp_read_reg(op); return !g_tgp.stall; }
+    *v = tgp_data_rd(TGP_EA0(op));
+    TGP_POST0(op);
+    return true;
+}
+
+/* A branch whose condition passed. False when it stalled. */
+static inline bool tgp_branch_take(uint32_t op, uint32_t sub) {
+    tgp_state_t *t = &g_tgp;
+    uint32_t data = op & 0xFFFFu, v;
+    switch (sub) {
+    case 0: t->pc = (uint16_t)data; break;                      /* brif #adr */
+    case 1:                                                     /* brul */
+        if (!tgp_branch_target(op, &v)) return false;
+        t->pc = (uint16_t)v;
+        break;
+    case 2: tgp_pcs_push(); t->pc = (uint16_t)data; break;      /* bsif #adr */
+    case 3:                                                     /* bsul */
+        if (!tgp_branch_target(op, &v)) return false;
+        tgp_pcs_push();
+        t->pc = (uint16_t)v;
+        break;
+    case 5: tgp_pcs_pop(); break;                               /* rtif */
+    case 6:                                                     /* ldif adr, rn */
+        v = tgp_data_rd(TGP_EA0(op)); TGP_POST0(op);
+        tgp_write_reg(op >> 9, v);
+        break;
+    default:
+        LOG_WARN("TGP: unimplemented branch subtype %u at %03X", sub, t->ppc);
+        break;
+    }
+    return true;
+}
+
+static inline tgp_step_t tgp_op_branch(uint32_t op) {   /* conditional branches */
+    tgp_state_t *t = &g_tgp;
+    uint32_t cond = (op >> 20) & 0x1Fu, sub = (op >> 17) & 7u;
+    bool pass = tgp_cond(cond);
+    if (op & 0x40000000u) pass = !pass;
+    if (pass && !tgp_branch_take(op, sub)) return TGP_STEP_STALL;
+    if (sub < 2) {
+        if (cond == 0x10 && t->c0 != 1) { if (--t->c0 == 1) t->st |= TGP_F_ZC0; }
+        if (cond == 0x11 && t->c1 != 1) { if (--t->c1 == 1) t->st |= TGP_F_ZC1; }
+    }
+    return TGP_STEP_NEXT;
+}
+
+static inline void tgp_op_unknown(uint32_t op) {
+    static uint64_t warned;
+    uint32_t k = (op >> 26) & 0x3Fu;
+    if (!(warned & (1ull << k))) {
+        warned |= 1ull << k;
+        LOG_WARN("TGP: unimplemented opcode type %02X at %03X (%08X)", k, g_tgp.ppc, op);
+    }
+}
+
+static inline tgp_step_t tgp_dispatch(uint32_t op) {
+    uint32_t k = (op >> 26) & 0x3Fu;
+    if (k >= 0x10 && k <= 0x1F) {                   /* ldi */
+        tgp_write_reg(op >> 24, tgp_sext(op, 24));
+        return TGP_STEP_NEXT;
+    }
+    switch (k) {
+    case 0x00: tgp_op_lab(op); return TGP_STEP_NEXT;
+    case 0x07: return tgp_op_mov(op);
+    case 0x0D:                                      /* stm / clm */
+        if (((op >> 17) & 7u) == 5) g_tgp.m = (uint16_t)op;   /* stmh: bit 0 float, bits 1-2 rounding */
+        else LOG_WARN("TGP: unimplemented opcode 0D/%u at %03X", (op >> 17) & 7u, g_tgp.ppc);
+        return TGP_STEP_NEXT;
+    case 0x0E: tgp_op_li(op); return TGP_STEP_NEXT;
+    case 0x0F: return tgp_op_ctl(op);
+    case 0x2F: case 0x3F: return tgp_op_branch(op);
+    default: tgp_op_unknown(op); return TGP_STEP_NEXT;
+    }
+}
+
+/* Returns false when it stalled on an empty input FIFO: the pc is back on the
  * instruction, nothing was committed, and it runs again once a word arrives. */
 static bool tgp_step(void) {
     tgp_state_t *t = &g_tgp;
     t->ppc = t->pc;
     uint32_t op = tgp_prog_rd(t->pc++);
-    bool rep = false;
     t->stall = false;
     t->insns++;
 
-    switch ((op >> 26) & 0x3Fu) {
-    case 0x00: {                                    /* lab */
-        uint32_t r1 = op & 0x1FFu, r2 = (op >> 9) & 0x1FFu;
-        uint32_t alu = (op >> 21) & 0x1Fu, sub = (op >> 18) & 7u;
-        tgp_alu_pre(alu);
-        uint32_t v1, v2;
-        switch (sub) {
-        case 0: case 1:                             /* lab mem, mem (e) */
-            v1 = tgp_data_rd(TGP_EA0(r1));
-            v2 = tgp_io_rd(TGP_EA1(r2));
-            break;
-        case 3:                                     /* lab mem, mem + 0x200 */
-            v1 = tgp_data_rd(TGP_EA0(r1));
-            v2 = tgp_data_rd(TGP_EA1(r2) + 0x200u);
-            break;
-        case 4:                                     /* lab mem + 0x200, mem */
-            v1 = tgp_data_rd(TGP_EA0(r1) + 0x200u);
-            v2 = tgp_data_rd(TGP_EA1(r2));
-            break;
-        default:
-            LOG_WARN("TGP: unhandled lab subop %u at %03X", sub, t->ppc);
-            goto lab_done;
-        }
-        TGP_POST0(r1);
-        TGP_POST1(r2);
-        t->a = v1;
-        t->b = v2;
-    lab_done:
-        tgp_alu_post_1(alu);
-        tgp_alu_post_2(alu);
+    switch (tgp_dispatch(op)) {
+    case TGP_STEP_REP:
+        return true;
+    case TGP_STEP_STALL:
+        /* The FIFO read found nothing: nothing of this instruction is committed
+         * and it runs again when a word arrives. The only reads that can stall
+         * are register reads of RF 1, which come before any write in every form. */
+        t->pc = t->ppc;
+        t->insns--;
+        return false;
+    default:
         break;
     }
-
-    case 0x07: {                                    /* ld / mov */
-        uint32_t r1 = op & 0x1FFu, r2 = (op >> 9) & 0x1FFu;
-        uint32_t alu = (op >> 21) & 0x1Fu, sub = (op >> 18) & 7u;
-        uint32_t v;
-        tgp_alu_pre(alu);
-        switch (sub) {
-        case 0: case 1:                             /* mov mem, mem (e) */
-            v = tgp_data_rd(TGP_EA0(r1)); TGP_POST0(r1);
-            tgp_alu_post_1(alu); tgp_write_io_1(r2, v);
-            break;
-        case 2:                                     /* mov mem (e), mem */
-            v = tgp_io_rd(TGP_EA0(r1)); TGP_POST0(r1);
-            tgp_alu_post_1(alu); tgp_write_internal_1(r2, v, false);
-            break;
-        case 3:                                     /* mov mem, mem + 0x200 */
-            v = tgp_data_rd(TGP_EA0(r1)); TGP_POST0(r1);
-            tgp_alu_post_1(alu); tgp_write_internal_1(r2, v, true);
-            break;
-        case 4:                                     /* mov mem + 0x200, mem */
-            v = tgp_data_rd(TGP_EA0(r1) + 0x200u); TGP_POST0(r1);
-            tgp_alu_post_1(alu); tgp_write_internal_1(r2, v, false);
-            break;
-        case 5:                                     /* mov mem (o), mem */
-            v = tgp_prog_rd(TGP_EA0(r1)); TGP_POST0(r1);
-            tgp_alu_post_1(alu); tgp_write_internal_1(r2, v, false);
-            break;
-        case 7:
-            switch (r2 >> 6) {
-            case 0:                                 /* mov reg, mem */
-                v = tgp_read_reg(r2); if (t->stall) goto stalled;
-                tgp_alu_post_1(alu); tgp_write_internal_1(r1, v, false);
-                break;
-            case 1:                                 /* mov reg, mem (e) */
-                v = tgp_read_reg(r2); if (t->stall) goto stalled;
-                tgp_alu_post_1(alu); tgp_write_io_1(r1, v);
-                break;
-            case 2:                                 /* mov mem + 0x200, reg */
-                v = tgp_data_rd(TGP_EA1(r1) + 0x200u); TGP_POST1(r1);
-                tgp_alu_post_1(alu); tgp_write_reg(r2, v);
-                break;
-            case 3:                                 /* mov mem, reg */
-                v = tgp_data_rd(TGP_EA1(r1)); TGP_POST1(r1);
-                tgp_alu_post_1(alu); tgp_write_reg(r2, v);
-                break;
-            case 4:                                 /* mov mem (e), reg */
-                v = tgp_io_rd(TGP_EA1(r1)); TGP_POST1(r1);
-                tgp_alu_post_1(alu); tgp_write_reg(r2, v);
-                break;
-            case 5:                                 /* mov mem (o), reg */
-                v = tgp_prog_rd(TGP_EA0(r1)); TGP_POST0(r1);
-                tgp_alu_post_1(alu); tgp_write_reg(r2, v);
-                break;
-            case 6:                                 /* mov reg, reg */
-                v = tgp_read_reg(r1); if (t->stall) goto stalled;
-                tgp_alu_post_1(alu); tgp_write_reg(r2, v);
-                break;
-            default:
-                tgp_alu_post_1(alu);
-                LOG_WARN("TGP: unhandled ld/mov subop 7/%u at %03X", r2 >> 6, t->ppc);
-                break;
-            }
-            break;
-        default:
-            tgp_alu_post_1(alu);
-            LOG_WARN("TGP: unhandled ld/mov subop %u at %03X", sub, t->ppc);
-            break;
-        }
-        tgp_alu_post_2(alu);
-        break;
-    }
-
-    case 0x0D:                                      /* stm / clm */
-        if (((op >> 17) & 7u) == 5) t->m = (uint16_t)op;   /* stmh: bit 0 float, bits 1-2 rounding */
-        else LOG_WARN("TGP: unimplemented opcode 0D/%u at %03X", (op >> 17) & 7u, t->ppc);
-        break;
-
-    case 0x0E:                                      /* lipl / lia / lib / lid */
-        switch ((op >> 24) & 3u) {
-        case 0: t->p = (t->p & 0xFF000000u) | (op & 0xFFFFFFu); break;
-        case 1: t->a = tgp_sext(op, 24); break;
-        case 2: t->b = tgp_sext(op, 24); break;
-        case 3: t->d = tgp_sext(op, 24); break;
-        }
-        break;
-
-    case 0x0F: {                                    /* rep / clr0 / clr1 / set */
-        uint32_t alu = (op >> 20) & 0x1Fu;
-        tgp_alu_pre(alu);
-        switch ((op >> 17) & 7u) {
-        case 0:                                     /* clr0 */
-            if (op & 0x0004u) t->a = 0;
-            if (op & 0x0008u) t->b = 0;
-            if (op & 0x0010u) t->d = 0;
-            break;
-        case 1: break;                              /* clr1: flag mapping unknown */
-        case 2: {                                   /* rep */
-            uint32_t n = (op & 0x8000u) ? tgp_read_reg(op) : op;
-            if (t->stall) goto stalled;
-            t->r = (uint8_t)n;
-            rep = true;
-            break;
-        }
-        case 3: break;                              /* set: flag mapping unknown (0x800 = interrupt enable) */
-        default:
-            LOG_WARN("TGP: unimplemented opcode 0F/%u at %03X", (op >> 17) & 7u, t->ppc);
-            break;
-        }
-        if (rep) return true;                       /* MAME: rep_start skips the repeat count and post_1 */
-        tgp_alu_post_1(alu);
-        break;
-    }
-
-    case 0x10: case 0x11: case 0x12: case 0x13: case 0x14: case 0x15: case 0x16: case 0x17:
-    case 0x18: case 0x19: case 0x1A: case 0x1B: case 0x1C: case 0x1D: case 0x1E: case 0x1F:
-        tgp_write_reg(op >> 24, tgp_sext(op, 24));  /* ldi */
-        break;
-
-    case 0x2F: case 0x3F: {                         /* conditional branches */
-        uint32_t cond = (op >> 20) & 0x1Fu, sub = (op >> 17) & 7u, data = op & 0xFFFFu;
-        bool pass = false;
-        switch (cond) {
-        case 0x00: pass = t->st & TGP_F_ZRD; break;                     /* zrd */
-        case 0x01: pass = !(t->st & TGP_F_SGD); break;                  /* ged */
-        case 0x02: pass = t->st & (TGP_F_ZRD | TGP_F_SGD); break;       /* led */
-        case 0x0A: pass = t->gpio0; break;
-        case 0x0B: pass = t->gpio1; break;
-        case 0x0C: pass = t->gpio2; break;
-        case 0x10: pass = !(t->st & TGP_F_ZC0); break;                  /* c0 != 1 */
-        case 0x11: pass = !(t->st & TGP_F_ZC1); break;
-        case 0x12: pass = t->gpio3; break;
-        case 0x16: pass = true; break;                                  /* alw */
-        default: {
-            static uint32_t warned;
-            if (!(warned & (1u << cond))) {
-                warned |= 1u << cond;
-                LOG_WARN("TGP: unimplemented condition %02X at %03X", cond, t->ppc);
-            }
-            break;
-        }
-        }
-        if (op & 0x40000000u) pass = !pass;
-        if (pass) {
-            uint32_t v;
-            switch (sub) {
-            case 0: t->pc = (uint16_t)data; break;                      /* brif #adr */
-            case 1:                                                     /* brul */
-                if (op & 0x4000u) { v = tgp_read_reg(op); if (t->stall) goto stalled; }
-                else { v = tgp_data_rd(TGP_EA0(op)); TGP_POST0(op); }
-                t->pc = (uint16_t)v;
-                break;
-            case 2: tgp_pcs_push(); t->pc = (uint16_t)data; break;      /* bsif #adr */
-            case 3:                                                     /* bsul */
-                if (op & 0x4000u) { v = tgp_read_reg(op); if (t->stall) goto stalled; }
-                else { v = tgp_data_rd(TGP_EA0(op)); TGP_POST0(op); }
-                tgp_pcs_push();
-                t->pc = (uint16_t)v;
-                break;
-            case 5: tgp_pcs_pop(); break;                               /* rtif */
-            case 6:                                                     /* ldif adr, rn */
-                v = tgp_data_rd(TGP_EA0(op)); TGP_POST0(op);
-                tgp_write_reg(op >> 9, v);
-                break;
-            default:
-                LOG_WARN("TGP: unimplemented branch subtype %u at %03X", sub, t->ppc);
-                break;
-            }
-        }
-        if (sub < 2) {
-            if (cond == 0x10 && t->c0 != 1) { if (--t->c0 == 1) t->st |= TGP_F_ZC0; }
-            if (cond == 0x11 && t->c1 != 1) { if (--t->c1 == 1) t->st |= TGP_F_ZC1; }
-        }
-        break;
-    }
-
-    default: {
-        static uint64_t warned;
-        uint32_t k = (op >> 26) & 0x3Fu;
-        if (!(warned & (1ull << k))) {
-            warned |= 1ull << k;
-            LOG_WARN("TGP: unimplemented opcode type %02X at %03X (%08X)", k, t->ppc, op);
-        }
-        break;
-    }
-    }
-
     if (t->r != 1) { t->pc = t->ppc; t->r--; }
     return true;
-
-stalled:
-    /* The FIFO read found nothing: nothing of this instruction is committed and
-     * it runs again when a word arrives. The only reads that can stall are
-     * register reads of RF 1, which come before any write in every form. */
-    t->pc = t->ppc;
-    t->insns--;
-    return false;
 }
 
 /* Run until the program waits for input (or is halted). */

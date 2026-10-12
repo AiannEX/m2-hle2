@@ -45,6 +45,7 @@ const m2hlePad = (() => {
     { id: 'pause', label: 'Pause',     acts: [],        page: true },
   ];
   for (const a of ACTIONS) a.mask = (a.acts || [a.act]).reduce((m, i) => m | (1 << i), 0);
+  for (const a of ACTIONS) a.label = m2hleGame.labels[a.id] || a.label;
   const P2_OFFSET = 10;
 
   /* A binding is a button ({b: index}) or one direction of an axis ({a: index, d: ±1}).
