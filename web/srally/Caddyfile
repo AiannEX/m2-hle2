@@ -1,0 +1,41 @@
+# srally.sonicthefighte.rs: m2-hle2's web build playing Sega Rally Championship
+# (Pinboard #628, #649). Plain HTTP on 8080; the droplet's Caddy terminates TLS with
+# the *.sonicthefighte.rs origin certificate, behind Cloudflare.
+#
+# The page IS play.sonicthefighte.rs: it picks Sega Rally from the host name
+# (web/site/m2hle-game.js), so this proxies that site rather than holding a copy,
+# and srally is always the build the pages workflow last published. Kept in the
+# repo as web/srally/Caddyfile (README.md there).
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8080 {
+	encode zstd gzip
+
+	reverse_proxy https://play.sonicthefighte.rs {
+		header_up Host {upstream_hostport}
+		header_down -Server
+		header_down -Via
+		header_down -X-Github-Request-Id
+		header_down -X-Served-By
+		header_down -X-Proxy-Cache
+	}
+
+	# Every asset is loaded with ?v=<version>; only the page itself must be
+	# revalidated, or a browser keeps the old version list for ten minutes.
+	@index path / /index.html
+	header @index {
+		Cache-Control "no-cache"
+		-Expires
+		defer
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+}

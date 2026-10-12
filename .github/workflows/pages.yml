@@ -1,6 +1,7 @@
 name: pages
 
 # The web build (WEB-PORT.md) -> GitHub Pages -> https://play.sonicthefighte.rs
+# (and https://srally.sonicthefighte.rs, which proxies it: web/srally/README.md)
 #
 # Every push builds the Emscripten frontend, runs it in headless Chrome, and only
 # then publishes build_web/site/ as the whole website. There is no gh-pages
