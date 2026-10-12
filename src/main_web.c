@@ -64,6 +64,7 @@
 #include "ps3ui_shell.h"   /* the PS3's menus around the board (the Console version) */
 #include "ps3ui_ggpo.h"    /* a GGPO match's go-again prompt, in the lobby's window */
 #include "post_shader.h"   /* the CRT filter and libretro presets over the picture */
+#include "crt_pots.h"      /* the monitor's R/G/B and H/V pots, over the picture */
 #include "json_min.h"
 
 /* The single TU that defines g_profiles[] / g_active_profile. Under M2HLE_WEB it
@@ -766,15 +767,18 @@ static void web_count_callback(void) {
 static bool web_keep_picture(bool have_game, bool lobby, bool overlay, bool afford) {
     static uint64_t s_drawn_slices;
     static int      s_drawn_w, s_drawn_h;
+    static unsigned s_drawn_pots;
     const bool board_moved = g_web_perf.slices != s_drawn_slices;
     const bool resized     = sapp_width() != s_drawn_w || sapp_height() != s_drawn_h;
-    if (have_game && !lobby && !overlay && !board_moved && !resized && !g_web_objview_show && !afford) {
+    const bool pots_turned = g_crt_pots.gen != s_drawn_pots;
+    if (have_game && !lobby && !overlay && !board_moved && !resized && !pots_turned && !g_web_objview_show && !afford) {
         g_web_perf.pictures_skipped++;
         return true;
     }
     s_drawn_slices = g_web_perf.slices;
     s_drawn_w      = sapp_width();
     s_drawn_h      = sapp_height();
+    s_drawn_pots   = g_crt_pots.gen;
     return false;
 }
 
@@ -837,10 +841,9 @@ static void web_present_game(const web_picture_t *pic, ps3ui_canvas_t *cv) {
     if (pic->post)           post_shader_draw(ox, oy, w, h, sapp_width(), sapp_height());
     else if (pic->offscreen) game_render_draw_target(g_web_rt.texture, true, ox, oy, w, h);
     else           game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, ox, oy, w, h, pic->lerp_t);
-    if (pic->overlay) {   /* the pause menu over the game */
-        ps3ui_gpu_draw(cv);
-        sgl_draw();
-    }
+    crt_pots_record(ox, oy, w, h, sapp_width(), sapp_height());
+    if (pic->overlay) ps3ui_gpu_draw(cv);   /* the pause menu over the game */
+    sgl_draw();
 }
 
 /* The object viewer in place of the game, letterboxed to the viewer target's own shape. */
@@ -915,6 +918,7 @@ static void frame(void) {
     /* A filter over the picture (post_shader.h) reads the game from a target of
      * its own, at the render scale, and only covers the game's 4:3 rectangle. */
     game_render_letterbox(sapp_width(), sapp_height(), VIDEO_WIDTH, VIDEO_HEIGHT, &pic.ox, &pic.oy, &pic.w, &pic.h);
+    crt_pots_place(&pic.ox, &pic.oy, &pic.w, &pic.h);
     post_shader_set_input_scale(g_web_rt.want);
     pic.post = game && !g_web_objview_show && post_shader_active();
     if (pic.post) web_draw_post_source(pic.w, pic.h, pic.lerp_t);
@@ -1328,6 +1332,10 @@ EMSCRIPTEN_KEEPALIVE void web_shader_set_mode(int mode) {
     post_shader_set_mode(mode == 1 ? POST_SHADER_CRT : mode == 2 ? POST_SHADER_CUSTOM : POST_SHADER_OFF);
 }
 EMSCRIPTEN_KEEPALIVE int web_shader_mode(void) { return (int)post_shader_mode(); }
+
+/* The monitor's pots (crt_pots.h, CRT_POT_*), from the Picture tab. */
+EMSCRIPTEN_KEEPALIVE void  web_crt_pot_set(int id, float v) { crt_pots_set(id, v); }
+EMSCRIPTEN_KEEPALIVE float web_crt_pot(int id)              { return crt_pots_get(id); }
 
 EMSCRIPTEN_KEEPALIVE void web_shader_files_clear(void) { rs_vfs_clear(); }
 
