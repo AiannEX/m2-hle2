@@ -154,3 +154,17 @@ One difference was found and fixed. noclip reads Virtua Cop's headers at address
 | hotd | 7465 | 0 | 466634 | 378760 | 367185 | 0xdc922fa1 |
 
 On vcop and daytona no header address is in texture RAM (bit 23), negative, or past the ROM, and no set's UV stream starts in texture RAM, so the board's texture-RAM path never comes into it. Daytona's 813 null meshes are ones whose faces are all lone edges or lack A or B; both sides decode them to nothing. The 27 polygon-RAM entries (2139-2165) have no ROM mesh and are skipped.
+
+### 6.6 Decoded header fields (Pinboard #669)
+
+The FNV in §6.5 covers which textures-ROM bytes are read, not what `decodeModel` makes of them. Its haveMat block turns the four header words into the face's texture fields: from th0 `textured` (bit 14), the face flags transparent (bit 13 on a textured face), checker (bit 15), mirror X / Y (bits 8 / 9) and wrap X / Y (bits 6 / 7), and `texw` / `texh` (32 << the 3-bit sizes); from th1 `lumaBase` ((th1 & 0xff) << 7); from th2 `tx`, `sheet` and `ty` (sheet · 1024 added); from th3 `matidx` ((th3 >> 6) & 0x3ff); and the `tw` / `th` it stores (`tw` 0 when untextured).
+
+m2-hle2 gets the same fields from `geo3d_texhdr_decode` and `geo3d_texhdr_tile`, the decoder's own path. `geo3d_mesh_reads` now keeps each header it reads (`geo3d_reads_hdr_t`: the face, the decoded header, the tile rect). `prepared_test` hashes, per mesh, its index and header count, then per header the face and those twelve values (`decode_mix_headers`). noclip's side is the same FNV from a probe line added after the haveMat block in an exported copy of master (aefb324), so every header read is counted, including faces later dropped for a missing A or B.
+
+| set | headers | textured | FNV-1a |
+|---|---|---|---|
+| vcop | 60141 | 59615 | 0x4add73cb |
+| daytona | 200136 | 168923 | 0x06c84e43 |
+| hotd | 459169 | 446049 | 0xcd3e0d51 |
+
+All three agreed at once; no field differed and the decoder was not changed. The hash notices a slip: hashing `texy` in place of `ty` (the sheet offset dropped) fails all three. The 27 polygon-RAM entries stay skipped, as in §6.5.

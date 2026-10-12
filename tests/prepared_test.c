@@ -15,8 +15,9 @@
  * (model_mesh_resolve; Pinboard #666) to the polygon-ROM offset noclip's
  * meshOffsetOf gives, with the first record decodeModel reads; and each of
  * those meshes, decoded (geo3d_mesh_reads; Pinboard #669), walks the records,
- * reads the texture headers and points and comes to the faces and triangles
- * noclip's decodeModel does. A set that is not there is skipped.
+ * reads the texture headers and points, derives the same fields from each
+ * header (#669, second step) and comes to the faces and triangles noclip's
+ * decodeModel does. A set that is not there is skipped.
  */
 #define NDEBUG 1
 #include <stdio.h>
@@ -71,6 +72,12 @@ typedef struct {
      * null or faceCount, texturedFaces, paletteMax, the triangle count and
      * each triangle's face. Taken with node from noclip's master (aefb324). */
     uint32_t      dec_n, dec_null, dec_records, dec_faces, dec_textured, dec_fnv;
+    /* What decodeModel derives from each header it reads (the end of its
+     * haveMat block, probed in an exported copy of js/model.js): the headers
+     * read, the textured ones, and FNV-1a, per mesh, over its index and header
+     * count, then per header the face index, textured, faceFlags, texw, texh,
+     * lumaBase, tx, sheet, ty, matidx, tw and th. noclip master (aefb324). */
+    uint32_t      hdr_n, hdr_textured, hdr_fnv;
 } noclip_reads_t;
 
 /* What the test reads a profile with: its recipe, the layout its quirks must
@@ -87,17 +94,17 @@ static const prepared_case_t k_cases[] = {
       { 1234, 0x2298d18du, 1234, 0, { 0, 1, 1233 },
         { { 0x50000, 0x0, 0x800004 }, { 0x50760, 0x3cc, 0x8009f1 }, { 0xc292a, 0x39240, 0x89c275 } },
         1234, 0, 0xab8c6c68u, { { 0, 0x10, 0x1841701 }, { 1, 0x27c4, 0x1841b01 }, { 1233, 0x2709d4, 0x9c1502 } },
-        1234, 0, 61375, 57495, 57002, 0xae157b11u } },
+        1234, 0, 61375, 57495, 57002, 0xae157b11u, 60141, 59615, 0x4add73cbu } },
     { &daytona_profile, &daytona_recipe, MODEL_LAYOUT_DAYTONA,
       { 3190, 0xa7bff01du, 3190, 27, { 0, 1, 3189 },
         { { 0x17ecd0, 0x117080, 0x880004 }, { 0x17f13e, 0x11728c, 0x8805af }, { 0x85abc, 0x18510, 0x84881b } },
         3163, 0, 0xac46f303u, { { 0, 0x200010, 0x941501 }, { 1, 0x2016bc, 0x89141601 }, { 3189, 0x12206c, 0x41401 } },
-        3163, 813, 203300, 163823, 138791, 0x5195b8e6u } },
+        3163, 813, 203300, 163823, 138791, 0x5195b8e6u, 200136, 168923, 0x06c84e43u } },
     { &hotd_profile, &hotd_recipe, MODEL_LAYOUT_1995,
       { 7477, 0xac1eb34fu, 7465, 0, { 0, 1, 7476 },
         { { 0x0, 0x6, 0x800000 }, { 0x0, 0x6, 0x800000 }, { 0x6c7ffa, 0x6c821a, 0xef296a } },
         7465, 0, 0xf2dfe35cu, { { 0, 0x0, 0x1000a02 }, { 1, 0x0, 0x1000a02 }, { 7476, 0x1bca5a8, 0x1000601 } },
-        7465, 0, 466634, 378760, 367185, 0xdc922fa1u } },
+        7465, 0, 466634, 378760, 367185, 0xdc922fa1u, 459169, 446049, 0xcd3e0d51u } },
 };
 
 static uint32_t rd32(const uint8_t *b, size_t at) {
@@ -221,7 +228,23 @@ static void check_noclip_meshes(const char *id, const model_table_t *t, const ga
  * mixes it (noclip_reads_t). */
 typedef struct {
     uint32_t n, null, records, faces, textured, fnv;
+    uint32_t hdrs, hdr_textured, hdr_fnv;
 } decode_totals_t;
+
+/* The headers' part, as the node script mixes it (noclip_reads_t.hdr_fnv). */
+static void decode_mix_headers(decode_totals_t *d, uint32_t i, const geo3d_mesh_reads_t *r) {
+    uint32_t h = fnv_word(fnv_word(d->hdr_fnv, i), (uint32_t)r->n_hdrs);
+    for (int k = 0; k < r->n_hdrs && k < r->hdrs_cap; k++) {
+        const geo3d_reads_hdr_t *x = &r->hdrs[k];
+        const uint32_t v[12] = { (uint32_t)x->face, x->h.textured, x->h.fflags, x->h.texw, x->h.texh,
+                                 x->h.lumabase, (uint32_t)x->tx, x->h.sheet, (uint32_t)x->ty, x->h.matidx,
+                                 (uint32_t)x->tw, (uint32_t)x->th };
+        for (int j = 0; j < 12; j++) h = fnv_word(h, v[j]);
+        d->hdr_textured += x->h.textured;
+    }
+    d->hdrs += (uint32_t)r->n_hdrs;
+    d->hdr_fnv = h;
+}
 
 static void decode_mix(decode_totals_t *d, uint32_t i, uint32_t off, const geo3d_mesh_reads_t *r) {
     uint32_t h = fnv_word(fnv_word(fnv_word(d->fnv, i), off), (uint32_t)r->records);
@@ -249,14 +272,16 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
                                 const romset_t *rs, const noclip_reads_t *n) {
     enum { FACES = GEO3D_IA_MAX_IDX / 4, READS = FACES * 24, TRIS = FACES * 2 };
     static uint32_t reads[READS], tris[TRIS];
+    static geo3d_reads_hdr_t hdrs[FACES];
     const geo3d_models_t md = {
         .main_data = rs->main_data, .main_data_size = rs->main_data_size,
         .polygons  = rs->polygons,  .polygons_size  = rs->polygons_size,
         .materials = rs->textures,  .materials_size = rs->textures_size,
         .table = *t, .mesh_ptr_subtract = q->mesh_ptr_subtract, .mesh_ptr_add = q->mesh_ptr_add,
     };
-    geo3d_mesh_reads_t r = { .reads = reads, .reads_cap = READS, .tri_face = tris, .tris_cap = TRIS };
-    decode_totals_t d = { .fnv = 0x811c9dc5u };
+    geo3d_mesh_reads_t r = { .reads = reads, .reads_cap = READS, .tri_face = tris, .tris_cap = TRIS,
+                             .hdrs = hdrs, .hdrs_cap = FACES };
+    decode_totals_t d = { .fnv = 0x811c9dc5u, .hdr_fnv = 0x811c9dc5u };
     int over = 0;
     model_entry_t e;
     uint32_t off;
@@ -265,8 +290,9 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
         if (!model_mesh_resolve(e.mesh_ptr, q->mesh_ptr_subtract, q->mesh_ptr_add, rs->polygons_size, &off))
             continue;
         if (!geo3d_mesh_reads(&md, (int)i, &r)) continue;
-        if (r.n_reads > READS || r.n_tris > TRIS) over++;
+        if (r.n_reads > READS || r.n_tris > TRIS || r.n_hdrs > FACES) over++;
         decode_mix(&d, i, off, &r);
+        decode_mix_headers(&d, i, &r);
     }
     CHECK(over == 0, "%s: every decode's reads fit the test's buffers", id);
     CHECK(d.n == n->dec_n && d.null == n->dec_null && d.records == n->dec_records,
@@ -276,6 +302,9 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
           "%s: %u faces, %u textured (noclip: %u, %u)", id, d.faces, d.textured, n->dec_faces, n->dec_textured);
     CHECK(d.fnv == n->dec_fnv, "%s: texture reads, palettes and triangles FNV 0x%08X (noclip: 0x%08X)",
           id, d.fnv, n->dec_fnv);
+    CHECK(d.hdrs == n->hdr_n && d.hdr_textured == n->hdr_textured && d.hdr_fnv == n->hdr_fnv,
+          "%s: %u headers, %u textured, decoded fields FNV 0x%08X (noclip: %u, %u, 0x%08X)",
+          id, d.hdrs, d.hdr_textured, d.hdr_fnv, n->hdr_n, n->hdr_textured, n->hdr_fnv);
 }
 
 /* Entries whose mesh pointer is set must resolve (model_mesh_resolve, noclip's

@@ -2099,7 +2099,15 @@ static inline void geo3d_decode_model(const geo3d_models_t *md, int model_idx,
  * ROM: the records, every textures-ROM byte whose value the faces use, in
  * order, and what the faces come to. A header is read whenever the model has a
  * header stream; the UV pairs only for a textured face, as far as the ROM
- * holds them. NOCLIP-SYNC.md §6.5; tests/prepared_test.c checks it. */
+ * holds them. Each header read is kept as the decoder takes it
+ * (geo3d_texhdr_decode, geo3d_texhdr_tile). NOCLIP-SYNC.md §6.5 and §6.6;
+ * tests/prepared_test.c checks it. */
+typedef struct {
+    int            face;          /* face-loop index (index-array position / 4) */
+    geo3d_texhdr_t h;
+    float          tx, ty, tw, th;   /* the tile rect handed to the shader */
+} geo3d_reads_hdr_t;
+
 typedef struct {
     int       records;            /* vertex-pair records walked, the end one included */
     int       faces, textured;    /* faces with corners A and B, and of those the textured */
@@ -2108,6 +2116,8 @@ typedef struct {
     int       n_reads, reads_cap;
     uint32_t *tri_face;           /* each triangle's face (faces so far), the first tris_cap */
     int       n_tris, tris_cap;
+    geo3d_reads_hdr_t *hdrs;      /* each header read, the first hdrs_cap of n_hdrs */
+    int       n_hdrs, hdrs_cap;
 } geo3d_mesh_reads_t;
 
 static inline void geo3d_reads_bytes(geo3d_mesh_reads_t *r, uint32_t byte, int n) {
@@ -2120,8 +2130,18 @@ static inline void geo3d_reads_tris(geo3d_mesh_reads_t *r, int n) {
         if (r->n_tris < r->tris_cap) r->tri_face[r->n_tris] = (uint32_t)r->faces;
 }
 
+static inline void geo3d_reads_hdr(geo3d_mesh_reads_t *r, int fi, const geo3d_texhdr_t *h) {
+    if (r->n_hdrs < r->hdrs_cap) {
+        geo3d_reads_hdr_t *k = &r->hdrs[r->n_hdrs];
+        k->face = fi;
+        k->h = *h;
+        geo3d_texhdr_tile(h, &k->tx, &k->ty, &k->tw, &k->th);
+    }
+    r->n_hdrs++;
+}
+
 /* A face's header, the stream moved on past it; false for untextured or none. */
-static inline bool geo3d_reads_header(geo3d_decode_walk_t *w, uint32_t at, geo3d_mesh_reads_t *r) {
+static inline bool geo3d_reads_header(geo3d_decode_walk_t *w, int fi, uint32_t at, geo3d_mesh_reads_t *r) {
     if (!w->have_mat) return false;
     uint32_t hw = w->mat_rec;
     w->mat_rec += geo3d_tho_step(at);
@@ -2130,6 +2150,7 @@ static inline bool geo3d_reads_header(geo3d_decode_walk_t *w, uint32_t at, geo3d
     geo3d_reads_bytes(r, hw * 2u, 8);
     geo3d_texhdr_t h = geo3d_texhdr_decode(th);
     if ((int)h.matidx > r->palette_max) r->palette_max = (int)h.matidx;
+    geo3d_reads_hdr(r, fi, &h);
     return h.textured;
 }
 
@@ -2151,7 +2172,7 @@ static inline void geo3d_reads_face(geo3d_decode_walk_t *w, int i, geo3d_mesh_re
     int ai = ia->idx[i], bi = ia->idx[i + 1], ci = ia->idx[i + 2], di = ia->idx[i + 3];
     bool tri_cnt = (fi < ia->n_qt && ia->qt[fi] == 2);
 
-    bool textured = geo3d_reads_header(w, geo3d_ia_attr(ia, fi), r);
+    bool textured = geo3d_reads_header(w, fi, geo3d_ia_attr(ia, fi), r);
     geo3d_reads_uv(w, tri_cnt, textured, r);
 
     if (ai < 0 || ai >= n_sv || bi < 0 || bi >= n_sv) return;
@@ -2167,7 +2188,7 @@ static inline void geo3d_reads_face(geo3d_decode_walk_t *w, int i, geo3d_mesh_re
 static inline bool geo3d_mesh_reads(const geo3d_models_t *md, int model_idx, geo3d_mesh_reads_t *r) {
     static geo3d_ia_t ia;
     geo3d_decode_walk_t w = { .md = md, .model_idx = model_idx, .ia = &ia };
-    r->records = r->faces = r->textured = r->n_reads = r->n_tris = 0;
+    r->records = r->faces = r->textured = r->n_reads = r->n_tris = r->n_hdrs = 0;
     r->palette_max = -1;
     if (md->obj_mesh || !geo3d_decode_streams(&w)) return false;
     geo3d_ia_walk(&ia, w.polygons, w.polygons_size, w.mesh_offset, NULL);
