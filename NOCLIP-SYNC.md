@@ -168,3 +168,39 @@ m2-hle2 gets the same fields from `geo3d_texhdr_decode` and `geo3d_texhdr_tile`,
 | hotd | 459169 | 446049 | 0xcd3e0d51 |
 
 All three agreed at once; no field differed and the decoder was not changed. The hash notices a slip: hashing `texy` in place of `ty` (the sheet offset dropped) fails all three. The 27 polygon-RAM entries stay skipped, as in §6.5.
+
+### 6.7 Decoded triangles (Pinboard #672)
+
+§6.5 and §6.6 stop at the header block. The rest of `decodeModel` is the face loop's own reads: the further 40-byte records the index-array walk takes (both corners, f1, the attribute word at +24, the normal at +28..+36), the UV words, and what it hands `emitTri` for each triangle. The triangle choice is in a shared helper now, `geo3d_face_tris`: a triangle's ABC, a quad's ABD + ADC, or ABC + BDC when an earlier copy of the quad was cut the other way (noclip's `quadSplits`). `geo3d_emit_face` and the census both use it. `geo3d_mesh_reads` keeps each triangle (`geo3d_reads_tri_t`, from the walk with no matrix, the split table reset per mesh as `geo3d_decode_model` does):
+
+- its three corners;
+- their UVs (0 on an untextured face);
+- the material slot (attribute bits 18..22) and attribute bit 17;
+- the record's ROM normal;
+- the z mode standing, from `geo3d_zsort_step`;
+- the four z-source corners;
+- the facing point (C, or A without one).
+
+`prepared_test` hashes these per mesh (`decode_mix_tris`): the mesh's index, then per triangle the values above, with floats as their bits and NaN as 0x7fc00000, then the triangle count. noclip's side is a probe at the top of `emitTri` in the same exported copy of master (aefb324).
+
+| set | triangles | FNV-1a |
+|---|---|---|
+| vcop | 100826 | 0x4a1dafe1 |
+| daytona | 299707 | 0xa00063c5 |
+| hotd | 664370 | 0xc855317a |
+
+All three agreed at once, and the decoder's output did not change. The hash notices a slip. Each of these fails all three sets:
+
+- ADC wound as ACD;
+- the quad UV slots in stream order instead of B,A,C,D;
+- the facing point always A;
+- the z mode always 1.
+
+Without the per-mesh reset, the split table fills and its probe never ends.
+
+Two things are left out of the hash:
+
+- **The normal `emitTri` stores.** It is the ROM normal normalised, or a cross product when the ROM normal is too short (|n|₁ ≤ 0.5). It comes out of double arithmetic in noclip. For hotd it is a plane normal (`lighting.planeNormals`), which is lighting, not decoding.
+- **Face-flag bit 128** (bit 17 or that short normal). Bit 17 itself is hashed.
+
+noclip's z mode starts at 1, and m2-hle2's at 0 ("none yet", which `geo3d_sort_z` treats as 1). The census reports 0 as 1. In these three sets every mesh's first drawn face names a mode, so this never comes up.

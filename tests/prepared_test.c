@@ -78,6 +78,13 @@ typedef struct {
      * count, then per header the face index, textured, faceFlags, texw, texh,
      * lumaBase, tx, sheet, ty, matidx, tw and th. noclip master (aefb324). */
     uint32_t      hdr_n, hdr_textured, hdr_fnv;
+    /* What decodeModel hands emitTri (a probe at its top, in the same exported
+     * copy): the triangles, and FNV-1a, per mesh, over its index and, after
+     * its triangles, their count, then per triangle the three corners, the
+     * three UV pairs, the material slot, attribute bit 17, the record's ROM
+     * normal, the z mode, the four z-source corners and the facing point,
+     * floats as their bits (NaN 0x7fc00000). noclip master (aefb324). */
+    uint32_t      tri_n, tri_fnv;
 } noclip_reads_t;
 
 /* What the test reads a profile with: its recipe, the layout its quirks must
@@ -94,17 +101,20 @@ static const prepared_case_t k_cases[] = {
       { 1234, 0x2298d18du, 1234, 0, { 0, 1, 1233 },
         { { 0x50000, 0x0, 0x800004 }, { 0x50760, 0x3cc, 0x8009f1 }, { 0xc292a, 0x39240, 0x89c275 } },
         1234, 0, 0xab8c6c68u, { { 0, 0x10, 0x1841701 }, { 1, 0x27c4, 0x1841b01 }, { 1233, 0x2709d4, 0x9c1502 } },
-        1234, 0, 61375, 57495, 57002, 0xae157b11u, 60141, 59615, 0x4add73cbu } },
+        1234, 0, 61375, 57495, 57002, 0xae157b11u, 60141, 59615, 0x4add73cbu,
+        100826, 0x4a1dafe1u } },
     { &daytona_profile, &daytona_recipe, MODEL_LAYOUT_DAYTONA,
       { 3190, 0xa7bff01du, 3190, 27, { 0, 1, 3189 },
         { { 0x17ecd0, 0x117080, 0x880004 }, { 0x17f13e, 0x11728c, 0x8805af }, { 0x85abc, 0x18510, 0x84881b } },
         3163, 0, 0xac46f303u, { { 0, 0x200010, 0x941501 }, { 1, 0x2016bc, 0x89141601 }, { 3189, 0x12206c, 0x41401 } },
-        3163, 813, 203300, 163823, 138791, 0x5195b8e6u, 200136, 168923, 0x06c84e43u } },
+        3163, 813, 203300, 163823, 138791, 0x5195b8e6u, 200136, 168923, 0x06c84e43u,
+        299707, 0xa00063c5u } },
     { &hotd_profile, &hotd_recipe, MODEL_LAYOUT_1995,
       { 7477, 0xac1eb34fu, 7465, 0, { 0, 1, 7476 },
         { { 0x0, 0x6, 0x800000 }, { 0x0, 0x6, 0x800000 }, { 0x6c7ffa, 0x6c821a, 0xef296a } },
         7465, 0, 0xf2dfe35cu, { { 0, 0x0, 0x1000a02 }, { 1, 0x0, 0x1000a02 }, { 7476, 0x1bca5a8, 0x1000601 } },
-        7465, 0, 466634, 378760, 367185, 0xdc922fa1u, 459169, 446049, 0xcd3e0d51u } },
+        7465, 0, 466634, 378760, 367185, 0xdc922fa1u, 459169, 446049, 0xcd3e0d51u,
+        664370, 0xc855317au } },
 };
 
 static uint32_t rd32(const uint8_t *b, size_t at) {
@@ -229,7 +239,34 @@ static void check_noclip_meshes(const char *id, const model_table_t *t, const ga
 typedef struct {
     uint32_t n, null, records, faces, textured, fnv;
     uint32_t hdrs, hdr_textured, hdr_fnv;
+    uint32_t tris, tri_fnv;
 } decode_totals_t;
+
+static uint32_t fnv_float(uint32_t h, float f) {
+    uint32_t v = 0x7fc00000u;
+    if (f == f) memcpy(&v, &f, sizeof v);
+    return fnv_word(h, v);
+}
+
+static uint32_t fnv_vec(uint32_t h, vec3_t p) {
+    return fnv_float(fnv_float(fnv_float(h, p.x), p.y), p.z);
+}
+
+/* The triangles' part, as the node script mixes it (noclip_reads_t.tri_fnv). */
+static void decode_mix_tris(decode_totals_t *d, uint32_t i, const geo3d_mesh_reads_t *r) {
+    uint32_t h = fnv_word(d->tri_fnv, i);
+    for (int k = 0; k < r->n_tris && k < r->tris_cap; k++) {
+        const geo3d_reads_tri_t *x = &r->tri[k];
+        for (int c = 0; c < 3; c++) h = fnv_vec(h, x->p[c]);
+        for (int c = 0; c < 3; c++) h = fnv_float(fnv_float(h, x->u[c]), x->v[c]);
+        h = fnv_vec(fnv_word(fnv_word(h, x->material), x->two_sided), x->normal);
+        h = fnv_word(h, x->zmode);
+        for (int c = 0; c < 4; c++) h = fnv_vec(h, x->zc[c]);
+        h = fnv_vec(h, x->face_pt);
+    }
+    d->tris += (uint32_t)r->n_tris;
+    d->tri_fnv = fnv_word(h, (uint32_t)r->n_tris);
+}
 
 /* The headers' part, as the node script mixes it (noclip_reads_t.hdr_fnv). */
 static void decode_mix_headers(decode_totals_t *d, uint32_t i, const geo3d_mesh_reads_t *r) {
@@ -272,6 +309,7 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
                                 const romset_t *rs, const noclip_reads_t *n) {
     enum { FACES = GEO3D_IA_MAX_IDX / 4, READS = FACES * 24, TRIS = FACES * 2 };
     static uint32_t reads[READS], tris[TRIS];
+    static geo3d_reads_tri_t tri[TRIS];
     static geo3d_reads_hdr_t hdrs[FACES];
     const geo3d_models_t md = {
         .main_data = rs->main_data, .main_data_size = rs->main_data_size,
@@ -279,9 +317,9 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
         .materials = rs->textures,  .materials_size = rs->textures_size,
         .table = *t, .mesh_ptr_subtract = q->mesh_ptr_subtract, .mesh_ptr_add = q->mesh_ptr_add,
     };
-    geo3d_mesh_reads_t r = { .reads = reads, .reads_cap = READS, .tri_face = tris, .tris_cap = TRIS,
+    geo3d_mesh_reads_t r = { .reads = reads, .reads_cap = READS, .tri_face = tris, .tri = tri, .tris_cap = TRIS,
                              .hdrs = hdrs, .hdrs_cap = FACES };
-    decode_totals_t d = { .fnv = 0x811c9dc5u, .hdr_fnv = 0x811c9dc5u };
+    decode_totals_t d = { .fnv = 0x811c9dc5u, .hdr_fnv = 0x811c9dc5u, .tri_fnv = 0x811c9dc5u };
     int over = 0;
     model_entry_t e;
     uint32_t off;
@@ -293,6 +331,7 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
         if (r.n_reads > READS || r.n_tris > TRIS || r.n_hdrs > FACES) over++;
         decode_mix(&d, i, off, &r);
         decode_mix_headers(&d, i, &r);
+        decode_mix_tris(&d, i, &r);
     }
     CHECK(over == 0, "%s: every decode's reads fit the test's buffers", id);
     CHECK(d.n == n->dec_n && d.null == n->dec_null && d.records == n->dec_records,
@@ -305,6 +344,9 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
     CHECK(d.hdrs == n->hdr_n && d.hdr_textured == n->hdr_textured && d.hdr_fnv == n->hdr_fnv,
           "%s: %u headers, %u textured, decoded fields FNV 0x%08X (noclip: %u, %u, 0x%08X)",
           id, d.hdrs, d.hdr_textured, d.hdr_fnv, n->hdr_n, n->hdr_textured, n->hdr_fnv);
+    CHECK(d.tris == n->tri_n && d.tri_fnv == n->tri_fnv,
+          "%s: %u triangles, corners, UVs, attributes, normals and z-sort FNV 0x%08X (noclip: %u, 0x%08X)",
+          id, d.tris, d.tri_fnv, n->tri_n, n->tri_fnv);
 }
 
 /* Entries whose mesh pointer is set must resolve (model_mesh_resolve, noclip's

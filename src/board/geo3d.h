@@ -1728,40 +1728,44 @@ static inline void geo3d_emit_paint_tri(vec3_t P, int i, vec3_t Q, int j, vec3_t
                       R.x,R.y,R.z, p->u[k],p->v[k], p->r,p->g,p->b, p->tx,p->ty,p->tw,p->th, p->lb,p->pl, p->fl);
 }
 
-/* One face: its edges (with lines) and its fill. A quad is ABD + ADC (slots
- * 0,1,3 / 0,3,2), or ABC + BDC along the other diagonal when a decal copy must
- * match an earlier cut (geo3d_split_other_way, with the corner keys' sums). A
- * "triangle" with no C is one edge and no fill. */
+/* A face's fill as corner-slot triples (0=A 1=B 2=C 3=D), returning how many:
+ * a triangle's ABC, none for a "triangle" with no C (a lone edge), a quad's
+ * ABD + ADC, or ABC + BDC along the other diagonal when a decal copy must match
+ * an earlier cut (geo3d_split_other_way, with the corner keys' sums). */
+static inline int geo3d_face_tris(bool is_tri, bool has_c, uint32_t split_quad, uint32_t split_cut,
+                                  int tri[2][3]) {
+    static const int usual[2][3] = { {0,1,3}, {0,3,2} }, other[2][3] = { {0,1,2}, {1,3,2} };
+    if (is_tri) {
+        tri[0][0] = 0; tri[0][1] = 1; tri[0][2] = 2;
+        return has_c ? 1 : 0;
+    }
+    memcpy(tri, geo3d_split_other_way(split_quad, split_cut) ? other : usual, sizeof usual);
+    return 2;
+}
+
+/* A face's edges: a triangle's three (one with no C), a quad's four. */
+static inline void geo3d_emit_face_lines(vec3_t A, vec3_t B, vec3_t C, vec3_t D, bool is_tri, bool has_c,
+                                         float r, float g, float b) {
+    if (is_tri && !has_c) { geo3d_emit_line(A.x,A.y,A.z, B.x,B.y,B.z, r,g,b); return; }
+    vec3_t ring[4] = { A, B, is_tri ? C : D, C };   /* quad winding: A-B, B-D, D-C, C-A */
+    const int n = is_tri ? 3 : 4;
+    for (int k = 0; k < n; k++) {
+        vec3_t P = ring[k], Q = ring[(k + 1) % n];
+        geo3d_emit_line(P.x,P.y,P.z, Q.x,Q.y,Q.z, r,g,b);
+    }
+}
+
+/* One face: its edges (with lines) and its fill (geo3d_face_tris). */
 static inline void geo3d_emit_face(vec3_t A, vec3_t B, vec3_t C, vec3_t D, bool is_tri, bool has_c,
                                    bool lines, uint32_t split_quad, uint32_t split_cut,
                                    const geo3d_paint_t *p) {
-    const float r = p->r, g = p->g, b = p->b;
-    if (is_tri) {
-        if (has_c) {
-            if (lines) {
-                geo3d_emit_line(A.x,A.y,A.z, B.x,B.y,B.z, r,g,b);
-                geo3d_emit_line(B.x,B.y,B.z, C.x,C.y,C.z, r,g,b);
-                geo3d_emit_line(C.x,C.y,C.z, A.x,A.y,A.z, r,g,b);
-            }
-            geo3d_emit_paint_tri(A, 0, B, 1, C, 2, p);
-        } else if (lines) {
-            geo3d_emit_line(A.x,A.y,A.z, B.x,B.y,B.z, r,g,b);
-        }
-        return;
-    }
-    if (lines) {
-        /* Quad winding: A-B, B-D, D-C, C-A */
-        geo3d_emit_line(A.x,A.y,A.z, B.x,B.y,B.z, r,g,b);
-        geo3d_emit_line(B.x,B.y,B.z, D.x,D.y,D.z, r,g,b);
-        geo3d_emit_line(D.x,D.y,D.z, C.x,C.y,C.z, r,g,b);
-        geo3d_emit_line(C.x,C.y,C.z, A.x,A.y,A.z, r,g,b);
-    }
-    if (geo3d_split_other_way(split_quad, split_cut)) {
-        geo3d_emit_paint_tri(A, 0, B, 1, C, 2, p);
-        geo3d_emit_paint_tri(B, 1, D, 3, C, 2, p);
-    } else {
-        geo3d_emit_paint_tri(A, 0, B, 1, D, 3, p);
-        geo3d_emit_paint_tri(A, 0, D, 3, C, 2, p);
+    if (lines) geo3d_emit_face_lines(A, B, C, D, is_tri, has_c, p->r, p->g, p->b);
+    const vec3_t P[4] = { A, B, C, D };
+    int tri[2][3];
+    const int n = geo3d_face_tris(is_tri, has_c, split_quad, split_cut, tri);
+    for (int t = 0; t < n; t++) {
+        const int i = tri[t][0], j = tri[t][1], k = tri[t][2];
+        geo3d_emit_paint_tri(P[i], i, P[j], j, P[k], k, p);
     }
 }
 
@@ -2100,13 +2104,25 @@ static inline void geo3d_decode_model(const geo3d_models_t *md, int model_idx,
  * order, and what the faces come to. A header is read whenever the model has a
  * header stream; the UV pairs only for a textured face, as far as the ROM
  * holds them. Each header read is kept as the decoder takes it
- * (geo3d_texhdr_decode, geo3d_texhdr_tile). NOCLIP-SYNC.md §6.5 and §6.6;
- * tests/prepared_test.c checks it. */
+ * (geo3d_texhdr_decode, geo3d_texhdr_tile), and each triangle as the decoder
+ * fills it (geo3d_face_tris, geo3d_zsort_step), from the untransformed walk.
+ * NOCLIP-SYNC.md §6.5 to §6.7; tests/prepared_test.c checks it. */
 typedef struct {
     int            face;          /* face-loop index (index-array position / 4) */
     geo3d_texhdr_t h;
     float          tx, ty, tw, th;   /* the tile rect handed to the shader */
 } geo3d_reads_hdr_t;
+
+typedef struct {
+    vec3_t   p[3];                /* corners, untransformed, z negated */
+    float    u[3], v[3];          /* their texture points (0 untextured) */
+    uint32_t material;            /* attribute bits 18..22 */
+    uint32_t two_sided;           /* attribute bit 17 */
+    vec3_t   normal;              /* the record's ROM normal, z negated */
+    uint32_t zmode;               /* the z-sort mode standing (1 before any) */
+    vec3_t   zc[4];               /* the z-sort's four source corners */
+    vec3_t   face_pt;             /* the facing point: C, or A without one */
+} geo3d_reads_tri_t;
 
 typedef struct {
     int       records;            /* vertex-pair records walked, the end one included */
@@ -2115,6 +2131,7 @@ typedef struct {
     uint32_t *reads;              /* textures-ROM byte indices, the first reads_cap of n_reads */
     int       n_reads, reads_cap;
     uint32_t *tri_face;           /* each triangle's face (faces so far), the first tris_cap */
+    geo3d_reads_tri_t *tri;       /* each triangle, the first tris_cap; may be NULL */
     int       n_tris, tris_cap;
     geo3d_reads_hdr_t *hdrs;      /* each header read, the first hdrs_cap of n_hdrs */
     int       n_hdrs, hdrs_cap;
@@ -2125,9 +2142,35 @@ static inline void geo3d_reads_bytes(geo3d_mesh_reads_t *r, uint32_t byte, int n
         if (r->n_reads < r->reads_cap) r->reads[r->n_reads] = byte + (uint32_t)k;
 }
 
-static inline void geo3d_reads_tris(geo3d_mesh_reads_t *r, int n) {
-    for (int k = 0; k < n; k++, r->n_tris++)
-        if (r->n_tris < r->tris_cap) r->tri_face[r->n_tris] = (uint32_t)r->faces;
+/* One face's triangles: the corner slots (geo3d_face_tris) and the face's
+ * corners A..D, UVs, attribute, record normal and z-sort state. */
+typedef struct {
+    int      tri[2][3], n;
+    vec3_t   P[4];
+    float    uvu[4], uvv[4];
+    uint32_t at, zmode;
+    vec3_t   normal, zc[4], face_pt;
+} geo3d_reads_face_t;
+
+static inline void geo3d_reads_tri(const geo3d_reads_face_t *f, int t, geo3d_reads_tri_t *x) {
+    for (int c = 0; c < 3; c++) {
+        const int s = f->tri[t][c];
+        x->p[c] = f->P[s]; x->u[c] = f->uvu[s]; x->v[c] = f->uvv[s];
+    }
+    x->material  = (f->at >> 18) & 0x1Fu;
+    x->two_sided = (f->at >> 17) & 1u;
+    x->normal    = f->normal;
+    x->zmode     = f->zmode;
+    memcpy(x->zc, f->zc, sizeof x->zc);
+    x->face_pt   = f->face_pt;
+}
+
+static inline void geo3d_reads_tris(geo3d_mesh_reads_t *r, const geo3d_reads_face_t *f) {
+    for (int t = 0; t < f->n; t++, r->n_tris++) {
+        if (r->n_tris >= r->tris_cap) continue;
+        r->tri_face[r->n_tris] = (uint32_t)r->faces;
+        if (r->tri) geo3d_reads_tri(f, t, &r->tri[r->n_tris]);
+    }
 }
 
 static inline void geo3d_reads_hdr(geo3d_mesh_reads_t *r, int fi, const geo3d_texhdr_t *h) {
@@ -2154,30 +2197,55 @@ static inline bool geo3d_reads_header(geo3d_decode_walk_t *w, int fi, uint32_t a
     return h.textured;
 }
 
-/* A textured face's points, the UV stream moved on past them either way. */
-static inline void geo3d_reads_uv(geo3d_decode_walk_t *w, bool tri_cnt, bool textured, geo3d_mesh_reads_t *r) {
+/* A textured face's points into uvu/uvv, the UV stream moved on past them
+ * either way. */
+static inline void geo3d_reads_uv(geo3d_decode_walk_t *w, bool tri_cnt, bool textured, geo3d_mesh_reads_t *r,
+                                  float uvu[4], float uvv[4]) {
     if (w->have_uv && textured) {
-        float uvu[4], uvv[4];
         int n = geo3d_uv_read(w->md->materials, w->md->materials_size, w->uv_word, tri_cnt, true, uvu, uvv);
         for (int k = 0; k < n; k++) geo3d_reads_bytes(r, (w->uv_word + (uint32_t)k * 2u) * 2u, 4);
     }
     w->uv_word += tri_cnt ? 6u : 8u;    /* nv (pv,pu) pairs */
 }
 
-/* One face-loop iteration, as geo3d_decode_face takes it: a face needs A and
- * B, and is a quad's two triangles, a triangle's one, or a lone edge's none. */
+/* A drawn face's corners, z-sort state and triangles into f, as
+ * geo3d_decode_face takes them: a quad's two, a triangle's one, or a lone
+ * edge's none. f's UVs are already in. */
+static inline void geo3d_reads_corners(geo3d_decode_walk_t *w, int fi, const int c[4], bool tri_cnt,
+                                       geo3d_reads_face_t *f) {
+    const geo3d_ia_t *ia = w->ia;
+    const bool has_c = c[2] >= 0 && c[2] < ia->n_sv, has_d = c[3] >= 0 && c[3] < ia->n_sv;
+    const bool is_tri = tri_cnt || !has_c || !has_d;
+    for (int k = 0; k < 4; k++) f->P[k] = (k < 2 || (k == 2 ? has_c : has_d)) ? ia->sv[c[k]] : (vec3_t){0,0,0};
+    f->at = geo3d_ia_attr(ia, fi);
+    f->normal = (fi < ia->n_qt) ? ia->qn[fi] : (vec3_t){0,0,0};
+    geo3d_zsort_step(f->at, is_tri, has_c, c[0], c[1], c[2], c[3], w->zsrc, &w->zmode, &w->zset);
+    f->zmode = w->zmode ? w->zmode : 1u;   /* the explorer's walk starts at 1 */
+    for (int k = 0; k < 4; k++) f->zc[k] = ia->sv[w->zsrc[k]];
+    f->face_pt = has_c ? f->P[2] : f->P[0];
+    uint32_t quad = 0, cut = 0;
+    if (!is_tri) {
+        const uint32_t kA = ia->svk[c[0]], kB = ia->svk[c[1]], kC = ia->svk[c[2]], kD = ia->svk[c[3]];
+        quad = kA ^ kB ^ kC ^ kD;
+        cut  = kA ^ kD;
+    }
+    f->n = geo3d_face_tris(is_tri, has_c, quad, cut, f->tri);
+}
+
+/* One face-loop iteration, as geo3d_decode_face takes it: a face needs A and B. */
 static inline void geo3d_reads_face(geo3d_decode_walk_t *w, int i, geo3d_mesh_reads_t *r) {
     const geo3d_ia_t *ia = w->ia;
     const int n_sv = ia->n_sv, fi = i / 4;
-    int ai = ia->idx[i], bi = ia->idx[i + 1], ci = ia->idx[i + 2], di = ia->idx[i + 3];
+    const int c[4] = { ia->idx[i], ia->idx[i + 1], ia->idx[i + 2], ia->idx[i + 3] };
     bool tri_cnt = (fi < ia->n_qt && ia->qt[fi] == 2);
 
+    geo3d_reads_face_t f = { .uvu = {0,0,0,0}, .uvv = {0,0,0,0} };
     bool textured = geo3d_reads_header(w, fi, geo3d_ia_attr(ia, fi), r);
-    geo3d_reads_uv(w, tri_cnt, textured, r);
+    geo3d_reads_uv(w, tri_cnt, textured, r, f.uvu, f.uvv);
 
-    if (ai < 0 || ai >= n_sv || bi < 0 || bi >= n_sv) return;
-    bool has_c = (ci >= 0 && ci < n_sv), has_d = (di >= 0 && di < n_sv);
-    geo3d_reads_tris(r, (tri_cnt || !has_c || !has_d) ? (has_c ? 1 : 0) : 2);
+    if (c[0] < 0 || c[0] >= n_sv || c[1] < 0 || c[1] >= n_sv) return;
+    geo3d_reads_corners(w, fi, c, tri_cnt, &f);
+    geo3d_reads_tris(r, &f);
     if (textured) r->textured++;
     r->faces++;
 }
@@ -2194,6 +2262,7 @@ static inline bool geo3d_mesh_reads(const geo3d_models_t *md, int model_idx, geo
     geo3d_ia_walk(&ia, w.polygons, w.polygons_size, w.mesh_offset, NULL);
     r->records = ia.n_qt;
     w.mat_rec = w.mat_word;
+    geo3d_split_reset();
     for (int i = 0; i < ia.n_idx - 8; i += 4) geo3d_reads_face(&w, i, r);
     return true;
 }
