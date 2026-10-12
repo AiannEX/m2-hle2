@@ -46,7 +46,7 @@ const m2hleCrt = (() => {
   }
 
   function push(i) {
-    if (ready) Module._web_crt_pot_set(i, Number(inputs[i].value));
+    if (ready && inputs[i]) Module._web_crt_pot_set(i, Number(inputs[i].value));
   }
 
   function build() {
@@ -99,11 +99,14 @@ const m2hleCrt = (() => {
   }
 
   function init() {
+    if (inputs.length) return;
     build();
     $('crt-reset').addEventListener('click', reset);
+    POTS.forEach((p, i) => push(i));
   }
 
-  /* Called from Module.onM2hleReady: the exports exist now. */
+  /* Called from Module.onM2hleReady: the exports exist now. That can come
+   * before DOMContentLoaded, so whichever is second sends the pots. */
   function onReady() {
     ready = true;
     POTS.forEach((p, i) => push(i));
@@ -112,13 +115,14 @@ const m2hleCrt = (() => {
   /* For scripts and tests: set one pot by key, as the slider would. */
   function set(key, value) {
     const i = POTS.findIndex((p) => p.key === key);
-    if (i < 0) return false;
+    if (i < 0 || !inputs[i]) return false;
     inputs[i].value = String(value);
     inputs[i].dispatchEvent(new Event('input'));
     return true;
   }
 
-  document.addEventListener('DOMContentLoaded', init);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 
   return { onReady, set, reset };
 })();
