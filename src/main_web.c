@@ -594,7 +594,11 @@ static void init(void) {
     if (g_web_profile_arg[0]) {
         const game_profile_t *p = profile_by_id(g_web_profile_arg);
         if (p) g_active_profile = p;
-        else LOG_WARN("web: no profile '%s'", g_web_profile_arg);
+        else {
+            char why[256];
+            if (profile_prepared_message(g_web_profile_arg, why, sizeof why)) LOG_WARN("web: %s", why);
+            else LOG_WARN("web: no profile '%s'", g_web_profile_arg);
+        }
     }
 
     sg_setup(&(sg_desc){

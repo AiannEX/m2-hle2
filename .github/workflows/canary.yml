@@ -101,13 +101,14 @@ jobs:
         run: cmake --build build --config Release -j 4
 
       # rom_test / boot_test / geo_test / input_test hardcode a dev-machine ROM
-      # path and cannot run here. The rest are self-contained, and every one of
+      # path and cannot run here. prepared_test checks its recipes without ROMs
+      # and skips the sets it cannot find. The rest are self-contained, and every one of
       # them belongs in this list - a test the canary does not run is a test
       # nobody runs until someone happens to build locally.
       - name: Test
         run: >
           ctest --test-dir build -C Release --output-on-failure
-          -R "^(mem_test|i960_test|cop_test|m68k_test|emu_test|net_test|ps3net_test|tile_test|heat_test|audio_out_test|scsp_dsp_test|scsp_dsp_test_masks|scsp_lazy_test|retro_shader_test|ra_info_cache_test|sfight_settings_test)$"
+          -R "^(mem_test|i960_test|cop_test|m68k_test|emu_test|net_test|ps3net_test|tile_test|heat_test|audio_out_test|scsp_dsp_test|scsp_dsp_test_masks|scsp_lazy_test|retro_shader_test|ra_info_cache_test|sfight_settings_test|prepared_test)$"
 
       - name: Package
         shell: bash

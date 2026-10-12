@@ -618,6 +618,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     add_executable(mem_test  ${CMAKE_CURRENT_SOURCE_DIR}/tests/mem_test.c)
     add_executable(i960_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/i960_test.c)
     add_executable(rom_test  ${CMAKE_CURRENT_SOURCE_DIR}/tests/rom_test.c)
+    add_executable(prepared_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/prepared_test.c)
     add_executable(emu_test  ${CMAKE_CURRENT_SOURCE_DIR}/tests/emu_test.c)
     add_executable(boot_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/boot_test.c)
     add_executable(cop_test  ${CMAKE_CURRENT_SOURCE_DIR}/tests/cop_test.c)
@@ -710,6 +711,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
         target_compile_definitions(det_digest PRIVATE _CRT_SECURE_NO_WARNINGS)
     endif()
     target_link_libraries(rom_test   PRIVATE miniz)
+    target_link_libraries(prepared_test PRIVATE miniz)
     target_link_libraries(boot_test  PRIVATE miniz)
     target_link_libraries(geo_test   PRIVATE miniz)
     # emu_test/input_test pull input.h -> sokol_app.h (and sokol_gfx through the
@@ -719,7 +721,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     # audio_out.h calls into sokol_audio (its device path is not under test).
     target_link_libraries(audio_out_test PRIVATE sokol)
 
-    foreach(t mem_test i960_test rom_test emu_test boot_test cop_test geo_test m68k_test input_test net_test ps3net_test tile_test heat_test audio_out_test
+    foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test input_test net_test ps3net_test tile_test heat_test audio_out_test
               scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test sfight_settings_test retro_shader_test ra_info_cache_test)
         target_include_directories(${t} PRIVATE ${TEST_INCLUDES})
         if(MSVC)
@@ -731,7 +733,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     # Windows. m2hle, emu_test and input_test get it through sokol; the rest link
     # nothing that carries it.
     if(NOT WIN32)
-        foreach(t mem_test i960_test rom_test emu_test boot_test cop_test geo_test m68k_test
+        foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test
                   input_test net_test ps3net_test tile_test heat_test audio_out_test scsp_dsp_test scsp_dsp_test_masks
                   scsp_lazy_test retro_shader_test ra_info_cache_test cop_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test ps3ui_render)
             target_link_libraries(${t} PRIVATE m)
