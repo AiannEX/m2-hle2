@@ -48,5 +48,15 @@ const m2hleGame = (() => {
   const desc = document.querySelector('meta[name="description"]');
   if (desc) desc.content = 'Play ' + game.title + ' in your browser, with your own copy of the game.';
 
+  /* The arcade (arcade/stf-arcade.mjs) is the Fly's board and ranking, which are
+   * Sonic the Fighters': another game keeps its own save (m2hle-save.js). Named
+   * with this script's own ?v=, as index.html names everything. */
+  if (id === 'sfight' && document.currentScript) {
+    const s = document.createElement('script');
+    s.type = 'module';
+    s.src = 'arcade/stf-arcade.mjs' + new URL(document.currentScript.src).search;
+    document.head.append(s);
+  }
+
   return game;
 })();

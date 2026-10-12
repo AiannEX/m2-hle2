@@ -12,6 +12,7 @@
 <link rel="preload" href="fonts/text.woff2?v=@M2HLE_VERSION@" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/title.woff2?v=@M2HLE_VERSION@" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="m2hle.css?v=@M2HLE_VERSION@">
+<meta name="stf-arcade-api" content="https://arcade.sonicthefighte.rs">
 </head>
 <body>
 
@@ -601,6 +602,7 @@
      none comes from anywhere else: the netplay sign-in is remembered in this origin's
      localStorage, which any script on the page could read. Keep it that way (CI checks). -->
 <script src="m2hle-game.js?v=@M2HLE_VERSION@"></script>
+<script src="m2hle-save.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-keys.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-tools.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-objview.js?v=@M2HLE_VERSION@"></script>
@@ -616,8 +618,8 @@
 <script async src="m2hle.js?v=@M2HLE_VERSION@"></script>
 <!-- The arcade: asks whether to share high scores and usage, and if so boots the game on
      the shared board. arcade/ is a copy of the play.sonicthefighte.rs repository's
-     src/public client; only its API calls leave this site. The game runs without it. -->
-<meta name="stf-arcade-api" content="https://arcade.sonicthefighte.rs">
-<script type="module" src="arcade/stf-arcade.mjs?v=@M2HLE_VERSION@"></script>
+     src/public client; only its API calls leave this site. The game runs without it.
+     It is Sonic the Fighters' only (the Fly's board): m2hle-game.js loads it, and any
+     other game asks about its own save instead (m2hle-save.js). -->
 </body>
 </html>

@@ -291,6 +291,7 @@ static bool g_web_waited;
 /* ?follow= : the board follows another one way (core/follow.h, Pinboard #568).
  * It sends nothing and takes no input; a slice runs only once the feed holds it. */
 static bool g_web_follow;
+static bool g_web_keep_save = true;  /* web_backup_keep: the set's backup RAM goes in localStorage */
 /* The feed comes in bursts: the leader flushes it every few frames and the page
  * polls it every 250 ms (m2hle-follow.js). A follower that ran each frame the
  * moment it landed sat at the live edge and ran dry several times a second, and
@@ -1041,7 +1042,7 @@ EMSCRIPTEN_KEEPALIVE int web_rom_load(uint8_t *zip, int len) {
     /* The set's backup RAM, kept in this browser's localStorage. A scripted run
      * (?script=) boots blank, so that two runs of a script are the same run. */
     if (g_backup_want != 0 && g_web_script_n == 0 && !g_web_follow)
-        backup_ram_open(profile_rom_set(g_active_profile), true);
+        backup_ram_open(profile_rom_set(g_active_profile), g_web_keep_save);
     web_install_board();
     emu_run(&state.emu);
     state.last_us = 0;
@@ -1214,6 +1215,21 @@ EMSCRIPTEN_KEEPALIVE const char *web_replay_status(void) {
 /* The files the last web_rom_load did not find, space separated ("" if none). */
 /* The page is going (pagehide): keep the newest backup RAM. */
 EMSCRIPTEN_KEEPALIVE void web_backup_flush(void) { backup_ram_flush(); }
+
+/* Whether the set's backup RAM goes in localStorage (m2hle-save.js: a game whose
+ * page asks first, Sega Rally). Off, the board still has it for this visit, blank
+ * at the load, and nothing is written; turned on mid-game, what the board holds
+ * now is stored. Before a load it decides how that load opens it. */
+EMSCRIPTEN_KEEPALIVE void web_backup_keep(int on) {
+    g_web_keep_save = on != 0;
+    if (!g_backup.attached || !g_backup.set[0]) return;
+    g_backup.to_file = g_web_keep_save;
+    g_backup.path[0] = '\0';
+    if (!g_web_keep_save) return;
+    snprintf(g_backup.path, sizeof g_backup.path, "m2hle2.nvram.%s", g_backup.set);
+    g_backup.dirty = true;
+    backup_ram_flush();
+}
 
 EMSCRIPTEN_KEEPALIVE const char *web_rom_missing(void) {
     return g_rl_mem_zip.missing_names;
