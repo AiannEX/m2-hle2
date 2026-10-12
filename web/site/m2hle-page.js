@@ -356,6 +356,7 @@ var Module = {
     m2hleTools.onReady();
     m2hleObjview.onReady();
     m2hleShader.onReady();
+    m2hleCrt.onReady();
     m2hleReplay.onReady(Module);
     m2hleNetplay.onReady(Module);
     m2hleGgpo.onReady(Module);

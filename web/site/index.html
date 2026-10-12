@@ -453,6 +453,12 @@
   <!-- A filter over the game's 4:3 picture (m2hle-shader.js, src/ui/post_shader.h). -->
   <div id="pane-picture" class="pane" role="tabpanel" hidden>
     <div class="picture">
+      <!-- The monitor's own pots (m2hle-crt.js, src/ui/crt_pots.h). -->
+      <h3 class="shader-h">Monitor adjustments</h3>
+      <p class="fine left">The pots on an arcade monitor's chassis: each gun's drive (gain) and cutoff (bias),
+        and where the picture sits and how big it is. They cost nothing and work with any filter.</p>
+      <div id="crt-pots" class="shader-params crt-pots"></div>
+      <p class="np-row shader-row"><button id="crt-reset" class="tool">Reset all</button></p>
       <details class="np-advanced picture-advanced">
         <summary>Advanced: CRT filter and shaders</summary>
         <p class="shader-warn">These filters draw the picture a second time on your graphics chip, every frame,
@@ -593,6 +599,7 @@
 <script src="m2hle-tools.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-objview.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-shader.js?v=@M2HLE_VERSION@"></script>
+<script src="m2hle-crt.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-netplay.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-ggpo.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-pad.js?v=@M2HLE_VERSION@"></script>

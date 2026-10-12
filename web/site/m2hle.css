@@ -805,6 +805,8 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--sel-line); }
 .shader-param { display: grid !important; grid-template-columns: minmax(8rem, 1fr) minmax(6rem, 2fr) 3.5rem; align-items: center; gap: 0.6rem; margin: 0 !important; }
 .shader-param output { font-variant-numeric: tabular-nums; text-align: right; color: var(--text); }
 .shader-param input[type=range] { width: 100%; min-width: 0; }
+.crt-pots { max-width: 46rem; }
+.crt-pots .crt-group { margin: 0.5rem 0 0; font-size: 0.85rem; color: var(--text); }
 .picture code { font: 0.8125rem var(--font-mono); }
 
 /* The Replay tab (m2hle-replay.js). */
