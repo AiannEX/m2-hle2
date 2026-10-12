@@ -105,6 +105,7 @@ function loadZipNow(bytes) {
     addEventListener('pagehide', () => Module._web_backup_flush());
     if (m2hleFollow.active) m2hleFollow.onGame();   /* no netplay: the board is the leader's */
     else { m2hleNetplay.onGame(); m2hleGgpo.onGame(); }
+    m2hleReport.onGame();
     if (window.stfArcade) window.stfArcade.onGame(m2hleFollow.active ? 'follow' : 'solo');
     m2hleTouch.onGame();
     pauseOnGame();
@@ -358,6 +359,7 @@ var Module = {
     m2hleShader.onReady();
     m2hleCrt.onReady();
     m2hleReplay.onReady(Module);
+    m2hleReport.onReady(Module);
     m2hleNetplay.onReady(Module);
     m2hleGgpo.onReady(Module);
     m2hlePad.onReady();
@@ -393,8 +395,9 @@ for (const type of ['dragleave', 'drop']) {
   window.addEventListener(type, (e) => { e.preventDefault(); drop.classList.remove('over'); });
 }
 window.addEventListener('drop', (e) => {
-  if ($('step-rom').hidden) return;
-  readFile(e.dataTransfer && e.dataTransfer.files[0]);
+  const file = e.dataTransfer && e.dataTransfer.files[0];
+  if (!$('step-rom').hidden) readFile(file);
+  else if ($('panel').hidden) m2hleReport.loadFile(file);   /* a savestate, or a report's zip (m2hle-report.js) */
 });
 
 /* ---- The menu ----------------------------------------------------------------

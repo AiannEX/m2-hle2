@@ -957,3 +957,8 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--sel-line); }
 /* The GGPO lobby's chat (m2hle-ggpo.js): a few lines, then it scrolls. */
 .gg-chat { max-height: 8rem; min-height: 3rem; margin: 0.5rem 0; white-space: pre-wrap; }
 #gg-say { width: 100%; }
+
+/* ---- Report an issue (m2hle-report.js) ---- */
+.rp-img { display: block; width: 100%; height: auto; margin: 0 0 0.5rem; border: 1px solid rgba(0, 255, 255, 0.4); image-rendering: pixelated; }
+.rp-text { display: block; box-sizing: border-box; width: 100%; margin-top: 0.3rem; resize: vertical; font: inherit; }
+.rp-label { display: block; font-size: 0.875rem; color: var(--dim); }

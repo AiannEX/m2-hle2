@@ -625,5 +625,5 @@ const m2hleTools = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { add, print, printErr, frameBegin, frameEnd, diagnose, reason, onReady, consoleText, openDrawer };
+  return { add, print, printErr, frameBegin, frameEnd, diagnose, reason, onReady, consoleText, openDrawer, systemInfo, copy };
 })();
