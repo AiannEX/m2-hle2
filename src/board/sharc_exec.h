@@ -1465,14 +1465,12 @@ static inline void sharc_exec(uint32_t cmd, const uint32_t *args, int n) {
         /* 0x13002626: asin(a) -> i16_angle  (dispatch index 0x26, PM 0x20636)
          * Firmware: _L20332 calls sqrt(1-f1^2) + atan2(f1,sqrt) -> i16.
          * i960 passes a float, reads back 16-bit angle (via ldis).
-         * IDA-confirmed: 9 call sites, result compared against angle thresholds. */
+         * IDA-confirmed: 9 call sites, result compared against angle thresholds.
+         * Fn_asin hands r1 straight to _L20332, which does not clamp: |a| > 1
+         * goes to the square root as it is. */
         case 0x13002626:
-            if (n >= 1) {
-                float _a = sharc_bits_to_float(args[0]);
-                if (_a >  1.0f) _a =  1.0f;
-                if (_a < -1.0f) _a = -1.0f;
-                sharc_push_u(sharc_fw_asin_word(_a));        /* _L20332 */
-            }
+            if (n >= 1)
+                sharc_push_u(sharc_fw_asin_word(sharc_bits_to_float(args[0])));   /* _L20332 */
             return;
 
         case 0x1F803F3F:
