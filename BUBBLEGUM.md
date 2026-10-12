@@ -91,7 +91,7 @@ The first two are cheap: make them follow the file's NaN rule (`:76-104`), then 
 
 Sega Rally has no table and already reads the mesh at the object's address (`game_render.h:2432-2440`, taken whenever `model_idx < 0`). So one board has two draw paths, and only the table path has the mesh cache and the colour from table+4.
 
-`MODEL_ENTRY_SIZE` is fixed at 16 (`geo3d.h:39`), but Daytona's entries are 20 bytes (`daytona.h:74-76`). Every Daytona entry after the first would be misread.
+`MODEL_ENTRY_SIZE` is fixed at 16 (`geo3d.h:39`), but Daytona's entries are 20 bytes (`daytona.h:74-76`). Every Daytona entry after the first would be misread. Today that is latent: Daytona, Virtua Cop and House of the Dead have a `load_fn` but no `install_fn`, so none of them boots yet, and only the object viewer reads their tables.
 
 **Fix:** game frames always read at oba. Keep the table for the object viewer, the explorer and labels, with a stride per profile.
 
@@ -111,9 +111,9 @@ Sega Rally has no table and already reads the mesh at the object's address (`gam
 ## 3. The COP's FIFO
 
 - **An unknown command is given 0 arguments** (`sharc_args_for_cmd`, `sharc_exec.h:179`). Its arguments are then read as commands, which has happened twice (`0x2A805555`, `0x17002E2E`). The command word's low byte is the firmware's dispatch index (0x..5151 is dispatch[0x51]). A table of argument counts by index, read from cpres1's PM, would cover every command, including ones not yet seen.
-- **Every command empties the reply FIFO** (`sharc_exec.h:679-680`, and `cop.h:184-185` for the stream command). Replies the i960 has not read are dropped, where the board would hand them to the next read. Since an empty read answers 0, this hides a handler that answers too many words. An under-read should be logged at WARN, as an underflow is, not dropped silently.
+- **Every command empties the reply FIFO** (`sharc_exec.h:679-680`, and `cop.h:175-176` for the stream command). Replies the i960 has not read are dropped, where the board would hand them to the next read. Since an empty read answers 0, this hides a handler that answers too many words. An under-read should be logged at WARN, as an underflow is, not dropped silently.
 - **`0x13002626` clamps asin's argument to ±1** (`sharc_exec.h:1450-1458`). `sharc_fw_asin_word`'s own comment (`:407-408`) says the firmware does not clamp (`_L20332`). Delete the clamp and run `cop_replay` and `match-replay`.
-- **`0x34006868` (`name_char_kage_disp`, PM 0x205A3) is an empty handler** (`sharc_exec.h:1233-1236`). Whatever DM state it sets for the name-character shadows is missing.
+- **`0x34006868` is `Fn_ld_glb_mat` (cpres1 PM 0x205A3), and its handler is empty** (`sharc_exec.h:1233-1236`, whose comment calls it a "kage/shadow bone init"). The firmware copies 12 words from bufferram `0x1400000 + arg` into the current matrix: it is the mirror of 0x67 `Fn_st_glb_mat`. `name_char_kage_disp` sends it with 0x3D00, the kage slot 0x67 stores, so its shadow is drawn with whatever matrix was current instead. Port it like 0x67.
 - The short-argument fallbacks that push zeros (`:985`, `:1218` and others) can only be reached from a truncated `cop_replay` input. They are harmless.
 
 ## 4. Smaller things
@@ -131,7 +131,7 @@ Sega Rally has no table and already reads the mesh at the object's address (`gam
 
 ### The homebrew display-list walker
 
-`geo3d_scan_displaylist` (`geo3d.h:888-1078`) walks m2-snake's own list format (`geo_displaylist`). The other homebrew, m2-pacman, has used the board's GEO walk since #466. This walker carries the most fitted code left in the renderer:
+`geo3d_scan_displaylist` (`geo3d.h:1052-1078`, with its helpers from `:888`) walks m2-snake's own list format (`geo_displaylist`). The other homebrew, m2-pacman, has used the board's GEO walk since #466. This walker carries the most fitted code left in the renderer:
 
 - the near-plane reject `GEO3D_NEAR_CULL` 4.0 (`:628`, `:643-648`), and a line version whose comment says −6 while the code uses 4.0 (`:690-696`);
 - the 1.5-unit "degenerate close-quad" reject for HUD elements (`:649-661`), which hides a col0 decode bug;
@@ -139,7 +139,7 @@ Sega Rally has no table and already reads the mesh at the object's address (`gam
 - the flat-colour ×2 boost, "approximating the colorxlat ramp" (`:614-628`, `game_render.h:649-650`);
 - the overrides in `game_frame.h:147-165`: flat colour on, because "model 456's ROM material is a meaningless placeholder", and backface culling off.
 
-All of it is gated on `g_geo_flat_color` / `geo_displaylist`, so no game sees it. **Real fix:** put m2-snake's list through the board's walk, as m2-pacman's is, and delete this walker. Failing that, use the clip planes of §2.4 here too.
+All of it is gated on `g_geo_flat_color` / `geo_displaylist`, so no game sees it, with one leak: `game_frame.h:159` is the only write to `g_geo_flat_color` and nothing clears it, so a game loaded after m2-snake in the same process keeps the flat-colour fill (`game_render.h:649-650`). **Real fix:** put m2-snake's list through the board's walk, as m2-pacman's is, and delete this walker. Failing that, use the clip planes of §2.4 here too.
 
 ## 5. What became of the 2026-09-30 audit
 
@@ -200,7 +200,7 @@ These were checked and are deliberate, measured or proven board-identical:
 - `fvipers.h:166-168`: the data-window comment contradicts its code (§2.2).
 - `m2snake.h:18-21` describes the no-frame-hook 60 Hz pacing from before #253.
 - `game_profile.h:146-151` says `geo_displaylist` is "required for non-STF games". Sega Rally and m2-pacman use the board's GEO walk.
-- The head of `geo3d_scan_displaylist` (`geo3d.h:888-894`) is stale, and so is the line reject's "-6" (`:690`).
+- The scanner section's header comment (`geo3d.h:888-894`) is stale, and so is the line reject's "-6" (`:690`).
 
 ## Suggested order
 
