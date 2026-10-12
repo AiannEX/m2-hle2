@@ -12,6 +12,8 @@
  * follow MAME (devices/cpu/mb86233/mb86233.cpp, BSD-3-Clause, Olivier Galibert;
  * mame/sega/model2.cpp for the board side), which is the oracle. Only floating-
  * point mode is implemented, as there: every Sega program switches to it first.
+ * One departure: a float op and a transfer that both write d (tgp_alu_d), which
+ * the PS2 port's maths settles (tools/grade-tgp.py).
  *
  * The i960's side (model2.cpp model2_tgp_mem):
  *   0x00880000..0x00883FFF  function port: a write pushes
@@ -68,6 +70,10 @@ typedef struct {
     uint8_t  r, rpc, c0, c1, sft, vsm;
     bool     gpio0, gpio1, gpio2, gpio3;
     bool     stall;                 /* this instruction read an empty FIFO */
+    bool     d_moved;               /* this instruction's transfer wrote d */
+    bool     d_late;                /* d_late_v is still on its way to d, */
+    uint32_t d_late_v;
+    uint64_t d_late_at;             /* moved by instruction number d_late_at */
     bool     halted;                /* held by the board: before boot, during upload */
 
     uint32_t prog[TGP_PROG_WORDS];
@@ -88,6 +94,12 @@ typedef struct {
 } tgp_state_t;
 
 static tgp_state_t g_tgp;
+
+/* The conversation, for a capture: every word pushed (tag 0x20000000) and every
+ * reply the i960 reads (0x30000000), as cop.h's g_cop_tap tags them, and each
+ * word the program takes from its FIFO (0x22000000 | the reading instruction's
+ * PC), which says where one command ends and the next begins. */
+static void (*g_tgp_tap)(uint32_t tag, uint32_t val) = NULL;
 
 /* Set by the 2A board install. Outside g_tgp so a reset keeps them. */
 static const uint8_t *g_tgp_tables      = NULL;  /* copro_tgp_tables, 0x10000 LE words */
@@ -266,6 +278,7 @@ static inline uint32_t tgp_rf_rd(uint32_t r) {
     uint32_t v = g_tgp.fin[g_tgp.fin_r];
     g_tgp.fin_r = (g_tgp.fin_r + 1u) & (TGP_FIFO_IN - 1u);
     g_tgp.fin_n--;
+    if (g_tgp_tap) g_tgp_tap(0x22000000u | g_tgp.ppc, v);
     return v;
 }
 
@@ -332,6 +345,7 @@ static inline void tgp_write_reg(uint32_t r, uint32_t v) {
     if (r >= 0x20u && r < 0x30u) { tgp_rf_wr(r & 0x1Fu, v); return; }
     uint32_t part;
     uint32_t *f = tgp_fp_reg(r, &part);
+    if (f == &g_tgp.d) g_tgp.d_moved = true;
     if (f) { *f = part == 0 ? v : part == 1 ? tgp_set_exp(*f, v) : tgp_set_mant(*f, v); return; }
     uint16_t *h = tgp_u16_reg(r);
     if (h) { *h = (uint16_t)v; return; }
@@ -464,7 +478,31 @@ static inline void tgp_alu_st(void) {
     g_tgp.st = (g_tgp.st & ~g_tgp.alu_stmask) | g_tgp.alu_stset;
 }
 
+/* A transfer into d that a float op's result overtook (tgp_alu_d) lands
+ * after the next instruction's transfer has read it. */
+static inline void tgp_d_land(void) {
+    if (!g_tgp.d_late || g_tgp.d_late_at == g_tgp.insns) return;
+    g_tgp.d = g_tgp.d_late_v;
+    g_tgp.d_late = false;
+}
+
+/* A float result for d. When the same instruction also moved a word into d,
+ * the next instruction's transfer still reads the result, and then d takes
+ * the moved word: the TGP's square root (srallyc's helper at 0x1AB) moves x
+ * into d beside the op that makes its seed, reads the seed out of d and
+ * divides x by it. MAME lets the result win outright, and every root came
+ * out up to 1.8% long against the PS2 port's sqrtf (Pinboard #661). */
+static inline void tgp_alu_d(uint32_t r) {
+    if (g_tgp.d_moved) {
+        g_tgp.d_late_v = g_tgp.d;
+        g_tgp.d_late_at = g_tgp.insns;
+        g_tgp.d_late = true;
+    }
+    g_tgp.d = r;
+}
+
 static inline void tgp_alu_post_1(uint32_t alu) {
+    tgp_d_land();
     switch (alu) {
     case 0x01: case 0x02: case 0x03: case 0x04:
     case 0x0E: case 0x0F: case 0x16: case 0x17:
@@ -479,10 +517,10 @@ static inline void tgp_alu_post_2(uint32_t alu) {
     case 0x05: tgp_alu_st(); break;
     case 0x06: case 0x07: case 0x0B: case 0x0C:
     case 0x10: case 0x11: case 0x13: case 0x14:
-        g_tgp.d = g_tgp.alu_r1; tgp_alu_st(); break;
+        tgp_alu_d(g_tgp.alu_r1); tgp_alu_st(); break;
     case 0x08: g_tgp.p = g_tgp.alu_r1; break;
     case 0x09: case 0x0A: case 0x0D:
-        g_tgp.d = g_tgp.alu_r1; g_tgp.p = g_tgp.alu_r2; tgp_alu_st(); break;
+        tgp_alu_d(g_tgp.alu_r1); g_tgp.p = g_tgp.alu_r2; tgp_alu_st(); break;
     default: break;
     }
 }
@@ -785,9 +823,12 @@ static bool tgp_step(void) {
     t->ppc = t->pc;
     uint32_t op = tgp_prog_rd(t->pc++);
     t->stall = false;
+    t->d_moved = false;
     t->insns++;
 
-    switch (tgp_dispatch(op)) {
+    tgp_step_t k = tgp_dispatch(op);
+    if (k != TGP_STEP_STALL) tgp_d_land();
+    switch (k) {
     case TGP_STEP_REP:
         return true;
     case TGP_STEP_STALL:
@@ -844,6 +885,7 @@ static inline void tgp_reset(void) {
 /* A word into the input FIFO, from the FIFO port or the function port. */
 static inline void tgp_push(uint32_t v) {
     g_tgp.pushes++;
+    if (g_tgp_tap) g_tgp_tap(0x20000000u, v);
     if (g_tgp.fin_n >= TGP_FIFO_IN) {
         /* Only while the program is halted (it drains the FIFO otherwise). */
         g_tgp.overflows++;
@@ -882,6 +924,7 @@ static inline uint32_t tgp_fifo_r(void) {
     uint32_t v = g_tgp.fout[g_tgp.fout_r];
     g_tgp.fout_r = (g_tgp.fout_r + 1u) & (TGP_FIFO_OUT - 1u);
     g_tgp.fout_n--;
+    if (g_tgp_tap) g_tgp_tap(0x30000000u, v);
     return v;
 }
 

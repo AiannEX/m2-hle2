@@ -1420,6 +1420,28 @@ both logs cover is judged, so a long RPCS3 log with other sessions in it is fine
 is the yardstick: that capture lost nothing, never retransmitted, and its longest input silence was
 0.7 s.
 
+## The Model 2A TGP against the PS2 port (`grade-tgp.py`)
+
+The TGP core (`src/board/tgp.h`) follows MAME's mb86233.cpp, so MAME cannot catch a bug in it.
+Sega's PS2 port of Sega Rally (SLPM-62703) has the same commands as plain C over floats, so
+`python3 tools/grade-tgp.py LOG` replays every command the i960 sent on a model of those
+functions and holds our TGP's replies to them. LOG is det_digest's `--cop` log of srallyc, which
+on a Model 2A board is the TGP's conversation, with the program's own FIFO reads marking where
+each command starts:
+
+    det_digest $ROMS_DIR/srallyc.zip --profile srallyc --frames 3000 \
+        --cop 1:3000:/dev/shm/tgp.log --out /dev/shm/digest.txt
+
+It grades 0x26 (read matrix), 0x2C (transform a point), 0x2F (normalise), 0x43 (a vector slot),
+0x58 (distance) and 0x5C (edge cross), and through them every matrix and slot op. The script's
+header lists the PS2 function each is modelled on. It exits 1 when an error is over `--limit`
+(1e-3), relative to 1 + |value|.
+
+*What it found (Pinboard #661):* every 0x58 distance was 0.01-1.8% long. The TGP's square root
+moves x into d beside the op that makes its first guess, and with MAME's order the guess was lost
+(tgp.h, `tgp_alu_d`). Over 3000 frames of attract the largest error is now 1.7e-7 for 0x58
+and under 1e-4 for every command (0x5C's worst is a difference of near-equal products).
+
 ## `tools/mame` and `tests/`
 
 The MAME side runs under the sibling `claude_mame` checkout (its

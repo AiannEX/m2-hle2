@@ -173,8 +173,10 @@
  * 15: Fn_area_coli no longer lets a NaN ball through the SHARC's compares the
  *    wrong way, and the i960's cmpr sets 000 for an unordered compare. The
  *    attract fight's push-out limits differed from frame +510 (Pinboard #454).
+ * 16: Model 2A's TGP keeps a word moved into d beside a float op, so Sega
+ *    Rally's square roots, and everything after them, differ (Pinboard #661).
  */
-#define NETPLAY_PROTO_REV 15
+#define NETPLAY_PROTO_REV 16
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.
