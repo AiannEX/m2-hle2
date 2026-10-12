@@ -114,6 +114,8 @@
 #define SERIAL_SIZE                0x00000003
 #define BACK_BASE                  0x01D00000
 #define BACK_SIZE                  0x00010000
+#define COMM_STATUS_BASE           0x01A04000  /* link board CN / FG, mirrored +0x10000 */
+#define COMM_STATUS_SIZE           0x00000004
 
 /* Cartridge / extra ROM data */
 #define MAIN_DATA_BASE             0x02000000
