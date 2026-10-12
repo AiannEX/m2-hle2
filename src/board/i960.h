@@ -96,7 +96,8 @@ typedef struct i960_cpu {
     int            halted;
 
     /* Clock cycles the instructions run so far cost, at MAME's per-opcode
-     * estimates (i960_cycle_cost). Only live board timers read it. */
+     * estimates (i960_cycle_cost) at the profile's rate (i960_charge). Only
+     * live board timers read it. */
     uint64_t       cycles;
 
     /* The PRCB the processor was started or last re-initialised with (IAC
@@ -105,8 +106,23 @@ typedef struct i960_cpu {
     uint32_t       prcb;
 } i960_cpu_t;
 
+/* The rate the i960 is charged at, in 1/1024ths of MAME's table
+ * (game_quirks_t.i960_cost_permille; i960_charge). Off the table's own rate
+ * (1024) only for a profile that sets it; the remainder below a cycle is board
+ * state that profile saves (savestate_extra), and a reset clears it. The hooks
+ * that charge a run of instructions themselves (m2_spin.h, m2_texload.h)
+ * decline while the rate is not 1024. */
+#define I960_CYC_ONE 1024u
+static uint32_t g_i960_cyc_mul = I960_CYC_ONE;
+static uint32_t g_i960_cyc_frac;
+
+static inline void i960_cycle_scale(unsigned permille) {
+    g_i960_cyc_mul = permille ? (permille * I960_CYC_ONE + 500u) / 1000u : I960_CYC_ONE;
+}
+
 static inline void i960_reset(i960_cpu_t *cpu) {
     memset(cpu, 0, sizeof(i960_cpu_t));
+    g_i960_cyc_frac = 0;
 }
 
 #endif // I960_H
