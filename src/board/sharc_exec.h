@@ -1230,9 +1230,27 @@ static inline void sharc_exec(uint32_t cmd, const uint32_t *args, int n) {
             g_sharc.ang[0] = g_sharc.ang[1] = g_sharc.ang[2] = 0;
             return;
 
-        /* 0x34006868: dispatch[0x68] — PM 0x0205A3. 1 arg, 0 outputs.
-         * IDA name_char_kage_disp: lda 0x3D00 as sole arg; kage/shadow bone init. */
+        /* 0x34006868: Fn_ld_glb_mat (cpres1 PM 0x205A3), the mirror of 0x67.
+         * I6 = DM[0x01400000 + arg0], I7 = DM[0x3033F] (the current slot),
+         * LCNTR=12, DM(I7,1)=DM(I6,1): the twelve words go raw into the current
+         * matrix, col0, col1, col2, T. name_char_kage_disp sends 0x3D00, the
+         * kage matrix 0x67 stored; it used to be an empty handler, so that
+         * shadow was drawn with whatever matrix happened to be current. */
         case 0x34006868:
+            if (n >= 1 && g_sharc.sharc_dm_ext) {
+                uint32_t byte_off = args[0] * 4u;
+                if (g_sharc.sharc_dm_ext_size >= 12 * 4 && byte_off <= g_sharc.sharc_dm_ext_size - 12 * 4) {
+                    float w[12];
+                    for (int k = 0; k < 12; k++) {
+                        uint32_t u;
+                        memcpy(&u, g_sharc.sharc_dm_ext + byte_off + (uint32_t)k * 4u, 4);
+                        w[k] = sharc_bits_to_float(u);
+                    }
+                    for (int c = 0; c < 3; c++)
+                        for (int r = 0; r < 3; r++) g_sharc.rot[c][r] = w[c*3 + r];
+                    for (int r = 0; r < 3; r++) g_sharc.pos[r] = w[9 + r];
+                }
+            }
             return;
 
         /* 0x3B807777: Fn_parts_oidasi — dispatch[0x77] PM 0x020B1F (sharc_coli.h).
