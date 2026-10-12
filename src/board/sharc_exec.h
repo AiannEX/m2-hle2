@@ -220,10 +220,28 @@ static inline void sharc_compose(const float *B) {
 }
 
 /* 0x37's composition with a unit-matrix cache slot (player arg, slot*12 arg). */
+/* A unit slot a fighter's table has (0..15). The firmware addresses the slot
+ * from the offset with no bound, so a larger one would reach past the table
+ * there; we ignore it, and say so once. STF never sends one. */
+static inline bool sharc_unit_slot_ok(int slot) {
+    static int warned = 0;
+    if ((unsigned)slot < 16u) return true;
+    if (!warned) { LOG_WARN("SHARC: unit slot %d is past the 16 a fighter has; ignored", slot); warned = 1; }
+    return false;
+}
+
+/* The inner bank's slot n (PM 0x21F20 + 12n). The firmware has no bound
+ * either; past 15 we wrap, and say so once. STF never sends one. */
+static inline float *sharc_inner_slot(uint32_t n) {
+    static int warned = 0;
+    if (n >= 16u && !warned) { LOG_WARN("SHARC: inner slot %u is past the 16 we keep; wrapped", n); warned = 1; }
+    return g_sharc.pm_bone[n & 0xFu];
+}
+
 static inline void sharc_compose_unit(uint32_t player_arg, uint32_t slot_arg) {
     int player = (player_arg & 0xFF) == 1 ? 1 : 0;
     int slot   = (int)slot_arg / 12;
-    if ((unsigned)slot < 16u) sharc_compose(g_sharc.rot_cache[player * 16 + slot]);
+    if (sharc_unit_slot_ok(slot)) sharc_compose(g_sharc.rot_cache[player * 16 + slot]);
 }
 
 /* _L2021F, as 0x46 and kage_poly use it: B applied after the current matrix —
@@ -258,7 +276,7 @@ static inline void sharc_load_words(const float *B) {
 }
 
 /* 0x44: the inner bank's matrix n becomes the current matrix. */
-static inline void sharc_load_inner(int n) { sharc_load_words(g_sharc.pm_bone[n & 0xF]); }
+static inline void sharc_load_inner(int n) { sharc_load_words(sharc_inner_slot((uint32_t)n)); }
 
 /* The shadow reorients kage_poly calls, read word for word off _L20516 and
  * _L20529 (slot words: 0..2 col0, 3..5 col1, 6..8 col2). */
@@ -288,7 +306,7 @@ static inline void sharc_pop_stack(void) {
 
 /* the current matrix into the inner bank's slot n (_L2053E) */
 static inline void sharc_store_inner(int n) {
-    float *pm = g_sharc.pm_bone[n & 0xF];
+    float *pm = sharc_inner_slot((uint32_t)n);
     for (int c = 0; c < 3; c++)
         for (int w = 0; w < 3; w++) pm[c*3 + w] = g_sharc.rot[c][w];
     for (int w = 0; w < 3; w++) pm[9 + w] = g_sharc.pos[w];
@@ -1134,7 +1152,7 @@ static inline void sharc_exec(uint32_t cmd, const uint32_t *args, int n) {
             if (n < 2) return;
             int player   = (args[0] & 0xFF) == 1 ? 1 : 0;
             int slot_idx = (int)args[1] / 12;
-            if ((unsigned)slot_idx >= 16u) return;
+            if (!sharc_unit_slot_ok(slot_idx)) return;
             sharc_load_words(g_sharc.rot_cache[player * 16 + slot_idx]);
             return;
         }
@@ -1148,7 +1166,7 @@ static inline void sharc_exec(uint32_t cmd, const uint32_t *args, int n) {
             if (n < 2) return;
             int player   = (args[0] & 0xFF) == 1 ? 1 : 0;
             int slot_idx = (int)args[1] / 12;
-            if ((unsigned)slot_idx >= 16u) return;
+            if (!sharc_unit_slot_ok(slot_idx)) return;
             sharc_compose(g_sharc.rot_cache[player * 16 + slot_idx]);
             return;
         }
@@ -1537,7 +1555,7 @@ static inline void sharc_exec(uint32_t cmd, const uint32_t *args, int n) {
             if (n < 2) return;
             int player   = (args[0] & 0xFF) == 1 ? 1 : 0;
             int slot_idx = (int)args[1] / 12;
-            if ((unsigned)slot_idx >= 16u) return;
+            if (!sharc_unit_slot_ok(slot_idx)) return;
             float *dst = g_sharc.rot_cache[player * 16 + slot_idx];
             float (*r)[3] = g_sharc.rot;
             for (int col = 0; col < 3; col++)
@@ -1627,7 +1645,7 @@ static inline void sharc_exec(uint32_t cmd, const uint32_t *args, int n) {
          * matrix composed with inner[n], the same multiply 0x37 does with a unit
          * matrix. */
         case 0x22804545:
-            if (n >= 1) sharc_compose(g_sharc.pm_bone[(int)args[0] & 0xF]);
+            if (n >= 1) sharc_compose(sharc_inner_slot(args[0]));
             return;
 
         /* 0x39807373: COP internal — PM 0x020D1F. 2 args, no output. */
@@ -1659,14 +1677,14 @@ static inline void sharc_exec(uint32_t cmd, const uint32_t *args, int n) {
                 }
                 if (flags & 2)      sharc_kage_leave_z();
                 else if (flags & 1) sharc_kage_leave_x();
-                sharc_compose_rev(g_sharc.pm_bone[(int)args[6] & 0xF]);
+                sharc_compose_rev(sharc_inner_slot(args[6]));
             }
             return;
 
         /* 0x23004646: Fn_mul_matrix_inner_rev (PM 0x2056E -> _L2021F): the
          * current matrix transformed by inner[n] — current = inner[n] * current. */
         case 0x23004646:
-            if (n >= 1) sharc_compose_rev(g_sharc.pm_bone[(int)args[0] & 0xF]);
+            if (n >= 1) sharc_compose_rev(sharc_inner_slot(args[0]));
             return;
 
         /* 0x2B805757: read_col1 — PM 0x02044E.
