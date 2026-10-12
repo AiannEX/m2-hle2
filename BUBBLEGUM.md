@@ -228,15 +228,15 @@ MAME references are to `claude_mame/mame/src/mame/sega/model2.cpp` unless anothe
 | What | Ours | MAME | Games | Tag |
 |---|---|---|---|---|
 | bufferram at reset | zeros (`memory.h:661`, the bus memset) | filled with `0x07800f0f`, an END word (`:300-303`) | every game. A list walk into unwritten bufferram stops at once in MAME, but runs through zeros here. | **MAME** (boot frames) |
-| bufferram mirrors | only 0x900000-0x91FFFF (`memory.h:712`) | `.mirror(0x60000)`: also 0x920000, 0x940000, 0x960000 (`:1377`) | any game that uses a mirror. Ours reads 0 and drops writes. | **cheap**, if the unmapped log shows that STF never touches them |
+| bufferram mirrors | only 0x900000-0x91FFFF (`memory.h:712`) | `.mirror(0x60000)`: also 0x920000, 0x940000, 0x960000 (`:1377`) | any game that uses a mirror. Ours reads 0 and drops writes. | fixed in #694 |
 | 2B COP function port 0x880000-0x883FFF | the word goes in as written; reads pop a reply (`memory.h:253-259`) | `copro_function_port_w` puts `(offset>>2)&0xff` in bits 23-30 (`:703-709`), write-only. Our 2A path already does (`model2a.h:45`, `tgp.h:857`). | every 2B game | **MAME**: check what STF writes there. If it already writes whole command words, the encoding is the same and only the read differs. |
 | texram0 alias at 0x10F00000 | aliased (`constants.h:146-154`, `memory.h:757`) | not mapped; the 2B texture maps start at 0x11000000 (`:1745`) | STF uploads through it. The comment says object 3545 went blank without it. | **MAME**: a fitted alias MAME does not have. Find out how MAME gets object 3545's tiles. |
-| coprocessor ID 0x980030 | 2A only (`model2a.h:183-184`); on 2B it falls past `COPRO_CTL` (0x980000 + 0x24) and is unmapped | `tgpid_r` in `model2_base_mem` (`:1381`), every variant | any game that reads it; no profile we have is known to | **cheap** |
-| polygon count 0x10400000 | unmapped | `polygon_count_r` (`model2_v.cpp:314`) | any game that reads it | **cheap** |
+| coprocessor ID 0x980030 | 2A only (`model2a.h:183-184`); on 2B it falls past `COPRO_CTL` (0x980000 + 0x24) and is unmapped | `tgpid_r` in `model2_base_mem` (`:1381`), every variant | any game that reads it; no profile we have is known to | fixed in #694 |
+| polygon count 0x10400000 | unmapped | `polygon_count_r` (`model2_v.cpp:314`) | any game that reads it; MAME answers its live polygon count, which we do not keep | **MAME** (#694) |
 | board timers | write and read masked to 20 bits (`irq_timer.h:156`, `:165`); `TIMERS_SIZE` 0x15 aliases 0x10-0x14 onto timer 0 | 32 bits with the write mask, 0xF00000-0xF0000F only (`:116-125`) | a game that arms a timer above 0xFFFFF | **MAME** (`rand` reads the timers) |
 | sound UART control writes | dropped (`sound.h:693`); TxRDY/RxRDY ignore TxEN/RxE | i8251 honours mode and command | a driver that disables TX | **MAME** |
-| 2A texture RAM | a read returns texel n (`model2a.h:125-130`); writes narrower than 32 bits are dropped (`:112`) | `.ram()` returns the raw dword; `tex0_w` (`:1312`, mapped at `:1610`) takes any width | 2A games | **cheap** (STF untouched) |
-| `MAIN_DATA` writable, GEO/GEO_PROGRAM reads return stored bytes | `memory.h:754`, `:601-603` | ROM; `geo_r` 0 (`:1141`), `geo_prg_r` 0xFFFFFFFF (`:1121`) | none known | **cheap** |
+| 2A texture RAM | a read returns texel n (`model2a.h:125-130`); writes narrower than 32 bits are dropped (`:112`) | `.ram()` returns the raw dword; `tex0_w` (`:1312`, mapped at `:1610`) takes any width | 2A games | fixed in #694 |
+| `MAIN_DATA` writable, GEO/GEO_PROGRAM reads return stored bytes | `memory.h:754`, `:601-603` | ROM; `geo_r` 0 (`:1141`), `geo_prg_r` 0xFFFFFFFF (`:1121`) | none known | fixed in #694 |
 
 ### 7.4 The GEO walk and the renderer
 
@@ -303,11 +303,31 @@ Checked with `det_digest --profile sfight` against master `c279795`. A 9000-fram
 
 The sound pin (§2.1) and the board install (§2.2) were looked at and are not cheap. Dropping the STF-only gate on the sound pin would start that interrupt in FV, Sega Rally and homebrew, and FV has no sound board turned on yet. Both stay open.
 
+## Fixed in #694 (branch `idea-694-cheap-fixes`)
+
+The cheap items of §7, one commit each. Checked with `det_digest` on this branch against `idea-682-bubblegum-scan` (`f146fd8`): sfight attract (15000 frames), the 9000-frame scripted game, `sfight_console`, `fvipers` and `srallyc` (6000 frames each) are byte-identical, sound hashes included, and none of them logs a new WARN. `mem_test` and `cop_test` pass.
+
+- **Bufferram mirrors** (§7.3). `mem__add_base_extras` (`memory.h:274`) adds `BUFF_RAM_M1`-`M3` at 0x920000, 0x940000 and 0x960000 over the same buffer, as MAME's `.mirror(0x60000)` (`:1377`). A savestate saves buffers by name, so `LAYOUT` and the state are unchanged. Games: any that uses a mirror; STF, FV and Sega Rally log no access there.
+- **The coprocessor ID at 0x980030 on every board** (§7.3). `tgp_id_read_cb` (`memory.h:265`, region at `:278`, `constants.h:67-68`) answers MAME's `tgpid_r` (`:1381`) bytes, and the 2A copy in `model2a.h` is gone. Games: every 2B and 2C game that reads it (none we have is known to); Sega Rally reads the same bytes as before.
+- **GEO and GEO_PROGRAM reads** (§7.3). `geo_read_cb` (`memory.h:617`) answers 0 past its registers, as `geo_r` (`:1141`); `geo_program_read_cb` (`:626`, wired at `:732`) answers all ones, as `geo_prg_r` (`:1121`). Games: any that reads them back; none we run does.
+- **The data ROM is read-only** (§7.3). `MAIN_DATA` and `XTRA_DATA` (`memory.h:780-781`) drop CPU writes with the program ROM's throttled WARN, as MAME's `rom()` (`:1403`, `:1406`). Profiles still fill the buffers at install, and the bridge's `write_memory` with `"rom":1` still patches them. Games: any that writes there by mistake; none we run does.
+- **2A texture RAM** (§7.3). `model2a_tex_write_cb` (`model2a.h:105`) takes any width, keeping the low 16 bits of the dword as the lanes hold it, as `tex0_w` (`:1312`) ignores the mask. `model2a_tex_read_cb` (`model2a.h:123`) reads the raw bytes, as MAME's `.ram()` (`:1609-1610`), and 0 past the half the writes fill. Games: Model 2A only, which today is Sega Rally.
+- **A WARN at the GEO caps** (§7.4). `geo3d.h:1244` (direct data past `GEO3D_DIRECT_WORDS`) and `:1400` (more than `MAX_GEO_MODELS` objects) each log once. The second is worse than §7.4 says: a list that hits the cap never reaches END, so `game_frame.h` drops the capture and the whole frame draws no 3D, not just the objects past 512. Sizing the cap is still open. Games: none we run hits either.
+- **A WARN on an out-of-range bone slot** (§7.5). `sharc_unit_slot_ok` (`sharc_exec.h:226`) and `sharc_inner_slot` (`:235`) replace the silent checks in 0x35, 0x36, 0x37 and `compose_unit`, and the `& 0xF` in 0x45, 0x46, 0x74's `args[6]` and the inner load/store. Each logs once and then does what the code did before. Games: every 2B game on the SHARC HLE; STF stays below 16.
+
+Left, with the reason:
+
+- **The polygon count at 0x10400000** (§7.3) needs a MAME check. `polygon_count_r` (`model2_v.cpp:314`) answers the live `poly_list_index`, and only Sky Target reads it. We keep no live count, so mapping it means inventing a value.
+- **The 2A savestate parts** (§7.1). As core parts they change `LAYOUT`, so every older STF savestate and rewind state stops loading, not only Sega Rally's. Keeping `LAYOUT` means saving them when the 2A hardware is attached, which is the board install of §2.2. Only Sega Rally installs 2A today.
+- **`game_profile_t.board`** (§7.1) is the board install of §2.2.
+- **The fill shader's no-luma ×2** (§7.4) **and the m2snake items** (§7.6) go with the m2snake walker, as §7.6 says.
+- `dl_record` still records only 0x900000-0x91FFFF, so a game that writes its list through a mirror is not captured. A dev-tool gap only.
+
 ## Suggested order
 
 1. **The cheap fixes that move no STF frame.** The asin clamp and the empty 0x68 handler are done (see above). The sound pin (§2.1) and the board install (§2.2) are left, and are not cheap: they move FV, Sega Rally and homebrew, and need a protocol bump. For each, run `cop_replay`, `match-replay` and `det_digest`.
 2. **The COP argument table by dispatch index, and keeping unread replies (§3).** Both are ROM-free and testable with `cop_test` / `cop_replay`.
-   - These #682 items move no STF frame and can go alongside: the 2A savestate parts made board parts (§7.1), a WARN at the GEO object cap (§7.4), and the 0x980030 and 0x10400000 reads (§7.3).
+   - These #682 items move no STF frame and are done in #694 (above): the bufferram mirrors, 0x980030, the GEO reads, the data ROM and the 2A texture RAM (§7.3), the GEO cap WARN (§7.4) and the bone slot WARN (§7.5). The 2A savestate parts (§7.1) wait for §2.2, and 0x10400000 (§7.3) for a MAME check.
    - These need MAME first: the 315-5649 on 2B (§7.2), the bufferram fill, the 2B function port and the 0x10F00000 alias (§7.3), and the per-list GEO reset (§7.4).
 3. **The model catalogue out of the game draw (§2.3).** Run `grade-models`, `grade-stages` and `grade-zsort`. This also unblocks Daytona's 20-byte table.
 4. **Real call frames, then table interrupts for STF (§1.1, §1.2).** These remove `EMU_IRQ_TABLE_MAX_SLICES` and the STF interrupt path. Re-grade everything and bump the protocol.
