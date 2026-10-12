@@ -10,6 +10,7 @@
  *   - call/ret frame: FP (g15) = SP aligned to 64, SP = FP + 64, locals zeroed,
  *     pfp/sp/rip saved; ret puts the caller's g15 back
  *   - modpc: mask from src2, new bits from src/dst, which gets the old PC
+ *   - shrdi divides: arithmetic shift rounded toward zero, dst not read
  * plus a few plain ALU / load-store sanity checks.
  *
  * Code is assembled by hand into work RAM and executed via i960_step().
@@ -68,6 +69,26 @@ static i960_cpu_t   cpu;
 
 static void put(uint32_t addr, uint32_t w) { mem_write32(&bus, addr, w); }
 static uint32_t cc(void) { return cpu.sfr.ac & AC_CC_MASK; }
+
+/* shrdi is a dividing shift: arithmetic, rounded toward zero. Sega Rally
+ * halves (pedal byte - 0x30) with it; a 64-bit "double" shift took the
+ * destination's old bits and made -16 into 0x7FFFFFF8. */
+static void test_shrdi(uint32_t CODE) {
+    static const struct { int32_t v; int n; int32_t want; } sd[] = {
+        { -16, 1, -8 }, { -15, 1, -7 }, { 15, 1, 7 }, { -1, 4, 0 }, { -48, 0, -48 },
+    };
+    int ok = 1;
+    for (unsigned k = 0; k < sizeof sd / sizeof sd[0]; k++) {
+        i960_reset(&cpu);
+        cpu.globals.g[4] = (uint32_t)sd[k].v;
+        cpu.globals.g[5] = 0x12345678;
+        cpu.sfr.ip = CODE;
+        put(CODE, enc_reg(0x59a, G(5), G(4), 0, sd[k].n, 1, 0)); /* shrdi n, g4, g5 */
+        i960_step(&cpu, &bus);
+        if ((int32_t)cpu.globals.g[5] != sd[k].want) ok = 0;
+    }
+    CHECK(ok, "shrdi shifts right dividing (rounds toward zero), ignoring the old dst");
+}
 
 int main(void) {
     mem_init(&bus, NULL, 0);
@@ -210,6 +231,8 @@ int main(void) {
     put(CODE, enc_reg(0x5dc, G(0), 0, 0, L(8), 0, 0));  /* movl r8, g0 */
     i960_step(&cpu, &bus);
     CHECK(cpu.globals.g[0] == 0xA && cpu.globals.g[1] == 0xB, "movl r8, g0 copies r8:r9 into g0:g1");
+
+    test_shrdi(CODE);
 
     /* ---- concmpi only compares when CC bit 2 (less) is clear ------------- */
     /* The range test `cmpi x, lo; concmpi x, hi` is lo <= x <= hi. STF's

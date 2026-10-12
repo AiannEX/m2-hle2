@@ -55,6 +55,8 @@ These are facts reverse-engineered or debugged into the original implementation.
 - **`concmpo` / `concmpi` compare only when condition-code bit 2 (less, `0b100`) is clear**, and then set E (`src1 <= src2`) or G. Otherwise they leave the code alone. `cmpi x, lo` + `concmpi x, hi` + `be` is the ROM's range test `lo <= x <= hi`. They used to test the equal bit instead.
   - *Symptom that surfaced this in STF:* in the attract fight, Bean won the mutual grab that Sonic wins on the board. `get_en_info` range-tests the facing angle against ±0x1554 this way to build the enemy-info flags at `rob+0x720`, which the throw logic reads, so the flags were wrong from the first frame of the fight. `tools/match-replay.mjs` found it (see tools/README.md, "match_replay").
 - **`cmpr` / `cmprl` set 000 for an unordered compare (a NaN)**, not G (MAME `cmp_d`). `bge` and `ble` then do not branch. It used to fall through to G, so `coli_recalc_pos`'s `cmpr r15, r8; bge` (`0x2DA8C`) took a NaN limit as a pass. Since the `Fn_area_coli` fix below, attract no longer hands it one; `tests/i960_test.c` holds it.
+- **`shrdi` is a dividing shift: arithmetic right, rounded toward zero** (MAME `i960.cpp`), so -15 >> 1 is -7. It used to shift the 64-bit pair dst:src2, taking the destination's old bits.
+  - *Symptom that surfaced this in Sega Rally (Pinboard #642):* the cars clipped into the road and sat tilted on the grid. `0x5DA128` halves (pedal byte - 0x30) with it, -16 came out as 0x7FFFFFF8, and the 9.4e7 that followed reached TGP `0x21004242`'s fifth argument. STF uses it too: `energy_disp` (`0x7A774`) eases the energy bar by half the gap, and `_ScrollColor_Initialize` (`0x2E640`, `0x2E70C`).
 
 ### Coprocessor (COP) — board-level math, every Model 2 game
 

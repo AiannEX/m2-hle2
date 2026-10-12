@@ -524,12 +524,13 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
                 case 0x598: // shro (shift right ordinal)
                     reg_write(cpu, dst_idx, (src1 < 32) ? (src2 >> src1) : 0);
                     break;
-                case 0x59a: // shrdi (shift right double integer)
+                case 0x59a: // shrdi: shift right DIVIDING integer, rounds toward zero (MAME i960.cpp)
                 {
-                    // 64-bit shift right: concatenate dst:src2, shift by src1, result in dst
-                    uint64_t wide = ((uint64_t)reg_read(cpu, dst_idx) << 32) | src2;
-                    uint32_t shift = src1 & 63;
-                    reg_write(cpu, dst_idx, (uint32_t)(wide >> shift));
+                    int32_t v = (int32_t)src2;
+                    uint32_t r = 0;
+                    if (src1 < 32)
+                        r = (uint32_t)((v < 0 && (src2 & ((1u << src1) - 1))) ? (v >> src1) + 1 : v >> src1);
+                    reg_write(cpu, dst_idx, r);
                     break;
                 }
                 case 0x59b: // shri (shift right integer / arithmetic)
