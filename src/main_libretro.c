@@ -463,36 +463,19 @@ static void lr_pkt_reset(void) {
 static bool g_backup_reload;
 
 static bool lr_load_rom(const char *zip) {
-    const char *sep = strrchr(zip, '/'), *bsl = strrchr(zip, '\\');
-    if (bsl && (!sep || bsl > sep)) sep = bsl;
-    const char *base = sep ? sep + 1 : zip;
-    const char *dot = strrchr(base, '.');
-    char id[64] = {0};
-    size_t n = dot ? (size_t)(dot - base) : strlen(base);
-    if (n >= sizeof id) n = sizeof id - 1;
-    memcpy(id, base, n);
-
+    char id[64];
+    const char *base = profile_set_from_path(zip, id, sizeof id);
     g_active_profile = profile_for_rom_set(id, profile_by_id(opt.profile));
     if (!g_active_profile) {
-        char msg[256];
-        int k = snprintf(msg, sizeof msg, "m2hle: no profile for ROM set '%s'. Supported:", id);
-        for (size_t i = 0; i < g_profile_count && k > 0 && (size_t)k < sizeof msg; i++)
-            k += snprintf(msg + k, sizeof msg - (size_t)k, " %s", profile_rom_set(g_profiles[i]));
+        char msg[256] = "m2hle: ";
+        profile_missing_message(id, msg + 7, sizeof msg - 7);
         lr_message(msg, 600);
         return false;
     }
 
     /* MAME clone fall-through: the parent zip sits next to the picked one. */
-    char parent[1024] = {0};
-    const char *parent_ptr = NULL;
-    if (g_active_profile->parent_zip_name) {
-        size_t dir_len = sep ? (size_t)(sep - zip + 1) : 0;
-        if (dir_len + strlen(g_active_profile->parent_zip_name) < sizeof parent) {
-            memcpy(parent, zip, dir_len);
-            strcat(parent, g_active_profile->parent_zip_name);
-            parent_ptr = parent;
-        }
-    }
+    char parent[1024];
+    const char *parent_ptr = profile_parent_path(g_active_profile, zip, parent, sizeof parent);
     if (romset_load(&state.romset, g_active_profile->load_fn, zip, parent_ptr) != 0) {
         char msg[256];
         snprintf(msg, sizeof msg, "m2hle: could not load %s as %s", base, g_active_profile->display_name);

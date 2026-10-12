@@ -23,7 +23,12 @@
 #include "m2snake.h"
 #include "sfight_homebrew.h"
 #endif
-/* Future: vf2.h, daytona.h, vcop.h, ... */
+/* Prepared, not runnable (Pinboard #660): the sets noclip reads that the
+ * board cannot run yet. A few hundred bytes of chip lists, so the web build
+ * has them too. */
+#include "vcop.h"
+#include "daytona.h"
+#include "hotd.h"
 
 /* Order matters: the first profile for a ROM set is its default
  * (profile_for_rom_set), so Console comes before Arcade. */
@@ -41,5 +46,13 @@ const game_profile_t *const g_profiles[] = {
 const size_t g_profile_count = sizeof(g_profiles) / sizeof(g_profiles[0]);
 
 const game_profile_t *g_active_profile = NULL;
+
+const game_profile_t *const g_prepared_profiles[] = {
+    &vcop_profile,
+    &daytona_profile,
+    &hotd_profile,
+};
+
+const size_t g_prepared_count = sizeof(g_prepared_profiles) / sizeof(g_prepared_profiles[0]);
 
 #endif /* PROFILES_REGISTRY_H */

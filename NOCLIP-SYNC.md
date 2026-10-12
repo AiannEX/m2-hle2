@@ -95,3 +95,28 @@ The two drift because each finds a board rule and the other never hears about it
 1. **Bump `vendor/noclip` when noclip lands a board rule**, and run `grade-models`, `grade-stages` and `grade-pose`. A grader that adds its own correction has to drop it when the explorer gains it (1.2).
 2. **Cite the board, not the other project.** A rule that names a MAME line or a firmware address can be checked by either side. A rule that cites the other project only carries its mistakes across, as the double-applied corrections in 1.2 would have.
 3. **Cross-link.** When either side fixes a board rule, file one line on the other repo naming the MAME or firmware citation.
+
+---
+
+## 6. The games each side has (Pinboard #660)
+
+The two did not know the same games. noclip opens Virtua Cop, Daytona USA (eight builds) and The House of the Dead (three revisions), and m2-hle2 could not even name those sets; m2-hle2 runs Sega Rally Championship, and noclip called that set unrecognised. Neither side was ready to *run* the other's games, so #660 prepares profiles on each side instead: the set is recognised, its chips load with MAME's names, CRCs and offsets, and the player is told what is missing.
+
+### 6.1 In m2-hle2: `vcop`, `daytona`, `hotd`
+
+`src/profiles/vcop.h`, `daytona.h` and `hotd.h`, listed in `g_prepared_profiles` (`registry.h`), not in `g_profiles`. Each has a load function and no install function, so no front end can boot one; every front end (desktop, SDL, libretro, web) says instead "*X* ('*set*') is known but cannot run yet; the board lacks: ..." (`profile_prepared_message`, `profile_missing_message`).
+
+- **The ROM list is data** (`src/core/rom_recipe.h`): one line per MAME `ROM_LOAD32_WORD` / `ROM_LOAD16_WORD_SWAP` / `ROM_LOAD` / `ROM_COPY`, the same shape as noclip's `regions` (`[offset, lo, crc, hi, hiCrc]`), so a recipe reads line for line against MAME and the explorer. A recipe's `older` parts stand in for a part the zip lacks: the container's `hotd.zip` is MAME's first release (`hotdo`, `epr-19696.15` / `epr-19697.16`) under the parent's name, and loads that way.
+- **The model tables are noclip's** (`games.js`): vcop 0x4C8000, 1234 entries; daytona 0x83FBB4, 3190; hotd 0xE73530, 7477; mesh pointer `* 4 - 0x02000010 + 0x10` on all three.
+- **What the board lacks**, the `preliminary` string: Virtua Cop and Daytona are the original Model 2 (a TGP with its program in ROM, and the Model 1 sound board, 68000 + two MultiPCMs); House of the Dead is a 2C (the MB86235 TGPx4, and light guns).
+- `tests/prepared_test.c` (a ctest, in the canary) checks the profiles without ROMs, and with them loads each set and walks its model table the way noclip does.
+
+### 6.2 In noclip: `srallyc`
+
+`PREPARED` in `js/games.js`, beside `GAMES`, with the chips from m2-hle2's `srallyc.h`. A drop of the set is named, and the loader says what it lacks (model table, palette, texture sheets, none located yet) rather than "unrecognised". It becomes a game when those are found and it moves into `GAMES`.
+
+### 6.3 A difference found doing it: the model-table entry
+
+noclip reads an entry by stride and field (`readModelEntry`): the 1995 games (STF, FV, HOTD) keep the mesh pointer at +8 of 16 bytes, Virtua Cop at +0 of 16, Daytona at +0 of 20. m2-hle2's decoder knows only the first: `game_quirks_t` has no stride or field. That has to be added before either of the older games can draw here (`prepared_test`'s `k_cases` holds the layouts meanwhile).
+
+Daytona has 27 entries (2139-2165) whose pointer has bit 23 clear. On the board that is polygon RAM, which the game fills at run time (MAME `geo_object_data`), not the polygon ROM. noclip's `meshOffsetOf` decodes them into the ROM all the same, to 0xFE0000xx; they should be left alone or taken from RAM.

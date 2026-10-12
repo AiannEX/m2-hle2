@@ -178,8 +178,9 @@ static const game_profile_t *startup_profile(void) {
  * → fvipers). The active profile is kept when it runs that set, so --profile or
  * a Game-menu choice between STF's Console and Arcade survives the load; else
  * the set's default. Falls back to leaving g_active_profile unchanged if no
- * profile runs the set. */
-static void select_profile_for_zip(const char *path) {
+ * profile runs the set. False when the set is a prepared one (registry.h),
+ * which no board can run yet: nothing is loaded then. */
+static bool select_profile_for_zip(const char *path) {
     const char *sep_f = strrchr(path, '/');
     const char *sep_b = strrchr(path, '\\');
     const char *base  = (sep_f > sep_b ? sep_f : sep_b);
@@ -190,10 +191,15 @@ static void select_profile_for_zip(const char *path) {
     if (n >= sizeof(id)) n = sizeof(id) - 1;
     memcpy(id, base, n);
     const game_profile_t *p = profile_for_rom_set(id, g_active_profile);
-    if (!p) return;
+    if (!p) {
+        char why[256];
+        if (profile_prepared_message(id, why, sizeof why)) { LOG_ERROR("%s", why); return false; }
+        return true;
+    }
     if (g_active_profile != p)
         LOG_INFO("auto-selected profile: %s", p->display_name);
     g_active_profile = p;
+    return true;
 }
 
 /* MAME clone fall-through: the parent zip's path (same directory as the picked
@@ -245,7 +251,7 @@ static void load_sound_board(void) {
 }
 
 static void load_active_profile(const char *primary_zip) {
-    select_profile_for_zip(primary_zip);
+    if (!select_profile_for_zip(primary_zip)) return;
     if (!g_active_profile) { LOG_ERROR("no active profile selected"); return; }
 
     char parent_zip[512] = {0};

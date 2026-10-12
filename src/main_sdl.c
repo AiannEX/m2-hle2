@@ -321,36 +321,22 @@ static SDL_AudioStream *sound_start(void) {
 /* ---- ROM loading (main.c load_active_profile; the sound board: sound_start) */
 
 static bool load_rom(const char *zip) {
-    const char *sep = strrchr(zip, '/');
-    const char *base = sep ? sep + 1 : zip;
-    const char *dot = strrchr(base, '.');
-    char id[64] = {0};
-    size_t n = dot ? (size_t)(dot - base) : strlen(base);
-    if (n >= sizeof id) n = sizeof id - 1;
-    memcpy(id, base, n);
-
+    char id[64];
+    profile_set_from_path(zip, id, sizeof id);
     const game_profile_t *want = opt.profile ? profile_by_id(opt.profile) : NULL;
     if (opt.profile && !want) fprintf(stderr, "m2hle: --profile %s: no such profile; using the default\n", opt.profile);
     g_active_profile = profile_for_rom_set(id, want);
     if (!g_active_profile) {
-        fprintf(stderr, "m2hle: no profile for ROM set '%s'. Supported:", id);
-        for (size_t i = 0; i < g_profile_count; i++) fprintf(stderr, " %s", profile_rom_set(g_profiles[i]));
-        fprintf(stderr, "\n");
+        char msg[256];
+        profile_missing_message(id, msg, sizeof msg);
+        fprintf(stderr, "m2hle: %s\n", msg);
         return false;
     }
 
     /* MAME clone fall-through: the parent zip sits next to the picked one. A
      * merged set carries the parent's files itself, so a missing parent is fine. */
-    char parent[1024] = {0};
-    const char *parent_ptr = NULL;
-    if (g_active_profile->parent_zip_name) {
-        size_t dir_len = sep ? (size_t)(sep - zip + 1) : 0;
-        if (dir_len + strlen(g_active_profile->parent_zip_name) < sizeof parent) {
-            memcpy(parent, zip, dir_len);
-            strcat(parent, g_active_profile->parent_zip_name);
-            parent_ptr = parent;
-        }
-    }
+    char parent[1024];
+    const char *parent_ptr = profile_parent_path(g_active_profile, zip, parent, sizeof parent);
     sound_settle();   /* load_fn frees the sample ROMs the sound thread reads */
     if (romset_load(&state.romset, g_active_profile->load_fn, zip, parent_ptr) != 0) {
         fprintf(stderr, "m2hle: could not load '%s' as %s\n", zip, g_active_profile->display_name);
