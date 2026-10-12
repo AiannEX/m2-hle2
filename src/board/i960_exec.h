@@ -284,6 +284,15 @@ static inline unsigned i960_cycle_cost(uint32_t word1) {
     return g_i960_cyc[op];
 }
 
+/* Charge an instruction's cost at the profile's rate (i960_cycle_scale, i960.h):
+ * cost * mul / 1024 cycles, the remainder carried to the next. At the table's
+ * own rate the remainder stays 0 and this is cost. */
+static inline void i960_charge(i960_cpu_t *cpu, unsigned cost) {
+    uint64_t a = (uint64_t)cost * g_i960_cyc_mul + g_i960_cyc_frac;
+    cpu->cycles += a >> 10;
+    g_i960_cyc_frac = (uint32_t)(a & (I960_CYC_ONE - 1u));
+}
+
 //--- Execute one instruction --------------------------------------------------
 
 
@@ -304,7 +313,7 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
     mem_fetch2(bus, ip, &word1, &word2);       // word2 read speculatively
     int instr_len = 4;
     /* The board's clock: the timers and the vblank count these (irq_timer.h). */
-    cpu->cycles += i960_cycle_cost(word1);
+    i960_charge(cpu, i960_cycle_cost(word1));
 
     uint32_t class = (word1 >> 28) & 0xF;
 
