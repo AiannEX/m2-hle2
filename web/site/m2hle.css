@@ -794,6 +794,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--sel-line); }
 .picture { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0.2rem 16px 0.8rem; }
 .picture-advanced { margin-top: 0.3rem; max-width: 46rem; }
 .picture-filter { display: flex; }
+.picture-arcade { color: var(--text); }
 .picture-filter select { max-width: 100%; }
 .picture-advanced label { flex-direction: column; }
 .picture-advanced select { align-self: flex-start; max-width: 100%; }

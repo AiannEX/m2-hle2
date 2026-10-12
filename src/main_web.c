@@ -1354,12 +1354,15 @@ EMSCRIPTEN_KEEPALIVE int web_render_scale(void) { return g_web_rt.want; }
  * The table is kept, so the page can reload the same preset later.
  */
 
-/* 0 off, 1 the built-in CRT, 2 the custom preset (if one is loaded), 3 the Arcade. */
+/* 0 off, 1 the built-in CRT, 2 the custom preset (if one is loaded). */
 EMSCRIPTEN_KEEPALIVE void web_shader_set_mode(int mode) {
-    post_shader_set_mode(mode == 1 ? POST_SHADER_CRT : mode == 2 ? POST_SHADER_CUSTOM
-                         : mode == 3 ? POST_SHADER_ARCADE : POST_SHADER_OFF);
+    post_shader_set_mode(mode == 1 ? POST_SHADER_CRT : mode == 2 ? POST_SHADER_CUSTOM : POST_SHADER_OFF);
 }
 EMSCRIPTEN_KEEPALIVE int web_shader_mode(void) { return (int)post_shader_mode(); }
+
+/* The Arcade, the board's picture under any filter: 0 off, 1 on. */
+EMSCRIPTEN_KEEPALIVE void web_shader_set_arcade(int on) { post_shader_set_arcade(on != 0); }
+EMSCRIPTEN_KEEPALIVE int web_shader_arcade(void) { return post_shader_arcade() ? 1 : 0; }
 
 /* The monitor's pots (crt_pots.h, CRT_POT_*), from the Picture tab. */
 EMSCRIPTEN_KEEPALIVE void  web_crt_pot_set(int id, float v) { crt_pots_set(id, v); }

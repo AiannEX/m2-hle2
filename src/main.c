@@ -79,9 +79,10 @@ static int  g_browse_model = -1;   /* --model N: open single-model browser on N 
 static int  g_objview_on    = 0;   /* --objview: open the object viewer at boot */
 static int  g_objview_model = -1;  /* --objview N: and select model N */
 static int  g_mcp_enable = 0;      /* --mcp: start the TCP debug server */
-/* --crt / --arcade / --shader <preset> / --no-shader / --shader-scale N: the Video menu's
- * filter for this run, over what video.cfg remembers (shader_window.h). */
+/* --crt / --shader <preset> / --no-shader / --shader-scale N, --arcade / --no-arcade: the
+ * Video menu's filter and Arcade for this run, over what video.cfg remembers (shader_window.h). */
 static int  g_shader_arg = -1;    /* -1 as remembered, else a post_shader_mode_t */
+static int  g_arcade_arg = -1;    /* -1 as remembered, else 0 or 1 */
 static char g_shader_preset[512] = {0};
 static int  g_shader_scale = -1;
 static int  g_mcp_port   = 7172;   /* --mcp-port N */
@@ -767,6 +768,7 @@ static void init_renderer(void) {
     if (g_shader_preset[0] && !post_shader_load(g_shader_preset))
         LOG_WARN("--shader %s: %s", g_shader_preset, post_shader_error());
     if (g_shader_arg >= 0) post_shader_set_mode((post_shader_mode_t)g_shader_arg);
+    if (g_arcade_arg >= 0) post_shader_set_arcade(g_arcade_arg);
     if (g_shader_scale >= 0) post_shader_set_input_scale(g_shader_scale);
     geo3d_init(&state.geo3d);
     g_geo3d_state = &state.geo3d;
@@ -1820,7 +1822,9 @@ sapp_desc sokol_main(int argc, char* argv[]) {
         } else if (strcmp(argv[i], "--crt") == 0) {
             g_shader_arg = POST_SHADER_CRT;
         } else if (strcmp(argv[i], "--arcade") == 0) {
-            g_shader_arg = POST_SHADER_ARCADE;
+            g_arcade_arg = 1;
+        } else if (strcmp(argv[i], "--no-arcade") == 0) {
+            g_arcade_arg = 0;
         } else if (strcmp(argv[i], "--no-shader") == 0) {
             g_shader_arg = POST_SHADER_OFF;
         } else if (strcmp(argv[i], "--shader") == 0 && i + 1 < argc) {

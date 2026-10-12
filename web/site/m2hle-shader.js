@@ -1,8 +1,9 @@
 /*
  * m2hle-shader.js -- the Picture tab: a filter over the game's 4:3 picture
- * (src/ui/post_shader.h). Either the built-in CRT (Lost Judgment's, as YAMP
- * ports it), the Arcade (that CRT with a real board's tone curve, mode 3) or a
- * libretro GLSL shader the player supplies.
+ * (src/ui/post_shader.h). First the Arcade, a switch: a real board's picture
+ * (its tone, ghosting, noise and 4:3 shape). Then the filter over it: none, the
+ * built-in CRT (Lost Judgment's, as YAMP ports it) or a libretro GLSL shader the
+ * player supplies.
  *
  * The emulator has no file system, so a custom shader arrives as files: the
  * player picks a preset with its shaders and textures (or a whole folder), this
@@ -12,7 +13,8 @@
  * because a preset's textures are too big for localStorage -- so the shader is
  * back on the next visit without the whole folder being stored.
  *
- * Stored, per browser: the filter (localStorage m2hle.shaderMode), the custom
+ * Stored, per browser: the Arcade (localStorage m2hle.arcade, 0 or 1), the
+ * filter (m2hle.shaderMode; an old 3 was the CRT with the Arcade), the custom
  * shader's files (IndexedDB m2hle-shader), its parameter values
  * (localStorage m2hle.shaderParams, by preset name).
  */
@@ -21,7 +23,8 @@
 const m2hleShader = (() => {
   const $ = (id) => document.getElementById(id);
   const MODE_OFF = 0, MODE_CRT = 1, MODE_CUSTOM = 2;
-  const KEY_MODE = 'm2hle.shaderMode', KEY_PARAMS = 'm2hle.shaderParams';
+  const MODE_OLD_ARCADE = 3;
+  const KEY_MODE = 'm2hle.shaderMode', KEY_PARAMS = 'm2hle.shaderParams', KEY_ARCADE = 'm2hle.arcade';
   const DB_NAME = 'm2hle-shader', DB_STORE = 'preset', DB_KEY = 'current';
   const TEXT = /\.(glslp|glsl|inc|h)$/i;
   const IMAGE = /\.(png|jpe?g|bmp|tga)$/i;
@@ -107,6 +110,12 @@ const m2hleShader = (() => {
     $('shader-mode').value = String(mode);
     if (remember) store.set(KEY_MODE, String(mode));
     $('shader-params-box').hidden = !(mode === MODE_CUSTOM && $('shader-params').childElementCount > 0);
+  }
+
+  function setArcade(on, remember = true) {
+    Module._web_shader_set_arcade(on ? 1 : 0);
+    $('shader-arcade').checked = on;
+    if (remember) store.set(KEY_ARCADE, on ? '1' : '0');
   }
 
   function refreshCustom() {
@@ -327,15 +336,23 @@ const m2hleShader = (() => {
     status('Forgotten.');
   }
 
-  /* On the next visit: the kept shader, then the filter that was on. */
+  /* On the next visit: the kept shader, then the Arcade and the filter that were on. */
   async function restore() {
-    const mode = Number(store.get(KEY_MODE)) || MODE_OFF;
+    let mode = Number(store.get(KEY_MODE)) || MODE_OFF;
+    let arcade = store.get(KEY_ARCADE) === '1';
+    if (mode === MODE_OLD_ARCADE) {
+      mode = MODE_CRT;
+      arcade = true;
+      store.set(KEY_MODE, String(mode));
+      store.set(KEY_ARCADE, '1');
+    }
     let rec = null;
     try { rec = await idbGet(); } catch (e) { /* no IndexedDB here */ }
     if (rec && rec.preset && Array.isArray(rec.files)) {
       if (!loadInto(rec.preset, rec.files)) status('Your saved shader did not load: ' + $('shader-status').textContent, 'bad');
       else status(loadedName + ' is loaded.');
     }
+    setArcade(arcade, false);
     setMode(mode === MODE_CUSTOM && !loadedName ? MODE_OFF : mode, false);
   }
 
@@ -343,6 +360,7 @@ const m2hleShader = (() => {
 
   function init() {
     $('shader-mode').addEventListener('change', (e) => setMode(Number(e.target.value)));
+    $('shader-arcade').addEventListener('change', (e) => { if (ready) setArcade(e.target.checked); });
     $('shader-files').addEventListener('click', () => $('shader-file-input').click());
     $('shader-folder').addEventListener('click', () => $('shader-folder-input').click());
     for (const id of ['shader-file-input', 'shader-folder-input']) {
@@ -368,5 +386,5 @@ const m2hleShader = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { onReady, setMode };
+  return { onReady, setMode, setArcade };
 })();
