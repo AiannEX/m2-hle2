@@ -1319,10 +1319,9 @@ static void draw_windows(void) {
     if (state.show_cop)         cop_window_draw(&state.show_cop);
     if (state.show_geo3d) {
         const game_quirks_t *gq = g_active_profile ? &g_active_profile->quirks : NULL;
-        model_table_t table = profile_model_table(gq);
-        geo3d_window_draw(&state.geo3d, &state.show_geo3d,
-                          state.romset.main_data, state.romset.main_data_size,
-                          &table, gq ? gq->mesh_ptr_subtract : 0);
+        geo3d_models_t md = { .table = profile_model_table(gq) };
+        if (gq) md = geo3d_models_of(&state.romset, gq);
+        geo3d_window_draw(&state.geo3d, &state.show_geo3d, &md);
     }
     objview_window_draw(&state.show_objview, &state.romset, &state.bus);
     if (state.show_bus_stats)   draw_bus_stats_window();

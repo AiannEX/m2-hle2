@@ -27,9 +27,11 @@ typedef struct {
     uint8_t stride, uv, mat, mesh;
 } model_layout_t;
 
-#define MODEL_LAYOUT_1995    ((model_layout_t){ .stride = 16, .uv = 0, .mat = 4, .mesh = 8 })
-#define MODEL_LAYOUT_VCOP    ((model_layout_t){ .stride = 16, .uv = 4, .mat = 8, .mesh = 0 })
-#define MODEL_LAYOUT_DAYTONA ((model_layout_t){ .stride = 20, .uv = 4, .mat = 8, .mesh = 0 })
+/* Initializers, not compound literals: MSVC takes no compound literal in a
+ * static initializer. In an expression, cast: (model_layout_t)MODEL_LAYOUT_1995. */
+#define MODEL_LAYOUT_1995    { .stride = 16, .uv = 0, .mat = 4, .mesh = 8 }
+#define MODEL_LAYOUT_VCOP    { .stride = 16, .uv = 4, .mat = 8, .mesh = 0 }
+#define MODEL_LAYOUT_DAYTONA { .stride = 20, .uv = 4, .mat = 8, .mesh = 0 }
 
 /* Where the table is in main_data, how many entries, and their layout. */
 typedef struct {
@@ -45,7 +47,8 @@ typedef struct {
 } model_entry_t;
 
 static inline model_table_t model_table_make(uint32_t off, uint32_t count, model_layout_t layout) {
-    return (model_table_t){ off, count, layout.stride ? layout : MODEL_LAYOUT_1995 };
+    if (!layout.stride) layout = (model_layout_t)MODEL_LAYOUT_1995;
+    return (model_table_t){ off, count, layout };
 }
 
 static inline uint32_t model_table__rd32(const uint8_t *p) {
@@ -81,6 +84,29 @@ static inline bool model_entry_read(const model_table_t *t, const uint8_t *main_
  * time. Daytona's entries 2139-2165 are of the second kind. */
 static inline bool model_mesh_in_rom(uint32_t mesh_ptr) {
     return (mesh_ptr & 0x00800000u) != 0;
+}
+
+/* A mesh pointer in bytes into the polygon ROM: the board's arithmetic
+ * (pointer * 4, the profile's mesh_ptr_subtract and mesh_ptr_add), which is
+ * noclip's meshOffsetOf (js/romset.js, js/games.js meshPtr). Every reader goes
+ * through this or model_mesh_resolve. */
+static inline uint32_t model_mesh_offset(uint32_t mesh_ptr, uint32_t subtract, uint32_t add) {
+    return mesh_ptr * 4u - subtract + add;
+}
+
+/* Where an entry's mesh starts in the polygon ROM, as noclip's decodeModel
+ * finds it (js/model.js): false for no mesh, and for a first 40-byte record
+ * not wholly inside the polygon ROM. A polygon-RAM pointer is false too, never
+ * read as ROM; noclip gets there by its offset wrapping past the ROM's end
+ * (pointer * 4 < 0x02000000). NOCLIP-SYNC.md §6.4. */
+static inline bool model_mesh_resolve(uint32_t mesh_ptr, uint32_t subtract, uint32_t add,
+                                      size_t polygons_size, uint32_t *off) {
+    *off = 0;
+    if (!mesh_ptr || !model_mesh_in_rom(mesh_ptr)) return false;
+    uint32_t o = model_mesh_offset(mesh_ptr, subtract, add);
+    if ((uint64_t)o + 40u > polygons_size) return false;
+    *off = o;
+    return true;
 }
 
 #endif /* M2HLE_MODEL_TABLE_H */

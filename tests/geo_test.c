@@ -58,7 +58,7 @@ static void layer_counts(const romset_t *rs, const game_quirks_t *q, int idx,
     m.uv_ptr  = e.uv_ptr;
     m.mat_ptr = e.mat_ptr;
     m.md = test_models(rs, q);
-    uint32_t mesh = e.mesh_ptr * 4u - q->mesh_ptr_subtract + q->mesh_ptr_add;
+    uint32_t mesh = model_mesh_offset(e.mesh_ptr, q->mesh_ptr_subtract, q->mesh_ptr_add);
     if (!geo3d_mesh_build(&m, mesh, m.mat_ptr != 0, m.uv_ptr != 0)) return;
     geo3d_mesh_layers(&m);
     printf("info: model %d mat_ptr=%06X uv_ptr=%06X layered faces:", idx, m.mat_ptr, m.uv_ptr);
@@ -94,7 +94,7 @@ static void layer_dump(const romset_t *rs, const game_quirks_t *q, int idx) {
     m.uv_ptr  = e.uv_ptr;
     m.mat_ptr = e.mat_ptr;
     m.md = test_models(rs, q);
-    uint32_t mesh = e.mesh_ptr * 4u - q->mesh_ptr_subtract + q->mesh_ptr_add;
+    uint32_t mesh = model_mesh_offset(e.mesh_ptr, q->mesh_ptr_subtract, q->mesh_ptr_add);
     if (!geo3d_mesh_build(&m, mesh, m.mat_ptr != 0, m.uv_ptr != 0)) return;
     geo3d_mesh_layers(&m);
     printf("dump: model %d, %d faces\n", idx, m.n_faces);
@@ -171,7 +171,7 @@ static void rank_cost(const romset_t *rs, const game_quirks_t *q, const geo3d_mo
         mm.mat_ptr = e.mat_ptr;
         mm.md = *md;
         clock_t t0 = clock();
-        if (geo3d_mesh_build(&mm, e.mesh_ptr * 4u - q->mesh_ptr_subtract + q->mesh_ptr_add, mm.mat_ptr != 0, mm.uv_ptr != 0)) {
+        if (geo3d_mesh_build(&mm, model_mesh_offset(e.mesh_ptr, q->mesh_ptr_subtract, q->mesh_ptr_add), mm.mat_ptr != 0, mm.uv_ptr != 0)) {
             geo3d_mesh_layers(&mm);
             double ms = 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC;
             total += ms;

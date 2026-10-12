@@ -1396,14 +1396,14 @@ typedef struct {
 /* Where a model's mesh, face records and UV stream start: its model-table
  * entry, with the object command's texture addresses over the two streams.
  * mat_ptr and uv_ptr are 0 without a textures ROM. False when the model has
- * no mesh. */
+ * no mesh in the polygon ROM (model_mesh_resolve). */
 static inline bool geo3d_model_streams(const geo3d_models_t *md, int model_idx,
                                        uint32_t *mesh_offset, uint32_t *mat_ptr, uint32_t *uv_ptr) {
     model_entry_t e;
     if (model_idx < 0 || !model_entry_read(&md->table, md->main_data, md->main_data_size, (uint32_t)model_idx, &e))
         return false;
-    if (e.mesh_ptr == 0) return false;
-    *mesh_offset = e.mesh_ptr * 4u - md->mesh_ptr_subtract + md->mesh_ptr_add;
+    if (!model_mesh_resolve(e.mesh_ptr, md->mesh_ptr_subtract, md->mesh_ptr_add, md->polygons_size, mesh_offset))
+        return false;
     *mat_ptr = *uv_ptr = 0;
     if (md->materials) {
         *mat_ptr = e.mat_ptr;   /* word address (bit 23: texture RAM) */

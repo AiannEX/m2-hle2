@@ -290,7 +290,7 @@ static inline const char *profile_rom_set(const game_profile_t *p) {
  * an empty table. */
 static inline model_table_t profile_model_table(const game_quirks_t *q) {
     return q ? model_table_make(q->model_table_offset, q->model_table_count, q->model_layout)
-             : model_table_make(0, 0, MODEL_LAYOUT_1995);
+             : model_table_make(0, 0, (model_layout_t)MODEL_LAYOUT_1995);
 }
 
 /* The profile with this id, or NULL. */

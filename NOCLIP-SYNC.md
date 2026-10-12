@@ -122,3 +122,17 @@ noclip reads an entry by stride and field (`readModelEntry`): the 1995 games (ST
 `prepared_test` holds the two to noclip's reads on the container's sets: the entry count, an FNV-1a over every entry's uv, mat and mesh words, three sample entries, and the meshes set and in RAM, all taken with node from noclip's `loadRomSet` + `readModelEntry`. Virtua Cop: 1234 entries, `0x2298d18d`; Daytona: 3190, `0xa7bff01d`; House of the Dead: 7477, `0xac1eb34f`.
 
 Daytona has 27 entries (2139-2165) whose pointer has bit 23 clear. On the board that is polygon RAM, which the game fills at run time (MAME `geo_object_data`), not the polygon ROM. noclip's `meshOffsetOf` decodes them into the ROM all the same, to 0xFE0000xx. m2-hle2 leaves them as RAM (`model_mesh_in_rom`); the test counts them apart and does not read them as ROM.
+
+### 6.4 Following the mesh pointer (Pinboard #666)
+
+noclip turns an entry's mesh pointer into a polygon-ROM offset with `meshOffsetOf` (pointer * 4 - `meshPtr.subtract` + `meshPtr.add`, `js/games.js`; 0x02000010 and 0x10 for every game here), and `decodeModel` keeps it only if the first 40-byte record lies inside the polygon ROM. m2-hle2 does both in `model_mesh_resolve` (`board/model_table.h`), with the profile's `mesh_ptr_subtract` / `mesh_ptr_add`. The GEO walk, the mesh cache, the 3D window and the tests all call it, so the arithmetic exists once. The 3D window used to leave out the `+ add` and showed every mesh 0x10 bytes early.
+
+`prepared_test` holds it to noclip on the container's sets. For every ROM-backed entry it checks the resolved offset and the ten words of the first record, which are the ones `decodeModel` reads: the two points at +0..+20, the attribute at +24 (`f1` and the link type) and the normal at +28..+36. It also counts the meshes found and those past the ROM, and checks three entries' offset and attribute. The node script's FNV-1a covers each entry's index, offset and ten words. The numbers come from noclip's master (aefb324):
+
+| set | meshes in ROM | past the ROM | FNV-1a |
+|---|---|---|---|
+| vcop | 1234 | 0 | 0xab8c6c68 |
+| daytona | 3163 | 0 | 0xac46f303 |
+| hotd | 7465 | 0 | 0xf2dfe35c |
+
+Daytona's 27 polygon-RAM entries are skipped on both sides, so 3163 + 27 = 3190. Their offsets wrap to 0xFE0000xx, past the 16 MB polygon ROM, so `decodeModel` returns null for them. `model_mesh_resolve` refuses them before doing the arithmetic, so neither side ever reads them as ROM.
