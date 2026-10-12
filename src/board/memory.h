@@ -271,6 +271,22 @@ static uint32_t copro_ctl_read_cb(mem_region_t *r, uint32_t addr, int size) {
     return v;
 }
 
+/* The link (comm) board's two status bytes, 0x01A04000 (CN) and 0x01A04002
+ * (FG), mirrored at 0x01A14000 (MAME m2comm, on every Model 2 board). With no
+ * cable both read 0xFE: bit 0 is the bit last written, and Sega Rally writes 0
+ * and reads it back to decide there is no link (0x5ABE00), which is the only
+ * use seen. Nothing is kept, so a write of 1 would read back 0 here; the
+ * shared RAM at 0x01A00000 is not mapped, as no game has been seen there. */
+static uint32_t comm_status_read_cb(mem_region_t *r, uint32_t addr, int size) {
+    uint32_t off = addr - r->base, v = 0;
+    for (int k = size - 1; k >= 0; k--)
+        v = (v << 8) | (((off + (uint32_t)k) & 1u) ? 0u : 0xFEu);
+    return v;
+}
+static void mem_ignore_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int size) {
+    (void)r; (void)addr; (void)val; (void)size;
+}
+
 /* ---- GEO display list (board-level) -------------------------------------
  * The i960 does not hand the geometrizer draw calls: it builds a display list in
  * bufferram (0x900000, the SHARC's DM 0x1400000) and the GEO walks it once a
@@ -746,6 +762,10 @@ static inline void mem_add_regions(memory_bus_t *bus, uint8_t *rom_data, size_t 
     mem_add_region(bus, "LUMA",            LUMA_BASE,            LUMA_SIZE,            bus->luma,          0);
     mem_add_region(bus, "LUMA2",           LUMA2_BASE,           LUMA2_SIZE,           bus->luma2,         0);
     mem_add_region(bus, "IAC",             IAC_BASE,             IAC_SIZE,             bus->iac,           0);
+    for (uint32_t base = COMM_STATUS_BASE; base <= COMM_STATUS_BASE + 0x10000u; base += 0x10000u) {
+        mem_region_t *r = mem_add_region(bus, "COMM", base, COMM_STATUS_SIZE, NULL, 0);
+        if (r) { r->read_cb = comm_status_read_cb; r->write_cb = mem_ignore_write_cb; }
+    }
 }
 
 /* Each region's burst flag and change tracking, by name. */
@@ -754,6 +774,7 @@ static inline void mem_region_flags(memory_bus_t *bus) {
     static const char *const no_burst[] = {
         "GEO", "GEO_PROGRAM", "GEO_CMD", "COPROGRAM", "COPRO_SHARC_IOP", "COPRO_CTL",
         "MIDI", "CPU_CTRL", "IRQ", "TIMERS", "ZCLIP_3D", "IO", "UNKNOWN_VID",
+        "COMM",
     };
     for (int i = 0; i < bus->region_count; i++)
         for (size_t k = 0; k < sizeof no_burst / sizeof no_burst[0]; k++)

@@ -12,6 +12,7 @@
  *   0x12000000..0x123FFFFF  texture RAM 0, 16 bits a word (2B: 0x11000000, 32)
  *   0x12400000..0x127FFFFF  texture RAM 1, 16 bits a word (2B: 0x11200000)
  *   0x12800000..0x1281FFFF  luma RAM, 8 bits a word      (2B: 0x11400000, 8 of 16)
+ *   0x10800000              polygon count, reads 0
  *
  * Texture and luma land in the same buffers the 2B regions fill, in the same
  * layout, so the renderer reads one format whichever board wrote it.
@@ -80,6 +81,12 @@ static void model2a_ctl_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, i
     for (int k = 0; k < size && off + (uint32_t)k < r->size; k++)
         r->data[off + (uint32_t)k] = (uint8_t)(val >> (8 * k));
     if (off == 0 && size == 4) tgp_ctl_w(val);
+}
+
+/* An address MAME maps but answers nothing at. */
+static uint32_t model2a_zero_read_cb(mem_region_t *r, uint32_t addr, int size) {
+    (void)r; (void)addr; (void)size;
+    return 0;
 }
 
 /* model2.cpp tgpid_r */
@@ -186,6 +193,14 @@ static inline void model2a_install(memory_bus_t *bus,
         r->user = bus;
         r->read_cb = model2a_tex_read_cb;
         r->write_cb = model2a_tex_write_cb;
+    }
+
+    /* The polygon count register reads 0 (MAME model2_tgp_mem, nopr). Sega
+     * Rally keeps the largest it has seen in backup RAM (0x5A7F64). */
+    if ((r = mem_add_region(bus, "POLY_COUNT", 0x10800000u, 4u, NULL, 0))) {
+        r->read_cb = model2a_zero_read_cb;
+        r->write_cb = mem_ignore_write_cb;
+        r->no_burst = 1;
     }
 
     /* The sound UART: 0x01C80000 here, where a 2B has it at 0x9C0000 (MAME
