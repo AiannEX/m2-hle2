@@ -88,7 +88,7 @@ the next game cheaper instead of being spent on a single ROM set.
 | Automation | In-process MCP bridge over TCP (`--mcp`) |
 | Recording | Capture mode (`--kiosk`): chrome-free window at a fixed capture size, parked off the desktop, run from a tray icon |
 | Streaming | Raw board video and audio on one socket and one clock (`--av-port`), and a plugin that paints over the picture (`--overlay`) |
-| Picture filters | Lost Judgment's CRT scanlines, as YAMP ports them, or the Arcade (that CRT with a real board's tone curve; every build), or a libretro GLSL shader preset of your own (web and Linux builds): the Video menu, `--crt`, `--arcade`, `--shader`; the browser's Picture tab |
+| Picture filters | Lost Judgment's CRT scanlines, as YAMP ports them, or the Arcade (that CRT with a real board's tone curve, ghosting, noise and 4:3 shape; every build), or a libretro GLSL shader preset of your own (web and Linux builds): the Video menu, `--crt`, `--arcade`, `--shader`; the browser's Picture tab |
 
 Game profiles live in [src/profiles/](src/profiles/): `sfight_console`, `sfight`, `fvipers`,
 `m2snake` (the web build carries the two Sonic the Fighters profiles only).
@@ -292,7 +292,10 @@ the picture a second time every frame, so they can cost frame rate on a weak GPU
 - **Arcade** -- the same CRT, with the tone of a real Model 2B board's picture: each colour goes
   through c^0.76 first, which is what the owner's board does to this emulator's picture (measured
   from its captured video against the same frames here). The colours and their balance stay as
-  they are; the mid-tones get brighter. Every build.
+  they are; the mid-tones get brighter. It also has the board's signal and monitor (#643): the
+  ghost every edge trails to its right (+7%, then a ripple of 2-3% fading over ~25 pixels), the
+  capture's noise (0.5-1.5% of white, new every frame), and the picture shown 4:3, as the
+  cabinet's monitor shows it, instead of with square pixels. Every build.
 - **Your own shader** -- a libretro GLSL preset (`.glslp` with its `.glsl` files and textures, or
   one `.glsl`), from [libretro's glsl-shaders](https://github.com/libretro/glsl-shaders). The web
   and Linux builds; the Windows build draws with Direct3D 11 and offers the CRT only. Slang

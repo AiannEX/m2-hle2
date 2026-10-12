@@ -38,6 +38,22 @@
  * (a fitted 3x3 colour matrix comes out diagonal). k, the capture's own level,
  * is left out: white stays white.
  *
+ * The Arcade also has the board's signal and its monitor's shape (Pinboard #643),
+ * from the same captures:
+ *  - GHOSTING: every edge leaves a ripple trailing to its right: +7% just after
+ *    it, then -2.5%, +0.7%, -1.8%, +0.7%, -0.9%, +0.4%, one swing every ~7 source
+ *    pixels. It is in R, G and B alike, and never to the left or below, so it is
+ *    the analog signal's, not the art's. Each lobe is a difference of two source
+ *    taps (POST_ARCADE_GHOST_*).
+ *  - NOISE: the same still frame, grabbed twice, differs by about 0.25% of white
+ *    in the dark and 0.75% in the light, mostly in all three guns at once.
+ *    POST_ARCADE_NOISE is set so this picture, shrunk to the capture's size,
+ *    differs as much. One value per source pixel and line, new every frame.
+ *  - PIXEL RATIO: the picture is shown 4:3, as the cabinet's monitor shows it,
+ *    not with square pixels (496:384): post_shader_picture_width(). The capture
+ *    can't tell the board's own shape (VCS samples a 720x400 preset and stretches
+ *    it to its window), so this is the monitor's.
+ *
  * A CUSTOM preset needs a GL backend (the web build and the Linux desktop); on
  * D3D11 post_shader_custom_supported() is false and loading one says why.
  */
@@ -60,8 +76,20 @@ typedef enum {
 } post_shader_mode_t;
 
 /* The board's tone curve: the exponent on each 0..1 channel. */
-#define POST_ARCADE_TONE_GLSL "  c = pow(c, vec3(0.76));\n"
-#define POST_ARCADE_TONE_HLSL "  c = pow(c, float3(0.76, 0.76, 0.76));\n"
+#define POST_ARCADE_TONE_GLSL "  c = pow(clamp(c, 0.0, 1.0), vec3(0.76));\n"
+#define POST_ARCADE_TONE_HLSL "  c = pow(saturate(c), float3(0.76, 0.76, 0.76));\n"
+
+/* The ghost: where its lobes start, in the capture's pixels (418 across the
+ * picture, 1.19 source pixels each), and the change of level at each. Between
+ * two starts the ripple holds the sum of the changes so far; they sum to 0. */
+#define POST_ARCADE_GHOST_LAG "1.0, 4.0, 6.0, 9.5, 12.0, 15.5, 18.0, 21.5, 24.0"
+#define POST_ARCADE_GHOST_W   "0.072, -0.072, -0.025, 0.0323, -0.0253, 0.0247, -0.0154, 0.013, -0.0043"
+/* The noise's sigma, a + b * level, and the share all three guns have in common. */
+#define POST_ARCADE_NOISE     "0.0035, 0.007"
+#define POST_ARCADE_NOISE_MIX "0.84, 0.55"
+
+/* The width the Arcade's picture is shown at against VIDEO_HEIGHT: 4:3. */
+#define POST_ARCADE_PICTURE_W 512
 
 /* The 1080-line floor below which the CRT is filtered large and scaled down. */
 #define POST_SHADER_CRT_MIN_LINES 1080
@@ -92,13 +120,16 @@ static struct {
     char        err[RS_ERR];
 
     bool        source_drawn;          /* a source was drawn this frame */
+    unsigned    frame;                 /* the Arcade's noise: a new pattern each frame */
 } g_post;
 
 /* ---- The CRT's shaders ------------------------------------------------------ */
 
-/* TONE is a line of GLSL that may change c, the source colour, before the
- * scanline and the grille: empty for the CRT, the board's curve for the Arcade. */
-#define POST_CRT_FS_GLSL(TONE) \
+/* DECL is GLSL before the taps, SIGNAL an expression for what the signal adds to
+ * the source (the same for a pixel's four taps), TONE a line that may change c,
+ * the source colour, before the scanline and the grille. The CRT has none of
+ * them; the Arcade has its ghost and noise, and the board's tone curve. */
+#define POST_CRT_FS_GLSL(DECL, SIGNAL, TONE) \
     "#version 410\n" \
     "uniform sampler2D tex_smp;\n" \
     "in vec2 uv;\n" \
@@ -106,8 +137,10 @@ static struct {
     "const float kBayer[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,\n" \
     "                                   3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);\n" \
     /* p is picture space, top-left origin; a GL target keeps its bottom row first. */ \
-    "vec3 crt_tap(vec2 p) {\n" \
-    "  vec3 c = texture(tex_smp, vec2(p.x, 1.0 - p.y)).rgb;\n" \
+    "vec3 src(vec2 p) { return texture(tex_smp, vec2(p.x, 1.0 - p.y)).rgb; }\n" \
+    DECL \
+    "vec3 crt_tap(vec2 p, vec3 sig) {\n" \
+    "  vec3 c = src(p) + sig;\n" \
     TONE \
     "  int xi = int(fract(floor(p.x * 2048.0 + 0.5) * 0.25) * 4.0) & 3;\n" \
     "  int yi = int(fract(floor(p.y * 1536.0 + 0.5) * 0.25) * 4.0) & 3;\n" \
@@ -123,14 +156,43 @@ static struct {
     "void main() {\n" \
     /* D3D's derivatives of this uv are positive; GL's y runs the other way. */ \
     "  vec2 d = vec2(abs(dFdx(uv.x)), abs(dFdy(uv.y)));\n" \
-    "  vec3 s = crt_tap(uv) + crt_tap(uv + 0.25 * d) + crt_tap(uv + 0.5 * d) + crt_tap(uv + 0.75 * d);\n" \
+    "  vec3 sig = " SIGNAL ";\n" \
+    "  vec3 s = crt_tap(uv, sig) + crt_tap(uv + 0.25 * d, sig) + crt_tap(uv + 0.5 * d, sig)\n" \
+    "         + crt_tap(uv + 0.75 * d, sig);\n" \
     "  frag_color = vec4(s * 0.25, 1.0);\n" \
     "}\n"
 
-static const char *post_crt_fs_glsl    = POST_CRT_FS_GLSL("");
-static const char *post_arcade_fs_glsl = POST_CRT_FS_GLSL(POST_ARCADE_TONE_GLSL);
+/* The Arcade's signal: the ghost, from the taps to the left, and the noise.
+ * arcade_params.x is the frame number. */
+#define POST_ARCADE_DECL_GLSL \
+    "uniform vec4 arcade_params;\n" \
+    "const float kGhostLag[9] = float[9](" POST_ARCADE_GHOST_LAG ");\n" \
+    "const float kGhostW[9]   = float[9](" POST_ARCADE_GHOST_W ");\n" \
+    "uint hash(uint x) {\n" \
+    "  x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;\n" \
+    "  return x;\n" \
+    "}\n" \
+    /* about N(0, 1): two uniforms' sum, scaled */ \
+    "float gauss(uint k) {\n" \
+    "  uint h = hash(k);\n" \
+    "  return (float(h & 0xffffu) + float(h >> 16)) * (2.449 / 65535.0) - 2.449;\n" \
+    "}\n" \
+    "vec3 arcade_signal(vec2 p) {\n" \
+    "  vec3 g = vec3(0.0);\n" \
+    "  for (int i = 0; i < 9; i++) g += kGhostW[i] * src(vec2(p.x - kGhostLag[i] / 418.0, p.y));\n" \
+    "  uvec2 cell = uvec2(clamp(p, 0.0, 1.0) * vec2(495.99, 383.99));\n" \
+    "  uint k = hash(cell.x + cell.y * 496u + uint(arcade_params.x) * 190464u) * 4u;\n" \
+    "  vec2 mix_ = vec2(" POST_ARCADE_NOISE_MIX ");\n" \
+    "  vec3 n = mix_.x * gauss(k) + mix_.y * vec3(gauss(k + 1u), gauss(k + 2u), gauss(k + 3u));\n" \
+    "  vec2 sd = vec2(" POST_ARCADE_NOISE ");\n" \
+    "  return g + n * (sd.x + sd.y * src(p));\n" \
+    "}\n"
 
-#define POST_CRT_FS_HLSL(TONE) \
+static const char *post_crt_fs_glsl    = POST_CRT_FS_GLSL("", "vec3(0.0)", "");
+static const char *post_arcade_fs_glsl =
+    POST_CRT_FS_GLSL(POST_ARCADE_DECL_GLSL, "arcade_signal(uv)", POST_ARCADE_TONE_GLSL);
+
+#define POST_CRT_FS_HLSL(DECL, SIGNAL, TONE) \
     "Texture2D<float4> tex : register(t0);\n" \
     "SamplerState smp : register(s0);\n" \
     "struct fs_in { float4 pos : SV_Position; float2 uv : TEXCOORD0; };\n" \
@@ -140,8 +202,10 @@ static const char *post_arcade_fs_glsl = POST_CRT_FS_GLSL(POST_ARCADE_TONE_GLSL)
     "   3.0, 11.0,  1.0,  9.0,\n" \
     "  15.0,  7.0, 13.0,  5.0,\n" \
     "};\n" \
-    "float3 crt_tap(float2 uv) {\n" \
-    "  float3 c = tex.Sample(smp, uv).rgb;\n" \
+    "float3 src(float2 uv) { return tex.Sample(smp, uv).rgb; }\n" \
+    DECL \
+    "float3 crt_tap(float2 uv, float3 sig) {\n" \
+    "  float3 c = src(uv) + sig;\n" \
     TONE \
     "  int xi = (int)(frac(round(uv.x * 2048.0) * 0.25) * 4.0);\n" \
     "  int yi = (int)(frac(round(uv.y * 1536.0) * 0.25) * 4.0);\n" \
@@ -157,12 +221,38 @@ static const char *post_arcade_fs_glsl = POST_CRT_FS_GLSL(POST_ARCADE_TONE_GLSL)
     "float4 main(fs_in inp) : SV_Target0 {\n" \
     "  float2 uvc = inp.uv;\n" \
     "  float2 d = float2(abs(ddx(uvc.x)), abs(ddy(uvc.y)));\n" \
-    "  float3 s = crt_tap(uvc) + crt_tap(uvc + 0.25 * d) + crt_tap(uvc + 0.5 * d) + crt_tap(uvc + 0.75 * d);\n" \
+    "  float3 sig = " SIGNAL ";\n" \
+    "  float3 s = crt_tap(uvc, sig) + crt_tap(uvc + 0.25 * d, sig) + crt_tap(uvc + 0.5 * d, sig)\n" \
+    "           + crt_tap(uvc + 0.75 * d, sig);\n" \
     "  return float4(s * 0.25, 1.0);\n" \
     "}\n"
 
-static const char *post_crt_fs_hlsl    = POST_CRT_FS_HLSL("");
-static const char *post_arcade_fs_hlsl = POST_CRT_FS_HLSL(POST_ARCADE_TONE_HLSL);
+#define POST_ARCADE_DECL_HLSL \
+    "cbuffer arcade : register(b0) { float4 arcade_params; };\n" \
+    "static const float kGhostLag[9] = { " POST_ARCADE_GHOST_LAG " };\n" \
+    "static const float kGhostW[9]   = { " POST_ARCADE_GHOST_W " };\n" \
+    "uint hash(uint x) {\n" \
+    "  x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;\n" \
+    "  return x;\n" \
+    "}\n" \
+    "float gauss(uint k) {\n" \
+    "  uint h = hash(k);\n" \
+    "  return ((float)(h & 0xffffu) + (float)(h >> 16)) * (2.449 / 65535.0) - 2.449;\n" \
+    "}\n" \
+    "float3 arcade_signal(float2 p) {\n" \
+    "  float3 g = float3(0.0, 0.0, 0.0);\n" \
+    "  [unroll] for (int i = 0; i < 9; i++) g += kGhostW[i] * src(float2(p.x - kGhostLag[i] / 418.0, p.y));\n" \
+    "  uint2 cell = (uint2)(saturate(p) * float2(495.99, 383.99));\n" \
+    "  uint k = hash(cell.x + cell.y * 496u + (uint)arcade_params.x * 190464u) * 4u;\n" \
+    "  float2 mix_ = float2(" POST_ARCADE_NOISE_MIX ");\n" \
+    "  float3 n = mix_.x * gauss(k) + mix_.y * float3(gauss(k + 1u), gauss(k + 2u), gauss(k + 3u));\n" \
+    "  float2 sd = float2(" POST_ARCADE_NOISE ");\n" \
+    "  return g + n * (sd.x + sd.y * src(p));\n" \
+    "}\n"
+
+static const char *post_crt_fs_hlsl    = POST_CRT_FS_HLSL("", "float3(0.0, 0.0, 0.0)", "");
+static const char *post_arcade_fs_hlsl =
+    POST_CRT_FS_HLSL(POST_ARCADE_DECL_HLSL, "arcade_signal(uvc)", POST_ARCADE_TONE_HLSL);
 
 static inline sg_pixel_format post_color_format(void) {
     sg_pixel_format f = sg_query_desc().environment.defaults.color_format;
@@ -197,6 +287,13 @@ static inline void post_builtin_make(int i, sg_backend backend, const char *glsl
     d.texture_sampler_pairs[0].view_slot    = 0;
     d.texture_sampler_pairs[0].sampler_slot = 0;
     d.texture_sampler_pairs[0].glsl_name    = "tex_smp";
+    if (i) {   /* the Arcade's arcade_params */
+        d.uniform_blocks[0].stage                      = SG_SHADERSTAGE_FRAGMENT;
+        d.uniform_blocks[0].size                       = 16;
+        d.uniform_blocks[0].hlsl_register_b_n          = 0;
+        d.uniform_blocks[0].glsl_uniforms[0].glsl_name = "arcade_params";
+        d.uniform_blocks[0].glsl_uniforms[0].type      = SG_UNIFORMTYPE_FLOAT4;
+    }
     d.label = i ? "post-arcade-shader" : "post-crt-shader";
     if (backend == SG_BACKEND_GLCORE || backend == SG_BACKEND_GLES3) {
         d.vertex_func.source   = game_render_glsl(backend, game_render_tile_vs_glsl, 0);
@@ -302,6 +399,12 @@ static inline int  post_shader_input_scale(void)             { return g_post.inp
 /* The CRT or the Arcade: the built-in filters, which differ only in their tone. */
 static inline bool post_builtin(void) {
     return g_post.mode == POST_SHADER_CRT || g_post.mode == POST_SHADER_ARCADE;
+}
+
+/* The width the picture is letterboxed at, against VIDEO_HEIGHT: the board's
+ * own 496, or the Arcade's 4:3 monitor. */
+static inline int post_shader_picture_width(void) {
+    return g_post.init && g_post.mode == POST_SHADER_ARCADE ? POST_ARCADE_PICTURE_W : VIDEO_WIDTH;
 }
 
 static inline bool post_shader_active(void) {
@@ -422,12 +525,17 @@ static inline void post_shader_end_source(void) {
 }
 
 static inline void post_crt_draw(const sg_pipeline pip[2]) {
-    sg_apply_pipeline(pip[g_post.mode == POST_SHADER_ARCADE]);
+    const bool arcade = g_post.mode == POST_SHADER_ARCADE;
+    sg_apply_pipeline(pip[arcade]);
     sg_apply_bindings(&(sg_bindings){
         .vertex_buffers[0] = g_game_render.quad_vbuf,
         .views[0]          = g_post.src_tex,
         .samplers[0]       = g_post.crt_sampler,
     });
+    if (arcade) {
+        const float params[4] = { (float)(g_post.frame & 0xfff), 0.0f, 0.0f, 0.0f };
+        sg_apply_uniforms(0, &SG_RANGE(params));
+    }
     sg_draw(0, 6, 1);
 }
 
@@ -436,6 +544,7 @@ static inline void post_crt_draw(const sg_pipeline pip[2]) {
 static inline void post_shader_prepare(int rect_w, int rect_h) {
     g_post.up_used = false;
     if (!g_post.source_drawn || rect_w <= 0 || rect_h <= 0) return;
+    g_post.frame++;
     if (post_builtin()) {
         if (rect_h >= POST_SHADER_CRT_MIN_LINES) return;   /* straight to the screen */
         const float up = (float)POST_SHADER_CRT_MIN_LINES / (float)rect_h;

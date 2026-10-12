@@ -796,7 +796,8 @@ static void web_record_menus(ps3ui_canvas_t *cv, bool overlay) {
     if (overlay) {
         /* over the game: the 16:9 layout fitted to the game's letterboxed picture */
         int ox, oy, gw, gh;
-        game_render_letterbox(sapp_width(), sapp_height(), VIDEO_WIDTH, VIDEO_HEIGHT, &ox, &oy, &gw, &gh);
+        game_render_letterbox(sapp_width(), sapp_height(), post_shader_picture_width(), VIDEO_HEIGHT,
+                              &ox, &oy, &gw, &gh);
         ps3ui_gpu_record(cv, sapp_width(), sapp_height());
         ps3ui_canvas_size(cv, sapp_width(), sapp_height());
         float k = (float)gw / 1920.0f;
@@ -926,7 +927,8 @@ static void frame(void) {
 
     /* A filter over the picture (post_shader.h) reads the game from a target of
      * its own, at the render scale, and only covers the game's 4:3 rectangle. */
-    game_render_letterbox(sapp_width(), sapp_height(), VIDEO_WIDTH, VIDEO_HEIGHT, &pic.ox, &pic.oy, &pic.w, &pic.h);
+    game_render_letterbox(sapp_width(), sapp_height(), post_shader_picture_width(), VIDEO_HEIGHT,
+                          &pic.ox, &pic.oy, &pic.w, &pic.h);
     crt_pots_place(&pic.ox, &pic.oy, &pic.w, &pic.h);
     post_shader_set_input_scale(g_web_rt.want);
     pic.post = game && !g_web_objview_show && post_shader_active();
