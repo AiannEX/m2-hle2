@@ -618,9 +618,14 @@ static uint32_t geo_read_cb(mem_region_t *r, uint32_t addr, int size) {
     uint32_t off = addr - GEO_BASE;
     if (off == 0x2008) return g_geo.wstart;
     if (off == 0x3008) return g_geo.rstart;
-    uint32_t v = 0;
-    if (r->data && off + 4 <= r->size) memcpy(&v, r->data + off, 4);
-    return size == 1 ? (v & 0xFF) : size == 2 ? (v & 0xFFFF) : v;
+    (void)r; (void)size;
+    return 0;                                   /* MAME geo_r: anything else reads 0 */
+}
+
+/* MAME geo_prg_r: the geometry FIFO reads all ones. */
+static uint32_t geo_program_read_cb(mem_region_t *r, uint32_t addr, int size) {
+    (void)r; (void)addr;
+    return size == 1 ? 0xFFu : size == 2 ? 0xFFFFu : 0xFFFFFFFFu;
 }
 
 /* GEO_PROGRAM (0x804000): raw list words. */
@@ -724,7 +729,7 @@ static inline void mem_add_regions(memory_bus_t *bus, uint8_t *rom_data, size_t 
     { mem_region_t *r = mem_add_region(bus, "GEO", GEO_BASE, GEO_SIZE, bus->geo, 0);
       if (r) { r->read_cb = geo_read_cb; r->write_cb = geo_write_cb; } }
     { mem_region_t *r = mem_add_region(bus, "GEO_PROGRAM", GEO_PROGRAM_BASE, GEO_PROGRAM_SIZE, bus->geo_program, 0);
-      if (r) r->write_cb = geo_program_write_cb; }
+      if (r) { r->read_cb = geo_program_read_cb; r->write_cb = geo_program_write_cb; } }
     mem_add_region(bus, "GEO_CMD",         GEO_CMD_BASE,         GEO_CMD_SIZE,         bus->geo_cmd,       0);
     { mem_region_t *r = mem_add_region(bus, "COPROGRAM", COPROGRAM_BASE, COPROGRAM_SIZE, bus->coprogram, 0);
       if (r) { r->read_cb = coprogram_read_cb; r->write_cb = coprogram_write_cb; } }

@@ -69,8 +69,10 @@ int main(void) {
     CHECK(mem_read32(&bus, BUFF_RAM_BASE + 0x10) == 0x5A5AA5A5, "bufferram mirror at 0x960000");
     CHECK(mem_read32(&bus, BUFF_RAM_BASE + 0x20010) == 0x5A5AA5A5, "bufferram mirror at 0x920000");
 
-    /* The coprocessor ID (MAME tgpid_r). */
+    /* The coprocessor ID (MAME tgpid_r) and the GEO reads (geo_r, geo_prg_r). */
     CHECK(mem_read32(&bus, TGP_ID_BASE) == 0x48415400u, "TGP ID reads \\0TAH");
+    CHECK(mem_read32(&bus, GEO_BASE + 0x10) == 0, "GEO reads 0 off its two registers");
+    CHECK(mem_read32(&bus, GEO_PROGRAM_BASE) == 0xFFFFFFFFu, "GEO FIFO reads all ones");
 
     /* TEXRAM mirror aliases the same buffer. */
     mem_write32(&bus, TEXRAM0_BASE + 0x100, 0x11223344);
