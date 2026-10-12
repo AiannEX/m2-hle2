@@ -88,7 +88,7 @@ the next game cheaper instead of being spent on a single ROM set.
 | Automation | In-process MCP bridge over TCP (`--mcp`) |
 | Recording | Capture mode (`--kiosk`): chrome-free window at a fixed capture size, parked off the desktop, run from a tray icon |
 | Streaming | Raw board video and audio on one socket and one clock (`--av-port`), and a plugin that paints over the picture (`--overlay`) |
-| Picture filters | Lost Judgment's CRT scanlines, as YAMP ports them (every build), or a libretro GLSL shader preset of your own (web and Linux builds): the Video menu, `--crt`, `--shader`; the browser's Picture tab |
+| Picture filters | Lost Judgment's CRT scanlines, as YAMP ports them, or the Arcade (that CRT with a real board's tone curve; every build), or a libretro GLSL shader preset of your own (web and Linux builds): the Video menu, `--crt`, `--arcade`, `--shader`; the browser's Picture tab |
 
 Game profiles live in [src/profiles/](src/profiles/): `sfight_console`, `sfight`, `fvipers`,
 `m2snake` (the web build carries the two Sonic the Fighters profiles only).
@@ -289,6 +289,10 @@ the picture a second time every frame, so they can cost frame rate on a weak GPU
 - **CRT (Lost Judgment's)** -- the CRT filter Lost Judgment's arcade cabinets put on Sonic the
   Fighters, as YAMP reverse-engineered it: one scanline per Model 2 line, a faint aperture
   grille, a dithered scanline phase. Every build, Direct3D 11 included.
+- **Arcade** -- the same CRT, with the tone of a real Model 2B board's picture: each colour goes
+  through c^0.76 first, which is what the owner's board does to this emulator's picture (measured
+  from its captured video against the same frames here). The colours and their balance stay as
+  they are; the mid-tones get brighter. Every build.
 - **Your own shader** -- a libretro GLSL preset (`.glslp` with its `.glsl` files and textures, or
   one `.glsl`), from [libretro's glsl-shaders](https://github.com/libretro/glsl-shaders). The web
   and Linux builds; the Windows build draws with Direct3D 11 and offers the CRT only. Slang
@@ -298,6 +302,7 @@ the picture a second time every frame, so they can cost frame rate on a weak GPU
 
 ```
 m2hle --rom sfight.zip --crt                            # the CRT filter
+m2hle --rom sfight.zip --arcade                         # the CRT with the real board's tone curve
 m2hle --rom sfight.zip --shader crt/crt-geom.glslp      # a libretro preset (GL builds)
 m2hle --rom sfight.zip --shader-scale 2                 # the picture the filter reads: 1-4 x 496x384
 ```

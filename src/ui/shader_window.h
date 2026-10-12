@@ -5,12 +5,12 @@
  * The choice lives in video.cfg beside the per-user netplay settings
  * (netplay_cfg_path's directory: %APPDATA%\m2hle2, ~/.config/m2hle2):
  *
- *   filter=off|crt|custom
+ *   filter=off|crt|arcade|custom
  *   preset=<path to the .glslp or .glsl>
  *   input_scale=0..4          (0 = automatic)
  *   param.<NAME>=<value>      (the custom preset's parameters)
  *
- * The command line (--crt, --shader, --shader-scale, --no-shader) applies over
+ * The command line (--crt, --arcade, --shader, --shader-scale, --no-shader) applies over
  * it for that run and is not written back.
  */
 #ifndef SHADER_WINDOW_H
@@ -42,6 +42,18 @@ static inline const char *shader_ui_cfg_path(void) {
     return g_shader_ui.cfg_path;
 }
 
+/* video.cfg's names for the filters. */
+static const char *const shader_ui_filter_name[] = {
+    [POST_SHADER_OFF] = "off", [POST_SHADER_CRT] = "crt",
+    [POST_SHADER_CUSTOM] = "custom", [POST_SHADER_ARCADE] = "arcade",
+};
+
+static inline post_shader_mode_t shader_ui_filter_named(const char *name) {
+    for (int i = 0; i < (int)(sizeof shader_ui_filter_name / sizeof *shader_ui_filter_name); i++)
+        if (!strcmp(name, shader_ui_filter_name[i])) return (post_shader_mode_t)i;
+    return POST_SHADER_OFF;
+}
+
 static inline void shader_ui_save(void) {
     const char *path = shader_ui_cfg_path();
     char tmp[700];
@@ -49,7 +61,7 @@ static inline void shader_ui_save(void) {
     FILE *f = fopen(tmp, "w");
     if (!f) { LOG_WARN("shader: cannot write %s", tmp); return; }
     const post_shader_mode_t m = post_shader_mode();
-    fprintf(f, "filter=%s\n", m == POST_SHADER_CRT ? "crt" : m == POST_SHADER_CUSTOM ? "custom" : "off");
+    fprintf(f, "filter=%s\n", shader_ui_filter_name[m]);
     if (post_shader_custom_path()[0]) fprintf(f, "preset=%s\n", post_shader_custom_path());
     fprintf(f, "input_scale=%d\n", post_shader_input_scale());
     for (int i = 0; i < post_shader_param_count(); i++) {
@@ -90,9 +102,8 @@ static inline void shader_ui_load(void) {
             LOG_WARN("shader: the saved preset %s did not load: %s", preset, post_shader_error());
         }
     }
-    if (!strcmp(filter, "crt")) post_shader_set_mode(POST_SHADER_CRT);
-    else if (!strcmp(filter, "custom") && post_shader_custom_loaded()) post_shader_set_mode(POST_SHADER_CUSTOM);
-    else post_shader_set_mode(POST_SHADER_OFF);
+    const post_shader_mode_t mode = shader_ui_filter_named(filter);
+    post_shader_set_mode(mode == POST_SHADER_CUSTOM && !post_shader_custom_loaded() ? POST_SHADER_OFF : mode);
 }
 
 static inline void shader_ui_open_dialog(ImGuiFileDialog *fd) {
@@ -103,10 +114,8 @@ static inline void shader_ui_open_dialog(ImGuiFileDialog *fd) {
     IGFD_OpenDialog(fd, "OpenShader", "Load a libretro GLSL shader", "Libretro GLSL{.glslp,.glsl}", cfg);
 }
 
-/* The Video menu, in the main menu bar. */
-static inline void shader_ui_menu(ImGuiFileDialog *fd) {
-    if (!igBeginMenu("Video")) return;
-    const post_shader_mode_t m = post_shader_mode();
+/* The Video menu's built-in filters: none, the CRT, the Arcade. */
+static inline void shader_ui_builtin_items(post_shader_mode_t m) {
     if (igMenuItemEx("No filter", NULL, m == POST_SHADER_OFF, true)) {
         post_shader_set_mode(POST_SHADER_OFF);
         shader_ui_save();
@@ -117,6 +126,19 @@ static inline void shader_ui_menu(ImGuiFileDialog *fd) {
     }
     igSetItemTooltip("Scanlines and an aperture grille, as Lost Judgment's arcade cabinets show "
                      "Sonic the Fighters (ported from YAMP). Costs GPU time.");
+    if (igMenuItemEx("Arcade filter (the real board's picture)", NULL, m == POST_SHADER_ARCADE, true)) {
+        post_shader_set_mode(POST_SHADER_ARCADE);
+        shader_ui_save();
+    }
+    igSetItemTooltip("The CRT filter, with the tone curve measured from a real Model 2B board's video: "
+                     "the same colours, brighter mid-tones. Costs GPU time.");
+}
+
+/* The Video menu, in the main menu bar. */
+static inline void shader_ui_menu(ImGuiFileDialog *fd) {
+    if (!igBeginMenu("Video")) return;
+    const post_shader_mode_t m = post_shader_mode();
+    shader_ui_builtin_items(m);
     if (post_shader_custom_loaded()) {
         char label[RS_NAME + 32];
         snprintf(label, sizeof label, "Custom: %s", post_shader_custom_name());
@@ -151,7 +173,7 @@ static inline void shader_ui_menu(ImGuiFileDialog *fd) {
         igEndMenu();
     }
     igSetItemTooltip("The resolution the game is drawn at before the filter reads it. Automatic is the "
-                     "window's size for the CRT filter and 1x for a custom shader.");
+                     "window's size for the CRT and Arcade filters and 1x for a custom shader.");
     igSeparator();
     igTextDisabled("Filters can cut performance. Turn one off if the game slows down.");
     if (post_shader_error()[0]) {

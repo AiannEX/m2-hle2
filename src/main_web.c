@@ -1352,9 +1352,10 @@ EMSCRIPTEN_KEEPALIVE int web_render_scale(void) { return g_web_rt.want; }
  * The table is kept, so the page can reload the same preset later.
  */
 
-/* 0 off, 1 the built-in CRT, 2 the custom preset (if one is loaded). */
+/* 0 off, 1 the built-in CRT, 2 the custom preset (if one is loaded), 3 the Arcade. */
 EMSCRIPTEN_KEEPALIVE void web_shader_set_mode(int mode) {
-    post_shader_set_mode(mode == 1 ? POST_SHADER_CRT : mode == 2 ? POST_SHADER_CUSTOM : POST_SHADER_OFF);
+    post_shader_set_mode(mode == 1 ? POST_SHADER_CRT : mode == 2 ? POST_SHADER_CUSTOM
+                         : mode == 3 ? POST_SHADER_ARCADE : POST_SHADER_OFF);
 }
 EMSCRIPTEN_KEEPALIVE int web_shader_mode(void) { return (int)post_shader_mode(); }
 
