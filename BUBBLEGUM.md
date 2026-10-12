@@ -210,7 +210,7 @@ MAME references are to `claude_mame/mame/src/mame/sega/model2.cpp` unless anothe
   - The 2B COP firmware pointer: `g_sharc_copro_rom = rs->copro_data` is set by hand in `sfight.h:182` and `fvipers.h:157`. A 2B profile that forgets it gets `sharc_sincos`'s host `sinf`/`cosf` fallback (`sharc.h:192-194`) in place of the ROM tables, silently. `hotd.h` (2C) does not set it today.
   - The 2A savestate parts (next item).
 
-  Who it affects: the next 2A game (VF2, Virtua Cop 2, Dynamite Cop). It would run on the 2B map with the SHARC HLE and no TGP. **cheap**: it belongs in the board-level install of §2.2, keyed on `board`. STF is unchanged.
+  Who it affects: the next 2A game (VF2, Virtua Cop 2, Dynamite Cop). It would run on the 2B map with the SHARC HLE and no TGP. The field stays unread. Making anything read it is the board install of §2.2, keyed on `board`, and §2.2 stays open: it moves Fighting Vipers, Sega Rally and homebrew, and needs a protocol bump (see the suggested order). It is not a cheap fix.
 - **2A and CPU state are saved under Sega Rally's id only.** `srallyc.h:159`, `:162` and `:163` register `IO5649`, `TGP` and `I960FRAC` with `savestate_extra("srallyc", …)`. `savestate.h:401` and `rollback.h:114-115` write an extra part only when the active profile's id matches. `g_tgp` and `g_io5649` are board state, and `g_i960_cyc_frac` (`i960.h:117`) is CPU state; it stays 0 unless a profile sets the cycle factor, so STF never needs it saved. A second 2A game would lose all three on a save, a load, a rollback or a replay seek: the "loaded state drew no 3D" bug that the comment at `srallyc.h:160` describes. **cheap**: make them core parts, saved when the hardware is attached. That changes `LAYOUT`, so old Sega Rally states stop loading.
 
 ### 7.2 The 315-5649 I/O chip is Sega Rally's only
@@ -319,7 +319,13 @@ Left, with the reason:
 
 - **The polygon count at 0x10400000** (§7.3) needs a MAME check. `polygon_count_r` (`model2_v.cpp:314`) answers the live `poly_list_index`, and only Sky Target reads it. We keep no live count, so mapping it means inventing a value.
 - **The 2A savestate parts** (§7.1). As core parts they change `LAYOUT`, so every older STF savestate and rewind state stops loading, not only Sega Rally's. Keeping `LAYOUT` means saving them when the 2A hardware is attached, which is the board install of §2.2. Only Sega Rally installs 2A today.
-- **`game_profile_t.board`** (§7.1) is the board install of §2.2.
+- **`game_profile_t.board`** (§7.1) stays unread. Making anything read it is the board install of §2.2, which stays open: it moves Fighting Vipers, Sega Rally and homebrew, and needs a protocol bump.
+- **The bufferram fill** (§7.3): still open, **MAME**, not implemented.
+- **The 2B COP function-port encoding** (§7.3): still open, **MAME**, not implemented.
+- **The texram0 alias at 0x10F00000** (§7.3): still open, **MAME**, not implemented.
+- **The 20-bit board timer mask** (§7.3): still open, **MAME**, not implemented. STF's `rand` reads the timers, so a change would also touch netplay.
+- **The 315-5649 I/O chip on 2B** (§7.2): still open, **MAME**, not implemented.
+- **The per-list camera, light and window reset** (§7.4): still open, **MAME**, not implemented.
 - **The fill shader's no-luma ×2** (§7.4) **and the m2snake items** (§7.6) go with the m2snake walker, as §7.6 says.
 - `dl_record` still records only 0x900000-0x91FFFF, so a game that writes its list through a mirror is not captured. A dev-tool gap only.
 
