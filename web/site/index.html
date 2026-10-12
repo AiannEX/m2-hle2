@@ -12,6 +12,7 @@
 <link rel="preload" href="fonts/text.woff2?v=@M2HLE_VERSION@" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/title.woff2?v=@M2HLE_VERSION@" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="m2hle.css?v=@M2HLE_VERSION@">
+<meta name="stf-arcade-api" content="https://arcade.sonicthefighte.rs">
 </head>
 <body>
 
@@ -647,8 +648,8 @@
 <script async src="m2hle.js?v=@M2HLE_VERSION@"></script>
 <!-- The arcade: asks whether to share high scores and usage, and if so boots the game on
      the shared board. arcade/ is a copy of the play.sonicthefighte.rs repository's
-     src/public client; only its API calls leave this site. The game runs without it. -->
-<meta name="stf-arcade-api" content="https://arcade.sonicthefighte.rs">
-<script type="module" src="arcade/stf-arcade.mjs?v=@M2HLE_VERSION@"></script>
+     src/public client; only its API calls leave this site. The game runs without it.
+     m2hle-game.js loads it with ?game=: each game has its own board and words, and
+     Sega Rally's never mention the Fly. -->
 </body>
 </html>
