@@ -327,6 +327,34 @@
   </section>
 </aside>
 
+<!-- Report an issue (m2hle-report.js, Pinboard #653): the frozen frame, a savestate
+     of it and the console, zipped for a GitHub issue. Offline only. -->
+<aside id="report" class="online ps-win" hidden aria-label="Report an issue">
+  <div class="online-head ps-head">
+    <h2 class="ps-title">Report an issue</h2>
+    <button id="rp-close" class="tool ps-back" aria-label="Close"><svg class="ps-glyph" aria-hidden="true"><use href="#ps-circle"/></svg>Back</button>
+  </div>
+  <p id="rp-error" class="error" hidden></p>
+  <section id="rp-busy" hidden>
+    <p class="status">Taking the picture...</p>
+  </section>
+  <section id="rp-ready" hidden>
+    <p class="lead">The game is paused on this frame until you close this panel.</p>
+    <img id="rp-img" class="rp-img" alt="The frame this report is about">
+    <p class="fine left"><span id="rp-frame"></span>, <span id="rp-state"></span>.</p>
+    <label class="rp-label">What went wrong? <textarea id="rp-text" class="rp-text" rows="6" maxlength="4000"
+      placeholder="What you did, what you saw, and what you expected instead."></textarea></label>
+    <p class="np-row">
+      <button id="rp-zip" class="tool primary">Download report</button>
+      <button id="rp-issue" class="tool">Open an issue on GitHub</button>
+      <button id="rp-copy" class="tool">Copy text</button>
+    </p>
+    <p id="rp-saved" class="fine left" hidden>Saved. Attach the zip to the issue by dragging it into GitHub's text box.</p>
+    <p class="fine left">The zip holds the picture, a savestate of the board on this frame (state.sta),
+      the console and your browser and GPU. Dropping it on a running game loads the state back.</p>
+  </section>
+</aside>
+
 <!-- Controller mapping (m2hle-pad.js) and the touch buttons (m2hle-touch.js). Kept in
      this browser's localStorage. On a touch screen the touch section is moved first. -->
 <aside id="controls" class="online controls ps-win" hidden aria-label="Controls">
@@ -594,6 +622,8 @@
     <button id="btn-console" class="tool" aria-expanded="false" aria-controls="drawer">Console <span id="console-badge" class="badge" hidden></span></button>
     <button id="btn-picture" class="tool" aria-expanded="false" aria-controls="drawer">Picture</button>
     <button id="btn-replay" class="tool" aria-expanded="false" aria-controls="drawer">Replay</button>
+    <button id="btn-shot" class="tool" hidden>Screenshot</button>
+    <button id="btn-report" class="tool" aria-expanded="false" aria-controls="report" hidden>Report an issue</button>
   </div>
 </footer>
 
@@ -612,6 +642,7 @@
 <script src="m2hle-touch.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-follow.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-replay.js?v=@M2HLE_VERSION@"></script>
+<script src="m2hle-report.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-page.js?v=@M2HLE_VERSION@"></script>
 <script async src="m2hle.js?v=@M2HLE_VERSION@"></script>
 <!-- The arcade: asks whether to share high scores and usage, and if so boots the game on

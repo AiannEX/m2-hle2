@@ -32,6 +32,7 @@
 #include "net/netplay.h"
 
 #include <emscripten.h>
+#include <GLES3/gl3.h>   /* glReadPixels, for the page's screenshots */
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -376,6 +377,8 @@ static bool web_ggpo_slice(void) {
  * PS3 has no pause either) and to a program with no shell. */
 static bool g_web_paused;
 static bool g_web_select_tap;   /* one shell frame of SELECT, from the page */
+static bool g_web_shot_want;    /* the page asked for a screenshot (web_shot_arm) */
+static bool g_web_shot_state;   /* ... and a savestate taken with it */
 
 static bool web_pause_refused(void) { return netplay_in_room() || netplay_active() || emu_ggpo_wanted(); }
 
@@ -780,7 +783,8 @@ static bool web_keep_picture(bool have_game, bool lobby, bool overlay, bool affo
     const bool board_moved = g_web_perf.slices != s_drawn_slices;
     const bool resized     = sapp_width() != s_drawn_w || sapp_height() != s_drawn_h;
     const bool pots_turned = g_crt_pots.gen != s_drawn_pots;
-    if (have_game && !lobby && !overlay && !board_moved && !resized && !pots_turned && !g_web_objview_show && !afford) {
+    if (have_game && !lobby && !overlay && !board_moved && !resized && !pots_turned && !g_web_objview_show && !afford
+        && !g_web_shot_want) {
         g_web_perf.pictures_skipped++;
         return true;
     }
@@ -843,6 +847,7 @@ typedef struct {
     int   ox, oy, w, h;
     float lerp_t;
 } web_picture_t;
+static void web_shot_done(const web_picture_t *pic);   /* the page's screenshot (Pinboard #653) */
 
 /* The game in its letterbox, through the filter, from the offscreen target or
  * drawn straight in; then the pause menu over it. */
@@ -939,6 +944,7 @@ static void frame(void) {
     if (pic.offscreen) web_draw_offscreen(pic.lerp_t);
 
     web_present(&pic, &lobby_cv);
+    if (g_web_shot_want) web_shot_done(&pic);
     web_count_render(render_t0);
 }
 
@@ -1223,6 +1229,151 @@ EMSCRIPTEN_KEEPALIVE const char *web_rom_missing(void) {
 EMSCRIPTEN_KEEPALIVE int web_state(void) {
     if (!state.romset.loaded) return 0;
     return state.emu.run_state == EMU_RUNNING ? 1 : 2;
+}
+
+/* ---- Screenshots, savestates and issue reports (Pinboard #653) ------------
+ *
+ * The page's Screenshot and Report an issue (web/site/m2hle-report.js). Offline
+ * only, as Pause is: in a room or a match the board is one of two, and a state
+ * of it says nothing the other machine would agree with.
+ *
+ *   web_shot_arm(with_state)        read the next picture drawn back, and save
+ *                                   the board as it was drawn from (a report's)
+ *   web_shot_w() / _h() / _data()   it, as RGBA rows top first, once taken
+ *   web_shot_pending()              1 until that frame has been drawn
+ *   web_shot_free()
+ *   web_report_hold(on)             freeze the board while the report is open
+ *   web_state_save()                a savestate (core/savestate.h) of the board
+ *   web_state_data() / _len()       now, in the heap until web_state_free()
+ *   web_state_load(data, len)       one back: what a report's state.sta is for
+ *
+ * The picture is the game's rectangle on the canvas as the player sees it: the
+ * render scale, the filter, the pots and a menu over it all included. It is read
+ * in the callback that drew it, because a WebGL canvas without
+ * preserveDrawingBuffer is cleared once the browser has shown it. */
+static uint8_t *g_web_shot;
+static int      g_web_shot_w, g_web_shot_h;
+static uint8_t *g_web_state_buf;
+static size_t   g_web_state_len;
+static const char *g_web_state_err = "";
+
+EMSCRIPTEN_KEEPALIVE int web_report_allowed(void) {
+    return state.romset.loaded && !web_pause_refused() ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_shot_free(void) {
+    free(g_web_shot);
+    g_web_shot = NULL;
+    g_web_shot_w = g_web_shot_h = 0;
+}
+static int web_state_save_now(void);
+
+EMSCRIPTEN_KEEPALIVE int web_shot_arm(int with_state) {
+    if (!web_report_allowed()) return 0;
+    web_shot_free();
+    g_web_shot_want = true;
+    g_web_shot_state = with_state != 0;
+    return 1;
+}
+/* 1 until the frame callback has read the armed picture back. */
+EMSCRIPTEN_KEEPALIVE int web_shot_pending(void) { return g_web_shot_want ? 1 : 0; }
+
+/* The report panel's freeze: the page's Pause, but never the Console's pause
+ * menu, which would cover the picture the report is about. */
+EMSCRIPTEN_KEEPALIVE int web_report_hold(int on) {
+    if (on && !web_report_allowed()) return 0;
+    g_web_paused = on != 0;
+    return g_web_paused ? 1 : 0;
+}
+EMSCRIPTEN_KEEPALIVE int      web_shot_w(void)    { return g_web_shot ? g_web_shot_w : 0; }
+EMSCRIPTEN_KEEPALIVE int      web_shot_h(void)    { return g_web_shot ? g_web_shot_h : 0; }
+EMSCRIPTEN_KEEPALIVE uint8_t *web_shot_data(void) { return g_web_shot; }
+
+/* After the swapchain pass: the game's rectangle (top-left origin, as sokol's
+ * viewport has it) out of the default framebuffer, flipped to top first. */
+static void web_shot_take(int ox, int oy, int w, int h) {
+    g_web_shot_want = false;
+    const int fb_w = sapp_width(), fb_h = sapp_height();
+    if (ox < 0) { w += ox; ox = 0; }
+    if (oy < 0) { h += oy; oy = 0; }
+    if (ox + w > fb_w) w = fb_w - ox;
+    if (oy + h > fb_h) h = fb_h - oy;
+    if (w <= 0 || h <= 0) return;
+    uint8_t *px = malloc((size_t)w * (size_t)h * 4u);
+    if (!px) return;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(ox, fb_h - oy - h, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    sg_reset_state_cache();
+    const size_t row = (size_t)w * 4u;
+    uint8_t *tmp = malloc(row);
+    if (!tmp) { free(px); return; }
+    for (int y = 0; y < h / 2; y++) {
+        uint8_t *a = px + (size_t)y * row, *b = px + (size_t)(h - 1 - y) * row;
+        memcpy(tmp, a, row); memcpy(a, b, row); memcpy(b, tmp, row);
+    }
+    free(tmp);
+    for (size_t i = 3; i < row * (size_t)h; i += 4) px[i] = 0xFF;   /* the canvas is opaque */
+    g_web_shot = px;
+    g_web_shot_w = w;
+    g_web_shot_h = h;
+}
+
+/* The game's picture, or the whole canvas under the lobby; then the state, if the
+ * page asked for one, whether or not a picture came back. */
+static void web_shot_done(const web_picture_t *pic) {
+    if (pic->lobby) web_shot_take(0, 0, sapp_width(), sapp_height());
+    else            web_shot_take(pic->ox, pic->oy, pic->w, pic->h);
+    if (g_web_shot_state) web_state_save_now();
+    g_web_shot_state = false;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_state_free(void) {
+    free(g_web_state_buf);
+    g_web_state_buf = NULL;
+    g_web_state_len = 0;
+}
+/* 1 and the state is in web_state_data(), or 0 and web_state_error() says why. */
+static int web_state_save_now(void) {
+    web_state_free();
+    if (!web_report_allowed()) { g_web_state_err = "not while playing online"; return 0; }
+    size_t need = 0;
+    const char *err = emu_state_save_mem(&state.emu, NULL, 0, &need);
+    if (!err) {
+        g_web_state_buf = malloc(need);
+        err = g_web_state_buf ? emu_state_save_mem(&state.emu, g_web_state_buf, need, &g_web_state_len)
+                              : "out of memory";
+    }
+    if (err) { web_state_free(); g_web_state_err = err; return 0; }
+    g_web_state_err = "";
+    return 1;
+}
+EMSCRIPTEN_KEEPALIVE int web_state_save(void) { return web_state_save_now(); }
+
+/* What a report says the board was: {"profile","game","frame"}. */
+EMSCRIPTEN_KEEPALIVE const char *web_report_info(void) {
+    static char buf[256];
+    const game_profile_t *p = state.romset.loaded ? g_active_profile : NULL;
+    snprintf(buf, sizeof buf, "{\"profile\":\"%s\",\"game\":\"%s\",\"frame\":%llu}",
+             p && p->id ? p->id : "", p && p->display_name ? p->display_name : "",
+             (unsigned long long)g_emu_frames);
+    return buf;
+}
+EMSCRIPTEN_KEEPALIVE uint8_t    *web_state_data(void)  { return g_web_state_buf; }
+EMSCRIPTEN_KEEPALIVE int         web_state_len(void)   { return (int)g_web_state_len; }
+EMSCRIPTEN_KEEPALIVE const char *web_state_error(void) { return g_web_state_err; }
+
+/* Not under a follower or a replay, whose board is the feed's. `data` is the
+ * page's malloc'd copy; this frees it. */
+EMSCRIPTEN_KEEPALIVE int web_state_load(uint8_t *data, int len) {
+    const char *err = NULL;
+    if (!web_report_allowed() || g_web_follow || replay_playing()) err = "not while playing online, following or playing a replay";
+    else err = emu_state_load_mem(&state.emu, data, (size_t)len);
+    free(data);
+    g_web_state_err = err ? err : "";
+    if (err) return 0;
+    state.emu.run_state = EMU_RUNNING;
+    return 1;
 }
 
 /* Let go of every held input. The page calls this when focus moves into its
