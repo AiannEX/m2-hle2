@@ -89,14 +89,6 @@ static uint32_t model2a_zero_read_cb(mem_region_t *r, uint32_t addr, int size) {
     return 0;
 }
 
-/* model2.cpp tgpid_r */
-static uint32_t model2a_tgpid_read_cb(mem_region_t *r, uint32_t addr, int size) {
-    static const uint8_t id[16] = { 0,'T','A','H', 0,'A','K','O', 0,'Z','A','K', 0,'M','T','K' };
-    uint32_t off = addr - r->base, v = 0;
-    for (int k = 0; k < size && off + (uint32_t)k < 16u; k++) v |= (uint32_t)id[off + (uint32_t)k] << (8 * k);
-    return v;
-}
-
 /* ---- Texture and luma RAM ------------------------------------------------ */
 
 /* The regions carry no data pointer (their windows are twice the buffer, and
@@ -107,13 +99,16 @@ static inline uint8_t *model2a_tex_buf(memory_bus_t *bus, uint32_t addr) {
 }
 
 /* model2.cpp tex0_w / tex1_w: dword n of the window holds 16 bits, the half
- * (n & 1) of 32-bit word n >> 1 -- byte 2n of the buffer. */
+ * (n & 1) of 32-bit word n >> 1 -- byte 2n of the buffer. The handler ignores
+ * the write's mask and keeps the low 16 bits of the dword as the bus puts them
+ * on the lanes, so a byte or halfword written to the upper lanes stores 0. */
 static void model2a_tex_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int size) {
-    if (size != 4) return;
     memory_bus_t *bus = (memory_bus_t *)r->user;
-    uint32_t n = ((addr - r->base) & 0x1FFFFFu) >> 2;
+    uint32_t off = (addr - r->base) & 0x1FFFFFu;
+    uint32_t n = off >> 2;
     uint32_t at = (n * 2u) & (TEXRAM0_SIZE - 1u);
     uint8_t *buf = model2a_tex_buf(bus, addr);
+    if (size != 4) val <<= 8u * (off & 3u);
     uint8_t lo = (uint8_t)val, hi = (uint8_t)(val >> 8);
     if (buf[at] != lo || buf[at + 1] != hi) {
         buf[at] = lo; buf[at + 1] = hi;
@@ -122,12 +117,17 @@ static void model2a_tex_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, i
     }
 }
 
+/* A read is plain RAM (MAME .ram() over the same share): dword n is texels 2n
+ * and 2n + 1, bytes 4n.. of the buffer. The writes fill only the first half of
+ * the 2 MB share, so the rest reads 0. */
 static uint32_t model2a_tex_read_cb(mem_region_t *r, uint32_t addr, int size) {
-    (void)size;
-    uint32_t n = ((addr - r->base) & 0x1FFFFFu) >> 2;
-    uint32_t at = (n * 2u) & (TEXRAM0_SIZE - 1u);
+    uint32_t off = (addr - r->base) & 0x1FFFFFu;
+    if (off >= TEXRAM0_SIZE) return 0;
     const uint8_t *buf = model2a_tex_buf((memory_bus_t *)r->user, addr);
-    return (uint32_t)buf[at] | (uint32_t)buf[at + 1] << 8;
+    uint32_t v = 0;
+    for (int k = 0; k < size && off + (uint32_t)k < TEXRAM0_SIZE; k++)
+        v |= (uint32_t)buf[off + (uint32_t)k] << (8 * k);
+    return v;
 }
 
 /* model2.cpp lumaram (umask32 0x000000FF): luma byte n is the low byte of
@@ -180,9 +180,6 @@ static inline void model2a_install(memory_bus_t *bus,
         r->read_cb = model2a_ctl_read_cb;
         r->write_cb = model2a_ctl_write_cb;
     }
-    if ((r = mem_add_region(bus, "TGP_ID", 0x00980030u, 0x10u, NULL, 1)))
-        r->read_cb = model2a_tgpid_read_cb;
-
     static const struct { const char *name; uint32_t base; } tex[] = {
         { "TEXRAM0_2A", 0x12000000u }, { "TEXRAM0_2A_M", 0x12200000u },
         { "TEXRAM1_2A", 0x12400000u }, { "TEXRAM1_2A_M", 0x12600000u },

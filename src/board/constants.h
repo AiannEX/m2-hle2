@@ -64,6 +64,8 @@
 
 #define COPRO_CONTROL1_BASE        0x00980000
 #define COPRO_CONTROL1_SIZE        0x00000024
+#define TGP_ID_BASE                0x00980030
+#define TGP_ID_SIZE                0x00000010
 #define GEO_CTL1_BASE              0x00980008
 #define GEO_CTL1_SIZE              0x00000004
 #define COPRO_STATUS_BASE          0x00980014

@@ -1235,8 +1235,17 @@ static inline void geo3d__geol_object(geo3d_state_t *geo, int *count, const geo3
 /* Direct data (0x02): polygons in the list itself. Returns its length. */
 static inline uint32_t geo3d__geol_direct(geo3d_state_t *geo, int *count, const geo3d__geol_t *s,
                                           const uint32_t *words, uint32_t nw, uint32_t p) {
+    static int warned_full = 0;
     uint32_t len = geodl_direct_len(words, nw, p);
-    if (p + 1u + len > nw || geo->direct_used + len > GEO3D_DIRECT_WORDS) return len;
+    if (p + 1u + len > nw) return len;
+    if (geo->direct_used + len > GEO3D_DIRECT_WORDS) {
+        /* MAME has no such store; only its 32768-polygon list ends a frame. */
+        if (!warned_full) {
+            LOG_WARN("geo3d: direct data past %u words in one list; the rest is not drawn", GEO3D_DIRECT_WORDS);
+            warned_full = 1;
+        }
+        return len;
+    }
     captured_model_t *cm = &geo->captured[(*count)++];
     memset(cm, 0, sizeof *cm);
     cm->model_idx  = -1;
@@ -1308,6 +1317,9 @@ static inline uint32_t geo3d__geol_skip(uint32_t cmd, const uint32_t *words, uin
         case 0x10: case 0x1E: return 1;
         case 0x0D: return 2;
         case 0x1D: return 2 + 3 * geo3d__geol_arg(words, nw, p, 1);
+        /* geo_test: 32 FIFO-test words, a block count, three words a block
+         * (model2_v.cpp geo_test) */
+        case 0x0E: return 33 + 3 * geo3d__geol_arg(words, nw, p, 32);
         default:   return 0;
     }
 }
@@ -1382,6 +1394,15 @@ static inline bool geo3d_scan_geo_list(geo3d_state_t *geo,
         uint32_t cmd = (op >> 23) & 0x1F;
         if (cmd == 0x0F || cmd == 0x1F) { ended = true; break; }
         p += 1u + geo3d__geol_command(geo, &count, &s, words, nw, p, main_data, main_data_size, table);
+    }
+    if (count >= MAX_GEO_MODELS && !ended) {
+        /* MAME counts no objects (its only cap is 32768 polygons). Here the
+         * walk stops short of END, so the frame draws no 3D at all. */
+        static int warned_cap = 0;
+        if (!warned_cap) {
+            LOG_WARN("geo3d: a display list has more than %d objects; its frame draws no 3D", MAX_GEO_MODELS);
+            warned_cap = 1;
+        }
     }
     geo->captured_count = count;
     geo->geo_windows    = s.window + 1;

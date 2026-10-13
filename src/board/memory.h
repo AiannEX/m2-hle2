@@ -259,6 +259,26 @@ static void coprogram_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int
     if (size == 4) cop_write(val);
 }
 
+/* The coprocessor ID at 0x980030, on every board (MAME tgpid_r, in
+ * model2_base_mem; "Top Skater reads here and discards the result"). STF never
+ * reads it. */
+static uint32_t tgp_id_read_cb(mem_region_t *r, uint32_t addr, int size) {
+    static const uint8_t id[16] = { 0,'T','A','H', 0,'A','K','O', 0,'Z','A','K', 0,'M','T','K' };
+    uint32_t off = addr - r->base, v = 0;
+    for (int k = 0; k < size && off + (uint32_t)k < 16u; k++) v |= (uint32_t)id[off + (uint32_t)k] << (8 * k);
+    return v;
+}
+
+/* Buffer RAM repeats every 128 KB up to 0x97FFFF (MAME .mirror(0x60000)), and
+ * the coprocessor ID sits beside COPRO_CTL. STF touches neither. */
+static void mem__add_base_extras(memory_bus_t *bus) {
+    static const char *const name[3] = { "BUFF_RAM_M1", "BUFF_RAM_M2", "BUFF_RAM_M3" };
+    for (uint32_t i = 0; i < 3u; i++)
+        mem_add_region(bus, name[i], BUFF_RAM_BASE + 0x20000u * (i + 1u), BUFF_RAM_SIZE, bus->buff_ram, 0);
+    mem_region_t *r = mem_add_region(bus, "TGP_ID", TGP_ID_BASE, TGP_ID_SIZE, NULL, 1);
+    if (r) r->read_cb = tgp_id_read_cb;
+}
+
 /* COPRO_CTL (0x980000): plain registers, except that 0x980004 reads the COP's
  * reply-FIFO status (cop_fifo_status), which boot code polls for ready. */
 static uint32_t copro_ctl_read_cb(mem_region_t *r, uint32_t addr, int size) {
@@ -516,6 +536,7 @@ static inline void geodl_apply_state(const uint32_t *L, uint32_t nw, uint32_t rs
             case 0x0A: case 0x1A: case 0x0C: case 0x1C: len = 3; break;
             case 0x0B: case 0x1B: len = 12; break;
             case 0x1D: len = 2 + 3 * LA(1); break;
+            case 0x0E: len = 33 + 3 * LA(32); break;      /* geo_test */
             case 0x02: case 0x12: len = geodl_direct_len(L, nw, p); break;
             case 0x0F: case 0x1F: len = 0; guard = 0x8000u; break;   /* END */
             default: break;
@@ -598,9 +619,14 @@ static uint32_t geo_read_cb(mem_region_t *r, uint32_t addr, int size) {
     uint32_t off = addr - GEO_BASE;
     if (off == 0x2008) return g_geo.wstart;
     if (off == 0x3008) return g_geo.rstart;
-    uint32_t v = 0;
-    if (r->data && off + 4 <= r->size) memcpy(&v, r->data + off, 4);
-    return size == 1 ? (v & 0xFF) : size == 2 ? (v & 0xFFFF) : v;
+    (void)r; (void)size;
+    return 0;                                   /* MAME geo_r: anything else reads 0 */
+}
+
+/* MAME geo_prg_r: the geometry FIFO reads all ones. */
+static uint32_t geo_program_read_cb(mem_region_t *r, uint32_t addr, int size) {
+    (void)r; (void)addr;
+    return size == 1 ? 0xFFu : size == 2 ? 0xFFFFu : 0xFFFFFFFFu;
 }
 
 /* GEO_PROGRAM (0x804000): raw list words. */
@@ -704,12 +730,13 @@ static inline void mem_add_regions(memory_bus_t *bus, uint8_t *rom_data, size_t 
     { mem_region_t *r = mem_add_region(bus, "GEO", GEO_BASE, GEO_SIZE, bus->geo, 0);
       if (r) { r->read_cb = geo_read_cb; r->write_cb = geo_write_cb; } }
     { mem_region_t *r = mem_add_region(bus, "GEO_PROGRAM", GEO_PROGRAM_BASE, GEO_PROGRAM_SIZE, bus->geo_program, 0);
-      if (r) r->write_cb = geo_program_write_cb; }
+      if (r) { r->read_cb = geo_program_read_cb; r->write_cb = geo_program_write_cb; } }
     mem_add_region(bus, "GEO_CMD",         GEO_CMD_BASE,         GEO_CMD_SIZE,         bus->geo_cmd,       0);
     { mem_region_t *r = mem_add_region(bus, "COPROGRAM", COPROGRAM_BASE, COPROGRAM_SIZE, bus->coprogram, 0);
       if (r) { r->read_cb = coprogram_read_cb; r->write_cb = coprogram_write_cb; } }
     mem_add_region(bus, "COPRO_SHARC_IOP", COPRO_SHARC_IOP_BASE, COPRO_SHARC_IOP_SIZE, bus->copro_sharc,   0);
     mem_add_region(bus, "BUFF_RAM",        BUFF_RAM_BASE,        BUFF_RAM_SIZE,        bus->buff_ram,      0);
+    mem__add_base_extras(bus);
     /* Wire BUFF_RAM into the SHARC as DM[0x01400000]: the i960 writes animation
      * blobs to BUFF_RAM (0x00900000); 0x25004A4A reads them by word offset.
      * cop_reset() zeroed the field, so set it here (after reset, after alloc). */
@@ -751,8 +778,8 @@ static inline void mem_add_regions(memory_bus_t *bus, uint8_t *rom_data, size_t 
     mem_add_region(bus, "IO",              IO_BASE,              IO_SIZE,              bus->io,            0);
     mem_add_region(bus, "SERIAL",          SERIAL_BASE,          SERIAL_SIZE,          bus->serial,        0);
     mem_add_region(bus, "BACK",            BACK_BASE,            BACK_SIZE,            bus->back,          0);
-    mem_add_region(bus, "MAIN_DATA",       MAIN_DATA_BASE,       MAIN_DATA_SIZE,       bus->main_data,     0);
-    mem_add_region(bus, "XTRA_DATA",       XTRA_DATA_BASE,       XTRA_DATA_SIZE,       bus->xtra_data,     0);
+    mem_add_region(bus, "MAIN_DATA",       MAIN_DATA_BASE,       MAIN_DATA_SIZE,       bus->main_data,     1);
+    mem_add_region(bus, "XTRA_DATA",       XTRA_DATA_BASE,       XTRA_DATA_SIZE,       bus->xtra_data,     1);
     mem_add_region(bus, "UNKNOWN_VID",     UNKNOWN_VID_BASE,     UNKNOWN_VID_SIZE,     bus->unknown_vid,   0);
     mem_add_region(bus, "TEXRAM0_A",       TEXRAM0_ALIAS_BASE,   TEXRAM0_SIZE,         bus->texram0,       0);
     mem_add_region(bus, "TEXRAM0",         TEXRAM0_BASE,         TEXRAM0_SIZE,         bus->texram0,       0);
