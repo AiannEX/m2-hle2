@@ -1852,17 +1852,8 @@ typedef struct {
     rpcn_client_t       client;
     rpcn_twitch_state_t state;
 
-    char     flow_id[128];
-    char     user_code[32];
-    char     verification_uri[256];
-    uint32_t expires_in;
-    uint32_t interval_s;
-
-    /* What the flow yields. */
-    char     npid[20];
-    char     online_name[32];
-    char     avatar_url[256];
-    char     login_token[80];
+    rpcn_twitch_code_t  code;    /* the start's reply */
+    rpcn_twitch_login_t login;   /* what the flow yields */
 
     uint64_t pending;
     uint64_t deadline_ms;    /* when the device code dies */
@@ -1946,20 +1937,15 @@ static inline bool rpcn_twitch_on_start_reply(rpcn_twitch_t *t, const rpcn_packe
         rpcn_twitch_fail(t, "%s", rpcn_twitch_error_text(pkt->error));
         return false;
     }
-    uint32_t expires = 0, interval = 0;
-    if (!rpcn_parse_twitch_start(pkt->payload, pkt->payload_size,
-                                 t->flow_id, sizeof(t->flow_id),
-                                 t->user_code, sizeof(t->user_code),
-                                 t->verification_uri, sizeof(t->verification_uri),
-                                 &expires, &interval)) {
+    if (!rpcn_parse_twitch_start(pkt->payload, pkt->payload_size, &t->code)) {
         rpcn_twitch_fail(t, "the server's Twitch reply could not be read");
         return false;
     }
     t->started_ok   = true;
-    t->expires_in   = expires ? expires : 900;
-    t->interval_s   = interval ? interval : 5;
-    t->deadline_ms  = net_now_ms() + (uint64_t)t->expires_in * 1000ull;
-    t->next_poll_ms = net_now_ms() + (uint64_t)t->interval_s * 1000ull;
+    if (!t->code.expires_in) t->code.expires_in = 900;
+    if (!t->code.interval_s) t->code.interval_s = 5;
+    t->deadline_ms  = net_now_ms() + (uint64_t)t->code.expires_in * 1000ull;
+    t->next_poll_ms = net_now_ms() + (uint64_t)t->code.interval_s * 1000ull;
     t->state        = RPCN_TWITCH_WAITING;
     return true;
 }
@@ -1971,13 +1957,13 @@ static inline bool rpcn_twitch_on_poll_reply(rpcn_twitch_t *t, const rpcn_packet
     switch (pkt->error) {
         case RPCN_ERR_TWITCH_PENDING:
             /* The overwhelmingly normal answer: they have not clicked yet. */
-            t->next_poll_ms = net_now_ms() + (uint64_t)t->interval_s * 1000ull;
+            t->next_poll_ms = net_now_ms() + (uint64_t)t->code.interval_s * 1000ull;
             return true;
         case RPCN_ERR_TWITCH_SLOW_DOWN:
             /* A rate limit, not a failure. Back off by a whole extra
              * interval rather than retrying at the same cadence, or the
              * next poll earns the same answer. */
-            t->next_poll_ms = net_now_ms() + (uint64_t)(t->interval_s * 2u) * 1000ull;
+            t->next_poll_ms = net_now_ms() + (uint64_t)(t->code.interval_s * 2u) * 1000ull;
             return true;
         case RPCN_OK:
             break;
@@ -1986,11 +1972,7 @@ static inline bool rpcn_twitch_on_poll_reply(rpcn_twitch_t *t, const rpcn_packet
             return false;
     }
 
-    if (!rpcn_parse_twitch_poll(pkt->payload, pkt->payload_size,
-                                t->npid, sizeof(t->npid),
-                                t->online_name, sizeof(t->online_name),
-                                t->avatar_url, sizeof(t->avatar_url),
-                                t->login_token, sizeof(t->login_token))) {
+    if (!rpcn_parse_twitch_poll(pkt->payload, pkt->payload_size, &t->login)) {
         rpcn_twitch_fail(t, "the server's Twitch reply could not be read");
         return false;
     }
@@ -2031,10 +2013,10 @@ static inline void rpcn_twitch_send_next(rpcn_twitch_t *t) {
     }
 
     if (t->state == RPCN_TWITCH_WAITING && !t->pending && net_now_ms() >= t->next_poll_ms) {
-        t->pending = rpcn_twitch_poll_flow(&t->client, t->flow_id);
+        t->pending = rpcn_twitch_poll_flow(&t->client, t->code.flow_id);
         if (!t->pending) { rpcn_twitch_fail(t, "%s", rpcn_last_error(&t->client)); return; }
         /* Re-armed by whichever status comes back. */
-        t->next_poll_ms = net_now_ms() + (uint64_t)t->interval_s * 1000ull;
+        t->next_poll_ms = net_now_ms() + (uint64_t)t->code.interval_s * 1000ull;
     }
 }
 

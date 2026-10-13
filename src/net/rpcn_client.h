@@ -1489,15 +1489,31 @@ static inline uint32_t rpcn_split_strings(const uint8_t *p, uint32_t size,
     return got;
 }
 
+/* The Twitch start's reply: the device code to show, where to enter it, and how
+ * long it lives. */
+typedef struct {
+    char     flow_id[128];
+    char     user_code[32];
+    char     verification_uri[256];
+    uint32_t expires_in;
+    uint32_t interval_s;
+} rpcn_twitch_code_t;
+
+/* A poll's reply once the code is approved: the account and its login token. */
+typedef struct {
+    char npid[20];
+    char online_name[32];
+    char avatar_url[256];
+    char login_token[80];
+} rpcn_twitch_login_t;
+
 /* Reply: flow_id, user_code, verification_uri (strings), then u32 expires_in and
- * u32 interval. */
+ * u32 interval, as the server sent them (0 included). */
 static inline bool rpcn_parse_twitch_start(const uint8_t *payload, uint32_t size,
-                                           char *flow_id, uint32_t flow_cap,
-                                           char *user_code, uint32_t code_cap,
-                                           char *uri, uint32_t uri_cap,
-                                           uint32_t *out_expires, uint32_t *out_interval) {
-    char *outs[3] = { flow_id, user_code, uri };
-    uint32_t caps[3] = { flow_cap, code_cap, uri_cap };
+                                           rpcn_twitch_code_t *code) {
+    char *outs[3] = { code->flow_id, code->user_code, code->verification_uri };
+    uint32_t caps[3] = { sizeof(code->flow_id), sizeof(code->user_code),
+                         sizeof(code->verification_uri) };
     if (rpcn_split_strings(payload, size, outs, caps, 3) != 3) return false;
 
     /* The two u32s sit after the three terminators; find where they start rather
@@ -1508,19 +1524,17 @@ static inline bool rpcn_parse_twitch_start(const uint8_t *payload, uint32_t size
         at++;
     }
     if (at + 8 > size) return false;
-    if (out_expires)  *out_expires  = rpcn_get_u32(payload + at);
-    if (out_interval) *out_interval = rpcn_get_u32(payload + at + 4);
+    code->expires_in = rpcn_get_u32(payload + at);
+    code->interval_s = rpcn_get_u32(payload + at + 4);
     return true;
 }
 
 /* Reply: npid, online_name, avatar_url, login_token — all strings. */
 static inline bool rpcn_parse_twitch_poll(const uint8_t *payload, uint32_t size,
-                                          char *npid, uint32_t npid_cap,
-                                          char *online_name, uint32_t name_cap,
-                                          char *avatar, uint32_t avatar_cap,
-                                          char *login_token, uint32_t token_cap) {
-    char *outs[4] = { npid, online_name, avatar, login_token };
-    uint32_t caps[4] = { npid_cap, name_cap, avatar_cap, token_cap };
+                                          rpcn_twitch_login_t *login) {
+    char *outs[4] = { login->npid, login->online_name, login->avatar_url, login->login_token };
+    uint32_t caps[4] = { sizeof(login->npid), sizeof(login->online_name),
+                         sizeof(login->avatar_url), sizeof(login->login_token) };
     return rpcn_split_strings(payload, size, outs, caps, 4) == 4;
 }
 

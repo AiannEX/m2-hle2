@@ -1998,8 +1998,8 @@ static inline void netplay_status_account(netplay_status_t *st) {
     st->twitch_signed_in = g_netplay.cfg.twitch_token[0] != '\0';
     netplay_copy_str(st->npid, sizeof(st->npid), g_netplay.cfg.npid);
     netplay_copy_str(st->server, sizeof(st->server), g_netplay.cfg.server);
-    netplay_copy_str(st->twitch_user_code, sizeof(st->twitch_user_code), g_netplay.twitch.user_code);
-    netplay_copy_str(st->twitch_uri, sizeof(st->twitch_uri), g_netplay.twitch.verification_uri);
+    netplay_copy_str(st->twitch_user_code, sizeof(st->twitch_user_code), g_netplay.twitch.code.user_code);
+    netplay_copy_str(st->twitch_uri, sizeof(st->twitch_uri), g_netplay.twitch.code.verification_uri);
     /* The token's owner, not whoever is in the account box: the window prints
      * this as "Signed in with Twitch as ...", and with two accounts on one
      * machine those are no longer the same name. */
@@ -3307,11 +3307,11 @@ static inline void netplay_pump_twitch(void) {
     if (now == before) return;
 
     if (now == RPCN_TWITCH_WAITING) {
-        netplay_log("Twitch: enter code %s at %s", g_netplay.twitch.user_code,
-                    g_netplay.twitch.verification_uri);
+        netplay_log("Twitch: enter code %s at %s", g_netplay.twitch.code.user_code,
+                    g_netplay.twitch.code.verification_uri);
         if (!g_netplay_may_open_browser)
             netplay_log("Twitch: open that address on any machine and approve the code");
-        else if (!netplay_open_url(g_netplay.twitch.verification_uri))
+        else if (!netplay_open_url(g_netplay.twitch.code.verification_uri))
             netplay_log("Twitch: could not open a browser - go to that address yourself");
         return;
     }
@@ -3322,11 +3322,11 @@ static inline void netplay_pump_twitch(void) {
     }
 
     if (now == RPCN_TWITCH_DONE) {
-        snprintf(g_netplay.cfg.npid, sizeof(g_netplay.cfg.npid), "%s", g_netplay.twitch.npid);
+        snprintf(g_netplay.cfg.npid, sizeof(g_netplay.cfg.npid), "%s", g_netplay.twitch.login.npid);
         snprintf(g_netplay.cfg.twitch_token, sizeof(g_netplay.cfg.twitch_token), "%s",
-                 g_netplay.twitch.login_token);
+                 g_netplay.twitch.login.login_token);
         snprintf(g_netplay.cfg.twitch_npid, sizeof(g_netplay.cfg.twitch_npid), "%s",
-                 g_netplay.twitch.npid);
+                 g_netplay.twitch.login.npid);
         /* the server the flow ran against: TWITCH_START stored it */
         snprintf(g_netplay.cfg.twitch_server, sizeof(g_netplay.cfg.twitch_server), "%s",
                  g_netplay.cfg.server);
