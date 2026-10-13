@@ -258,17 +258,18 @@ static inline void romset_free(romset_t *rs) {
  * interleave or byte swap, no CRC pass. `--export-roms DIR` writes one from a
  * zip. The directory's name picks the profile, as the zip's basename does. A
  * region whose file is missing stays NULL, as it does for a set without it. */
-static const char *const k_romset_files[7] = {
+#define ROMSET_FILES 8
+static const char *const k_romset_files[ROMSET_FILES] = {
     "maincpu.bin", "main_data.bin", "copro_data.bin", "polygons.bin",
-    "textures.bin", "audiocpu.bin", "samples.bin",
+    "textures.bin", "audiocpu.bin", "samples.bin", "tgp_tables.bin",
 };
 
 static inline uint8_t **romset_region(romset_t *rs, int i, size_t **size) {
-    uint8_t **r[7] = { &rs->maincpu, &rs->main_data, &rs->copro_data, &rs->polygons,
-                       &rs->textures, &rs->audiocpu, &rs->samples };
-    size_t *z[7] = { &rs->maincpu_size, &rs->main_data_size, &rs->copro_data_size,
-                     &rs->polygons_size, &rs->textures_size, &rs->audiocpu_size,
-                     &rs->samples_size };
+    uint8_t **r[ROMSET_FILES] = { &rs->maincpu, &rs->main_data, &rs->copro_data, &rs->polygons,
+                                  &rs->textures, &rs->audiocpu, &rs->samples, &rs->tgp_tables };
+    size_t *z[ROMSET_FILES] = { &rs->maincpu_size, &rs->main_data_size, &rs->copro_data_size,
+                                &rs->polygons_size, &rs->textures_size, &rs->audiocpu_size,
+                                &rs->samples_size, &rs->tgp_tables_size };
     *size = z[i];
     return r[i];
 }
@@ -280,7 +281,7 @@ static inline bool romset_is_dir(const char *path) {
 
 static inline int romset_load_dir(romset_t *rs, const char *dir) {
     romset_free(rs);
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < ROMSET_FILES; i++) {
         char path[1024];
         size_t *size;
         uint8_t **region = romset_region(rs, i, &size);
@@ -299,7 +300,7 @@ static inline int romset_save_dir(const romset_t *rs, const char *dir) {
 #else
     mkdir(dir, 0777);
 #endif
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < ROMSET_FILES; i++) {
         char path[1024];
         size_t *size;
         uint8_t **region = romset_region((romset_t *)rs, i, &size);
