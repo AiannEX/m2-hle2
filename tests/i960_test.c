@@ -92,12 +92,23 @@ static void test_shrdi(uint32_t CODE) {
 
 /* The game's wait table moves the board timing's costs a cycle a word for
  * each wait it differs from STF's, where the costs were measured (Pinboard
- * #763). STF's table leaves them; Sega Rally's puts program ROM at 4 waits
- * and its backup SRAM at 4; a word that is not a count (0, External) leaves
- * the area alone. */
+ * #763), and by the DRAM bit where the area and its measurement differ on it
+ * (#772). STF's table leaves the measured areas; Sega Rally's puts program ROM
+ * at 4 waits and its backup SRAM at 4; a word that is not a count (0,
+ * External) leaves the area alone. */
 static void put_table(uint8_t *t, const uint32_t *w) {
     for (int a = 0; a < I960_BT_AREAS; a++)
         for (int b = 0; b < 4; b++) t[4 * a + b] = (uint8_t)(w[a] >> (8 * b));
+}
+
+/* Every region the bench measured under its own area keeps that cost. */
+static int measured_kept(void) {
+    for (int r = 0; r < I960_BT_REGIONS; r++) {
+        if (r == I960_BT_BACK || r == I960_BT_DLRAM) continue;
+        for (int n = 1; n <= 4; n++)
+            if (g_i960_bt_ld[r][n] != g_i960_bt_ld0[r][n] || g_i960_bt_st[r][n] != g_i960_bt_st0[r][n]) return 0;
+    }
+    return 1;
 }
 
 static void test_area_waits(void) {
@@ -107,22 +118,24 @@ static void test_area_waits(void) {
     i960_bt_init();
     put_table(t, stf);
     i960_bt_areas(t);
-    int ok = 1;
-    for (int r = 0; r < I960_BT_REGIONS; r++)
-        for (int n = 1; n <= 4; n++)
-            if (r != I960_BT_BACK && (g_i960_bt_ld[r][n] != g_i960_bt_ld0[r][n] || g_i960_bt_st[r][n] != g_i960_bt_st0[r][n])) ok = 0;
-    CHECK(ok && g_i960_bt_fill[I960_BT_ROM] == 0 && g_i960_bt_fill[I960_BT_RAM] == -4 * I960_BT_WAIT,
-          "STF's wait table leaves the measured costs; code in 1-wait RAM fills 4 cycles sooner");
-    CHECK(g_i960_bt_ld[I960_BT_BACK][1] == g_i960_bt_ld0[I960_BT_BACK][1] + 3 * I960_BT_WAIT,
-          "backup SRAM at 4 waits costs 3 a word over work RAM");
+    CHECK(measured_kept() && g_i960_bt_fill[I960_BT_ROM] == 0 && g_i960_bt_brfill[I960_BT_ROM] == 0
+          && g_i960_bt_fill[I960_BT_RAM] == -4 * I960_BT_WAIT + I960_BT_FILL_DRAM,
+          "STF's wait table leaves the measured costs; code in 1-wait DRAM fills 2.8 cycles sooner");
+    CHECK(g_i960_bt_ld[I960_BT_DLRAM][1] == g_i960_bt_ld0[I960_BT_RAM][1] - I960_BT(0.84375)
+          && g_i960_bt_st[I960_BT_DLRAM][1] == g_i960_bt_st0[I960_BT_RAM][1] - I960_BT(0.47265625)
+          && g_i960_bt_ld[I960_BT_DLRAM][4] == g_i960_bt_ld0[I960_BT_RAM][4] - I960_BT(1.1875),
+          "download RAM is work RAM without the DRAM bit");
+    CHECK(g_i960_bt_ld[I960_BT_BACK][1] == g_i960_bt_ld0[I960_BT_BACK][1] + 3 * I960_BT_WAIT - I960_BT(1.109375),
+          "backup SRAM at 4 waits costs 3 a word over work RAM, less the DRAM bit");
     put_table(t, rally);
     i960_bt_areas(t);
     CHECK(g_i960_bt_ld[I960_BT_ROM][2] == g_i960_bt_ld0[I960_BT_ROM][2] + 4 * I960_BT_WAIT
-          && g_i960_bt_fill[I960_BT_ROM] == 8 * I960_BT_WAIT,
-          "program ROM at 4 waits: +2 a word, +8 a line fill");
+          && g_i960_bt_fill[I960_BT_ROM] == 8 * I960_BT_WAIT && g_i960_bt_brfill[I960_BT_ROM] == 12 * I960_BT_WAIT,
+          "program ROM at 4 waits: +2 a word, +8 a line fill, +12 a branch's");
     memset(t, 0, sizeof t);
     i960_bt_areas(t);
-    CHECK(g_i960_bt_ld[I960_BT_ROM][1] == g_i960_bt_ld0[I960_BT_ROM][1] && g_i960_bt_fill[I960_BT_RAM] == 0,
+    CHECK(g_i960_bt_ld[I960_BT_ROM][1] == g_i960_bt_ld0[I960_BT_ROM][1] && g_i960_bt_fill[I960_BT_RAM] == 0
+          && g_i960_bt_ld[I960_BT_DLRAM][1] == g_i960_bt_ld0[I960_BT_DLRAM][1],
           "an unwritten table leaves the measured costs");
 }
 
