@@ -1582,7 +1582,7 @@ static inline void ps3_peer_open_rudp(ps3_link_t *L, ps3_peer_t *p, const rpcs3_
                                       uint64_t now_us) {
     rpcn_session_t *s = L->session;
     rudp_peer_init(&p->rudp, sp->ip, sp->port, now_us ^ ((uint64_t)p->member_id << 40),
-                   ps3_link_send_udp, s, ps3_deliver_cb, p);
+                   (rudp_io_t){ ps3_link_send_udp, s, ps3_deliver_cb, p });
     p->rudp_up = true;
     /* Channel 1 exists only between the owner and each member; 2 and 3
      * between every pair (the PS3's FUN_000b6884 connect loop). */
