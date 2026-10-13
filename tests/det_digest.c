@@ -94,6 +94,7 @@
 #include "sound.h"
 #include "input.h"
 #include "registry.h"
+#include "gems.h"
 
 static memory_bus_t     bus;
 static i960_cpu_t       cpu;
@@ -137,7 +138,12 @@ static int script_n;
  * reached, the state from K frames back loaded and the K frames run again.
  * Frames are printed and samples hashed only the first time, so the output has
  * to be the plain run's (the samples with --no-sound-thread, which makes them
- * inside their own slice). */
+ * inside their own slice). *
+ *
+ * --gems-i960 / --gems-cop / --gems-verify are m2hle's (core/gems.h): Sega's C
+ * from Gems Collection in place of the trapped i960 functions and the COP
+ * firmware, or each trap run both ways. A build without vendor/gems-c logs
+ * that they do nothing. --gems-verify's tallies go to the log at the end. */
 static const char *follow_out, *follow_in;
 static uint32_t    follow_every;
 #define POKE_MAX 16
@@ -487,7 +493,7 @@ static void parse_script(const char *s) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "usage: det_digest <merged sfight zip> [--frames N] [--script S] [--from F] [--out FILE] [--save-at F:FILE] [--load FILE] [--mem] [--profile ID]\n");
+        fprintf(stderr, "usage: det_digest <merged sfight zip> [--frames N] [--script S] [--from F] [--out FILE] [--save-at F:FILE] [--load FILE] [--mem] [--profile ID] [--gems-i960] [--gems-cop] [--gems-verify]\n");
         return 2;
     }
     uint32_t frames = 3600, from = 0;
@@ -531,6 +537,9 @@ int main(int argc, char **argv) {
         }
         else if (!strcmp(argv[i], "--profile") && i + 1 < argc) profile_id = argv[++i];
         else if (!strcmp(argv[i], "--mem")) state_mem = true;
+        else if (!strcmp(argv[i], "--gems-i960"))   g_gems_i960 = true;
+        else if (!strcmp(argv[i], "--gems-cop"))    g_gems_cop = true;
+        else if (!strcmp(argv[i], "--gems-verify")) g_gems_verify = true;
         else if (!strcmp(argv[i], "--rewind-census")) rewind_census = true;
         else if (!strcmp(argv[i], "--rewind") && i + 1 < argc) {
             if (!rewind_arg(argv[++i])) return 2;
@@ -589,6 +598,7 @@ int main(int argc, char **argv) {
 
     /* main_web.c web_install_board, which is also what a netplay reset runs. */
     g_active_profile->install_fn(&romset, &cpu, &bus);
+    if (g_gems_i960 || g_gems_cop || g_gems_verify) gems_apply(profile_rom_set(g_active_profile));
     irqt_reset();
     if (g_active_profile->quirks.enable_68k_sound) {
         sound_reset();
@@ -718,6 +728,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "sound: %s; i960 commands %u, bytes that waited a slice %llu, midi drops %u\n",
             g_shle.on ? "driver in C (--sound-hle)" : "68000", g_sound.code_n,
             (unsigned long long)g_sound.midi_holds, g_sound.scsp.mi_drops);
+    gems_verify_report();
     if (in_n) {
         if (mismatches) fprintf(stderr, "input log: %u of %u frames' checks differ, the first at session frame %u\n",
                                 (unsigned)mismatches, (unsigned)g_emu_frames, (unsigned)first_mismatch);
