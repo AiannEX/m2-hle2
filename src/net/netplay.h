@@ -175,8 +175,10 @@
  *    attract fight's push-out limits differed from frame +510 (Pinboard #454).
  * 16: Model 2A's TGP keeps a word moved into d beside a float op, so Sega
  *    Rally's square roots, and everything after them, differ (Pinboard #661).
+ * 17: Sega Rally charges the i960 on the board timing model (i960_timing.h)
+ *    in place of a flat 2.3x, so its timers and every frame differ (#744).
  */
-#define NETPLAY_PROTO_REV 16
+#define NETPLAY_PROTO_REV 17
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.

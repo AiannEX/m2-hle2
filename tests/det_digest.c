@@ -65,6 +65,9 @@
  * emulator does); --nowarnskip leaves the Japan warning screen in, ~640 game
  * frames, as MAME does. --peek HEXADDR adds that byte to each line (the mode
  * at 50002A, the sub-mode at 500030), to pair frames with a MAME log.
+ * --peek32 HEXADDR adds that word, signed (Sega Rally's LOD budget at
+ * 20AAC0). --i960-timing table|board charges the i960 MAME's table or the
+ * board's timing (i960_timing.h) whatever the profile says.
  *
  * Two builds of it, one from each configuration, so each has exactly its
  * frontend's compiler flags:
@@ -488,7 +491,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     uint32_t frames = 3600, from = 0;
-    uint32_t peek_addr = 0;
+    uint32_t peek_addr = 0, peek32_addr = 0;
     bool frames_given = false, sound_cols = false, cpu_cols = false;
     const char *out_path = NULL, *script_text = NULL, *inputs_path = NULL, *profile_id = "sfight";
     for (int i = 2; i < argc; i++) {
@@ -503,11 +506,14 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--sound-hle"))               g_sound_hle_want = 1;
         else if (!strcmp(argv[i], "--texload-i960"))            g_texload_hle = 0;
         else if (!strcmp(argv[i], "--spin-i960"))               g_spin_skip = 0;
+        else if (!strcmp(argv[i], "--i960-timing") && i + 1 < argc)
+            g_i960_timing_force = !strcmp(argv[++i], "board") ? 1 : !strcmp(argv[i], "table") ? 0 : -1;
         else if (!strcmp(argv[i], "--live-timers"))             ;   /* always on now */
         else if (!strcmp(argv[i], "--nowarnskip"))              g_warning_skip = 0;
         else if (!strcmp(argv[i], "--steps-per-slice") && i + 1 < argc) g_emu_steps_per_slice = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--region") && i + 1 < argc) { const char *r = argv[++i]; g_region = !strcmp(r, "japan") ? GAME_REGION_JAPAN : !strcmp(r, "export") ? GAME_REGION_EXPORT : GAME_REGION_USA; }
         else if (!strcmp(argv[i], "--peek")   && i + 1 < argc) peek_addr = (uint32_t)strtoul(argv[++i], NULL, 16);
+        else if (!strcmp(argv[i], "--peek32") && i + 1 < argc) peek32_addr = (uint32_t)strtoul(argv[++i], NULL, 16);
         else if (!strcmp(argv[i], "--pcm")    && i + 1 < argc) snd_pcm = fopen(argv[++i], "wb");
         else if (!strcmp(argv[i], "--trace")  && i + 1 < argc) {
             char path[1024] = {0};
@@ -683,6 +689,7 @@ int main(int argc, char **argv) {
                     (unsigned long long)g_sound.out_total);
         }
         if (peek_addr) fprintf(out, " %02x", mem_read8(&bus, peek_addr));
+        if (peek32_addr) fprintf(out, " %d", (int32_t)mem_read32(&bus, peek32_addr));
         fputc('\n', out);
     }
     if (out != stdout) fclose(out);

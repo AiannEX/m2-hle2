@@ -37,7 +37,7 @@ CLAUDE.md already says STF's own table names exactly the four profile handlers. 
 
 ### 1.3 The i960's speed is one fitted factor, for one game
 
-Sega Rally's profile sets `i960_cost_permille = 2300` (`srallyc.h:201-209`; `i960.h:109-121`; applied at `emu_thread.h:546`), which charges every instruction at 2.3 times MAME's table. Without it, the car-LOD row chosen from a timer read (0x5BADE0) comes out 8 instead of 5-7, and the third car ahead lags at GO (issue #305). The factor was measured on STF's Model 2B board and is used for a 2A game. While it is set, `m2_spin` and `m2_texload` stand aside.
+Sega Rally's profile sets `i960_board_timing` (`srallyc.h`; the model is `i960_timing.h`, switched on at `emu_thread.h` `emu_timers_slice_begin`), which charges every instruction MAME's table plus what the board's instruction cache, load scoreboard and bus waits add. Without it, the car-LOD row chosen from a timer read (0x5BADE0) comes out 8 instead of 5-7, and the third car ahead lags at GO (issue #305). The costs were measured on STF's Model 2B board and are used for a 2A game; RAM-resident code, the 2A's RAM at 0x200000 and the backup SRAM are assumed to cost what the 2B's ROM and work RAM do. While it is on, `m2_spin` and `m2_texload` stand aside.
 
 The board's own costs have since been measured piece by piece (Pinboard #607-#670, `tools/stf_ai/board_bench.py` on PR #283):
 

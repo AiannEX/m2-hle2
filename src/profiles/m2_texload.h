@@ -42,7 +42,7 @@
  *   - the timers or the vblank would come due inside it, or an interrupt
  *     is already pending: on the board it would be taken mid-row;
  *   - a data watchpoint is armed, or the debugger steps;
- *   - the profile charges the i960 off MAME's table (i960_cycle_scale);
+ *   - the i960 is charged the board's timing, not MAME's table (i960_timing.h);
  *   - the code is not the code this was written from (an FNV over it), or a
  *     decode table names a handler that is not one of the five here.
  * A row runs into a store log first and is committed only once it is known to
@@ -462,7 +462,7 @@ typedef uint32_t (*tl_row_fn)(const m2_texload_t *, tl_run_t *, memory_bus_t *);
 
 /* Run one row in C if the board cannot tell; 1 leaves it to the i960. */
 static inline int m2_texload_row(const m2_texload_t *t, i960_cpu_t *cpu, memory_bus_t *bus, tl_row_fn fn) {
-    if (!g_texload_hle || g_hle_room < 2 || wp_armed() || g_i960_cyc_mul != I960_CYC_ONE
+    if (!g_texload_hle || g_hle_room < 2 || wp_armed() || g_i960_bt_on
         || !tl_code_known(t, bus)) return 1;
     if (g_irqt.intreq & g_irqt.intena & 0x03FFu) return 1;
 
