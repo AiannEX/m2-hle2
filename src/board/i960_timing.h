@@ -34,12 +34,31 @@
  * residual table; off the benches the costs were fitted on, 0.55 cycles a
  * loop turn RMS). The model has not been fitted to game frames. Two things
  * are assumed, not measured:
- *   - code fetched from RAM costs what code fetched from ROM does. Sega Rally
- *     runs from RAM; every bench ran from ROM. A single-word RAM read costs
- *     what a ROM read does on the board, so the line fill should too.
- *   - a Model 2A's regions cost what the 2B's at the same addresses do, and
- *     the 2A's RAM at 0x200000 and the backup SRAM cost what work RAM does.
- *     Sega Rally keeps much of its race state in both.
+ *   - a Model 2A's regions cost what the 2B's at the same addresses do.
+ *   - each wait state the game's table adds or takes away costs a cycle a
+ *     word moved (below).
+ *
+ * The wait states are the game's own. Its first instructions write a table
+ * of them to 0xE00000 (Sega's CPU_CONTROL_START), one word per memory area:
+ * 1, 2, 4, 8 or 0x10 for 0 to 4 waits, 0x20 for a device that signals ready
+ * itself, plus 0x40 for DRAM (Pinboard #762, the owner's scan of Sega's
+ * "Area Wait Time and Memory Type Setting"). The KB has no wait registers of
+ * its own: the table programs the board's bus logic, which stretches every
+ * i960 access to the area. The benches ran under STF's table (program ROM 2
+ * waits, work RAM 1 as DRAM, data ROM 4), and the games do not all write it:
+ * Sega Rally, Last Bronx, Zero Gunner and others put program ROM at 4 waits,
+ * Power Sled at 3 (Pinboard #763, read off MAME and this board). So a cost
+ * measured in an area the table sets is the cost under the wait count it was
+ * measured at, and an access, or a 16-byte line fill, pays a cycle a word for
+ * each wait the game's table differs by (i960_bt_areas). That cycle is the
+ * benches' own: a single load from program ROM (2 waits) costs 0.25 over the
+ * table and one from data ROM (4 waits) 2.25. Areas no bench measured take
+ * the measured cost of their nearest kind at that kind's waits: code in RAM
+ * fills as code in ROM does, and the 2A's RAM at 0x200000 (Download RAM) and
+ * the backup SRAM cost what work RAM does, all then moved by their own
+ * waits. Sega Rally runs from work RAM and keeps much of its race state in
+ * the other two. The DRAM bit is not modelled: the benches' only DRAM is
+ * work RAM, so nothing separates it from the wait count.
  *
  * Costs are kept in 1/1024ths of a cycle (I960_CYC_ONE); g_i960_cyc_frac
  * carries the remainder between instructions. The branch an instruction took
@@ -50,18 +69,19 @@
 
 enum {
     I960_BT_RAM, I960_BT_ROM, I960_BT_DROM, I960_BT_BUF, I960_BT_CSTAT, I960_BT_GEO,
-    I960_BT_TMR, I960_BT_FIFO, I960_BT_TILE, I960_BT_IO, I960_BT_REGIONS
+    I960_BT_TMR, I960_BT_FIFO, I960_BT_TILE, I960_BT_IO, I960_BT_DLRAM, I960_BT_BACK,
+    I960_BT_REGIONS
 };
 
 /* Where an access goes, by the 2B's map (#738's buckets). The 2A's RAM at
- * 0x200000 and the backup SRAM are RAM on MAME's map and are taken to cost
- * what work RAM does; STF touches neither often enough for #738 to fit them. */
+ * 0x200000 and the backup SRAM are their own areas in the wait table; STF
+ * touches neither often enough for #738 to fit them. */
 static inline int i960_bt_region(uint32_t ea) {
     if (ea >= 0x02000000u) return I960_BT_DROM;              /* data ROM, texture RAM */
     if (ea <  0x00200000u) return I960_BT_ROM;
     if (ea - 0x00500000u < 0x100000u) return I960_BT_RAM;
-    if (ea - 0x00200000u < 0x40000u)  return I960_BT_RAM;    /* a 2A's second RAM */
-    if (ea - 0x01D00000u < 0x4000u)   return I960_BT_RAM;    /* backup SRAM */
+    if (ea - 0x00200000u < 0x40000u)  return I960_BT_DLRAM;  /* a 2A's second RAM */
+    if (ea - 0x01D00000u < 0x4000u)   return I960_BT_BACK;   /* backup SRAM */
     if (ea - 0x00880000u < 0x10000u)  return I960_BT_FIFO;   /* COP FIFO */
     if (ea - 0x00900000u < 0x80000u)  return I960_BT_BUF;    /* bufferram */
     if (ea - 0x00980000u < 0x40u)     return I960_BT_CSTAT;  /* COP/GEO control, status */
@@ -71,9 +91,15 @@ static inline int i960_bt_region(uint32_t ea) {
     return I960_BT_IO;
 }
 
-/* A load's or store's extra by region and words, [region][words]; filled once. */
+/* A load's or store's extra by region and words, [region][words], as measured
+ * under STF's wait table; filled once. */
+static int32_t g_i960_bt_ld0[I960_BT_REGIONS][5];
+static int32_t g_i960_bt_st0[I960_BT_REGIONS][5];
+/* The same under the game's table, and a line fill's change by the region the
+ * code is in (i960_bt_areas). */
 static int32_t g_i960_bt_ld[I960_BT_REGIONS][5];
 static int32_t g_i960_bt_st[I960_BT_REGIONS][5];
+static int32_t g_i960_bt_fill[I960_BT_REGIONS];
 
 /* The fitted extras (C738.json, in cycles). A region the fit has one width
  * for costs that per word; one it has none for costs what RAM does. */
@@ -92,14 +118,73 @@ static inline void i960_bt_init(void) {
     };
     for (int r = 0; r < I960_BT_REGIONS; r++)
         for (int w = 1; w <= 4; w++) {
-            double l = r == I960_BT_RAM ? ld_ram[w] : r == I960_BT_DROM ? ld_drom[w] : ld_word[r] * w;
+            bool ram = r == I960_BT_RAM || r == I960_BT_DLRAM || r == I960_BT_BACK;
+            double l = ram ? ld_ram[w] : r == I960_BT_DROM ? ld_drom[w] : ld_word[r] * w;
             double s = r == I960_BT_BUF || r == I960_BT_GEO ? st_bus[w]
                      : r == I960_BT_TILE || r == I960_BT_IO ? st_slow[w]
                      : r == I960_BT_FIFO ? 10.4182292 * w   /* the COP's reply wait (#705) */
                      : st_ram[w];
-            g_i960_bt_ld[r][w] = I960_BT(l);
-            g_i960_bt_st[r][w] = I960_BT(s);
+            g_i960_bt_ld[r][w] = g_i960_bt_ld0[r][w] = I960_BT(l);
+            g_i960_bt_st[r][w] = g_i960_bt_st0[r][w] = I960_BT(s);
         }
+}
+
+/* The wait table's word for each region the table sets (its offset / 4, -1
+ * for none), and the waits its measured cost was taken at: its own area's
+ * under STF's table, or, for an area no bench measured, its stand-in's
+ * (work RAM for the other RAMs, program ROM for a line fill). */
+#define I960_BT_AREAS     14
+#define I960_BT_FILL_REF  2              /* program ROM's waits under STF's table */
+static const int8_t g_i960_bt_area[I960_BT_REGIONS] = {
+    [I960_BT_RAM] = 2, [I960_BT_ROM] = 0, [I960_BT_DROM] = 13, [I960_BT_DLRAM] = 1, [I960_BT_BACK] = 11,
+    [I960_BT_BUF] = -1, [I960_BT_CSTAT] = -1, [I960_BT_GEO] = -1, [I960_BT_TMR] = -1,
+    [I960_BT_FIFO] = -1, [I960_BT_TILE] = -1, [I960_BT_IO] = -1,
+};
+static const int8_t g_i960_bt_ref[I960_BT_REGIONS] = {
+    [I960_BT_RAM] = 1, [I960_BT_ROM] = 2, [I960_BT_DROM] = 4, [I960_BT_DLRAM] = 1, [I960_BT_BACK] = 1,
+};
+#define I960_BT_WAIT      I960_BT(1.0)   /* one wait state on one word */
+
+/* A table word's waits, or -1 for anything that is not a fixed count: an
+ * area left at 0 (before the game writes it), External, or a bad word. */
+static inline int i960_bt_waits(uint32_t v) {
+    switch (v & ~0x40u) {
+    case 0x01: return 0;
+    case 0x02: return 1;
+    case 0x04: return 2;
+    case 0x08: return 3;
+    case 0x10: return 4;
+    default:   return -1;
+    }
+}
+
+/* Re-read the game's wait table: every region's costs moved by the waits its
+ * area differs from what it was measured at, a cycle a word. A word that
+ * gives no count leaves the measured cost. The tables are a function of the
+ * 56 bytes alone, so a savestate needs nothing of them; the run loop calls
+ * this at every slice. */
+static inline void i960_bt_areas(const uint8_t *table) {
+    static uint8_t seen[I960_BT_AREAS * 4];
+    static bool    valid;
+    if (valid && !memcmp(seen, table, sizeof seen)) return;
+    memcpy(seen, table, sizeof seen);
+    valid = true;
+    for (int r = 0; r < I960_BT_REGIONS; r++) {
+        int a = g_i960_bt_area[r], d = 0, f = 0;
+        if (a >= 0) {
+            const uint8_t *p = table + 4 * a;
+            int w = i960_bt_waits((uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24);
+            if (w >= 0) {
+                d = w - g_i960_bt_ref[r];
+                f = w - I960_BT_FILL_REF;
+            }
+        }
+        for (int n = 1; n <= 4; n++) {
+            g_i960_bt_ld[r][n] = g_i960_bt_ld0[r][n] + d * n * I960_BT_WAIT;
+            g_i960_bt_st[r][n] = g_i960_bt_st0[r][n] + d * n * I960_BT_WAIT;
+        }
+        g_i960_bt_fill[r] = f * 4 * I960_BT_WAIT;
+    }
 }
 
 #define I960_BT_SEQMISS  I960_BT(10.0)     /* running on into a line that misses */
@@ -198,13 +283,14 @@ static inline int32_t i960_bt_seqhit(const i960_bt_t *t) {
 
 /* A line that misses. A branch's waits for the whole burst, a little longer
  * the later the word it lands on; the line after it waits for its own burst
- * behind that one's. */
+ * behind that one's. Either burst is four words at the code's area's waits. */
 static inline int32_t i960_bt_miss(i960_bt_t *t, uint32_t ln, uint32_t ip, bool target) {
+    int32_t fill = g_i960_bt_fill[i960_bt_region(ln << 4)];
     if (target) {
         t->brrun = ln + 2;
-        return I960_BT_BRMISS + g_i960_bt_brword[(ip >> 2) & 3];
+        return I960_BT_BRMISS + g_i960_bt_brword[(ip >> 2) & 3] + fill;
     }
-    int32_t e = I960_BT_SEQMISS + (t->brrun == ln + 1 ? I960_BT_BRRUN : 0);
+    int32_t e = I960_BT_SEQMISS + fill + (t->brrun == ln + 1 ? I960_BT_BRRUN : 0);
     t->brrun = 0;
     return e;
 }
