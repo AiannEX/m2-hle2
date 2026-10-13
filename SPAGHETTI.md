@@ -1,19 +1,19 @@
-# How much of m2-hle2 is spaghetti? (Pinboard #321, #756, #757, #761)
+# How much of m2-hle2 is spaghetti? (Pinboard #321, #756, #757, #761, #764)
 
-A measurement of master at `48cb645` (2026-10-13) with #757's splits and #761's parameter structs on top, with `python3 tools/spaghetti.py` (it needs `pip install lizard`). Master alone is the last column of the [Progress](#progress) table. The first measurement, at `66f4d4e` (2026-10-01), is kept below under [Where it started](#where-it-started), and what was done between the two under [Progress](#progress) and [Untangled so far](#untangled-so-far).
+A measurement of master at `48cb645` (2026-10-13) with #757's splits and the parameter structs of #761 and #764 on top, with `python3 tools/spaghetti.py` (it needs `pip install lizard`). Master alone is the last column of the [Progress](#progress) table. The first measurement, at `66f4d4e` (2026-10-01), is kept below under [Where it started](#where-it-started), and what was done between the two under [Progress](#progress) and [Untangled so far](#untangled-so-far).
 
 ## The number
 
-**One function, 0.1% of the emulator's function code.** 1 of 3,562 hand-written functions holds 44 of 48,905 lines of code, and has more than 20 independent paths through it, which is about where a function stops fitting in one head. At `66f4d4e` it was 114 functions and 25.7% of the code; on master at `48cb645`, before #757, 6 functions and 0.8%. None is over 30 paths.
+**One function, 0.1% of the emulator's function code.** 1 of 3,568 hand-written functions holds 44 of 48,906 lines of code, and has more than 20 independent paths through it, which is about where a function stops fitting in one head. At `66f4d4e` it was 114 functions and 25.7% of the code; on master at `48cb645`, before #757, 6 functions and 0.8%. None is over 30 paths.
 
 | Branchiness (modified CCN) | Functions | Lines | Share of code | At `66f4d4e` |
 |---|---:|---:|---:|---:|
-| over 15 | 86 | 3,175 | 6.5% | 33.7% |
+| over 15 | 84 | 3,071 | 6.3% | 33.7% |
 | **over 20** | **1** | **44** | **0.1%** | **25.7%** |
 | over 30 | 0 | 0 | 0 | 15.7% |
 | over 50 | 0 | 0 | 0 | 6.7% |
 
-The code has grown by a quarter since then (38,873 lines in functions to 48,905: savestates, rewind, GGPO, replays, the one-way follow, Gems, Sega Rally's TGP), and the new code came in small. Agent sessions run `lizard -w -C 15 -L 80` on the files they change before they build, and split a function as soon as it warns. That is why so little grew back: what is over 20 now was written before that check, or grew a case at a time since.
+The code has grown by a quarter since then (38,873 lines in functions to 48,906: savestates, rewind, GGPO, replays, the one-way follow, Gems, Sega Rally's TGP), and the new code came in small. Agent sessions run `lizard -w -C 15 -L 80` on the files they change before they build, and split a function as soon as it warns. That is why so little grew back: what is over 20 now was written before that check, or grew a case at a time since.
 
 ## How it was measured
 
@@ -45,7 +45,7 @@ The five that came in since PR #181 (`savestate__load_zip` 62, `gems_verify` 32,
 Two smells the path count does not see, and the splitting made one of them worse:
 
 - **Globals.** There are 350 `g_` variables, up from 268, and 39 are read from five or more files, up from 22. `g_active_profile` is read in 24 files, across every layer (18 at `66f4d4e`). Most of the growth is the new features' state: GGPO, the replay recorder, the follow feed, the Gems switches, and the run loop's latches that savestates and rollback have to reach. A header-only C emulator with one board is built this way on purpose (it is how MAME's drivers looked for years), but it means a function's inputs are not all in its parameter list.
-- **Long parameter lists.** 45 functions took 8 or more parameters after #757, up from 32 at `66f4d4e`: a function split into steps hands its locals to the steps, and where they were not gathered into a struct first, the steps took them one by one. #761 gathered them for the geo3d decode and draw family and the tile compositor, and 23 are left, none in `geo3d.h` or `tile_renderer.h` (`geo3d_emit_tri_uv` took 25). The longest now is `rpcn_create_room` (12), then `rpcn_parse_twitch_start` / `_poll`, `app_icon__coverage` and `ps3ui_draw_values` (10 each). `python3 tools/spaghetti.py --params 8` lists them.
+- **Long parameter lists.** 45 functions took 8 or more parameters after #757, up from 32 at `66f4d4e`: a function split into steps hands its locals to the steps, and where they were not gathered into a struct first, the steps took them one by one. #761 gathered them for the geo3d decode and draw family and the tile compositor, and 23 were left, none in `geo3d.h` or `tile_renderer.h` (`geo3d_emit_tri_uv` took 25). #764 gathered the RPCN room's (`rpcn_create_room` took 12), and 20 are left. The longest now are `rpcn_parse_twitch_start` / `_poll`, `app_icon__coverage` and `ps3ui_draw_values` (10 each). `python3 tools/spaghetti.py --params 8` lists them.
 
 ## Where it started
 
@@ -105,17 +105,17 @@ It is ordinary for an emulator, and the parts that matter most are better than t
 
 Each column is `python3 tools/spaghetti.py` with the `_Static_assert` fix, so `f1c5ee7` here is not the `66f4d4e` table above: it has `geo3d_mesh_layers` and the rest of `geo3d.h` back in, and #325's draw work in. #332 to #338 split the worst ten a PR at a time; #341 and #372 then took every function over 20, a file at a time, on the `idea-332-despaghetti` branch that PR #181 merged on 2026-10-03.
 
-| | master `f1c5ee7` | #332 `461cc2c` | #334 `7f39255` | #335 `05d3d6a` | #336 `90c6ee9` | #338 `19066ad` | #341 `2728c7b` | #372 `1edd518` | PR #181 `c51bf9a` | master `48cb645` | #757 `a835045` | #761 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| over 20 paths (the headline) | 25.7% (114 functions) | 25.6% (113) | 24.6% (113) | 23.8% (114) | 22.3% (112) | 20.8% (108) | 11.8% (60) | 0.6% (4) | 0.1% (1) | **0.8%** (6) | **0.1%** (1) | **0.1%** (1) |
-| over 30 | 15.5% (51) | 15.4% (51) | 14.4% (50) | 13.2% (49) | 11.6% (46) | 10.1% (42) | 5.6% (22) | 0.2% (1) | 0 | 0.5% (3) | 0 | 0 |
-| over 50 | 6.7% (15) | 6.7% (15) | 5.6% (14) | 4.3% (12) | 2.8% (9) | 1.6% (6) | 0.3% (1) | 0 | 0 | 0.3% (1) | 0 | 0 |
-| `main*.c` over 20 | 32.3% | 32.3% | 22.8% | 22.8% | 22.8% | 19.3% | 12.0% | 1.1% | 1.1% | 0.9% | 0.9% | 0.9% |
-| `board/` over 20 | 23.2% | 22.6% | 22.6% | 19.5% | 18.2% | 18.2% | 11.8% | 0 | 0 | 0 | 0 | 0 |
-| `ui/` over 20 | | | | 28.2% | 25.0% | 25.0% | 17.3% | 0 | 0 | 0.3% | 0 | 0 |
-| `net/` over 20 | | | | | 25.5% | 21.0% | 6.5% | 2.7% | 0 | 0 | 0 | 0 |
-| `core/` over 20 | | | | | 20.6% | 15.5% | 0 | 0 | 0 | 4.9% | 0 | 0 |
-| 8 or more parameters | | | | | | | | | | | 45 | 23 |
+| | master `f1c5ee7` | #332 `461cc2c` | #334 `7f39255` | #335 `05d3d6a` | #336 `90c6ee9` | #338 `19066ad` | #341 `2728c7b` | #372 `1edd518` | PR #181 `c51bf9a` | master `48cb645` | #757 `a835045` | #761 `e81ecb2` | #764 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| over 20 paths (the headline) | 25.7% (114 functions) | 25.6% (113) | 24.6% (113) | 23.8% (114) | 22.3% (112) | 20.8% (108) | 11.8% (60) | 0.6% (4) | 0.1% (1) | **0.8%** (6) | **0.1%** (1) | **0.1%** (1) | **0.1%** (1) |
+| over 30 | 15.5% (51) | 15.4% (51) | 14.4% (50) | 13.2% (49) | 11.6% (46) | 10.1% (42) | 5.6% (22) | 0.2% (1) | 0 | 0.5% (3) | 0 | 0 | 0 |
+| over 50 | 6.7% (15) | 6.7% (15) | 5.6% (14) | 4.3% (12) | 2.8% (9) | 1.6% (6) | 0.3% (1) | 0 | 0 | 0.3% (1) | 0 | 0 | 0 |
+| `main*.c` over 20 | 32.3% | 32.3% | 22.8% | 22.8% | 22.8% | 19.3% | 12.0% | 1.1% | 1.1% | 0.9% | 0.9% | 0.9% | 0.9% |
+| `board/` over 20 | 23.2% | 22.6% | 22.6% | 19.5% | 18.2% | 18.2% | 11.8% | 0 | 0 | 0 | 0 | 0 | 0 |
+| `ui/` over 20 | | | | 28.2% | 25.0% | 25.0% | 17.3% | 0 | 0 | 0.3% | 0 | 0 | 0 |
+| `net/` over 20 | | | | | 25.5% | 21.0% | 6.5% | 2.7% | 0 | 0 | 0 | 0 | 0 |
+| `core/` over 20 | | | | | 20.6% | 15.5% | 0 | 0 | 0 | 4.9% | 0 | 0 | 0 |
+| 8 or more parameters | | | | | | | | | | | 45 | 23 | 20 |
 
 PR #181 left one function over 20, `lobby_event`, and it is still there. Five came in with new work after it: `savestate__load_zip` and `savestate__entries` (savestates, #426), `gems_verify` and `gems_apply` (Gems, #454), and `ps3ui_draw_result` (the go-again prompt, #8). #757 split all five, each held to the code before by an A/B (below).
 
@@ -148,3 +148,5 @@ PR #181 left one function over 20, `lobby_event`, and it is still there. Five ca
   - `tile_renderer.h`: one tilemap pass (its words, the graphics, tilemap, category, opaque and mode) is `s24_pass_t`, which `s24_draw_tilemap`, `s24_draw_line` (12), `s24_line_split` and `s24_cell_load` take.
   - `game_render_draw_captured_models` (13) reads the host camera from the `geo3d_state_t` it is handed, which its one caller filled the arguments from; nothing between the old read and the new one writes it.
   - *A/B against the base build (A):* `arc_bench --draw-digest` over 6,000 frames of attract (4,789 distinct), identical with the mesh cache and with `--no-mesh-cache`; `tile_test` (48 scenarios, 1,920 incremental frames) and `geo_test` the same in both. A driver built against both sources ran 40,000 random display lists through `geo3d_scan_displaylist` + `geo3d_build_wireframes` and direct-data runs through `geo3d_decode_direct`: 28,798 objects captured and 2,323,122 triangles, every case's hash the same. The two debug dumps (`M2HLE_DEBUG_DUMPS`) were checked by reading: they bind the same values to the same names.
+- **The RPCN room's parameters (Pinboard #764).** Creating a room took everything about it one argument at a time: `rpcn_create_room` 12 (slots, password, flag attribute, the room and member bins and their lengths, the relay sample, the room rules), `rpcn_session_host` 9 and `rpcn_ps3_create_room` 8. They now take one `rpcn_room_spec_t` (`rpcn_client.h`), which `netplay_do_host` fills; a PS3-shaped room reads only its slots and the two bins. The steps that were written twice are written once: the fixed 8-byte password (`rpcn_pb_password`, for CreateRoom and JoinRoom), the signaling options (`rpcn_pb_sig_mesh`, for both CreateRoom shapes), and, for ours, the password with its slot mask (`rpcn_pb_room_lock`) and the rule attributes (`rpcn_pb_room_ints`). `rpcn_session_host_begin` is the check and the room reset both hosts share, and `netplay_do_host_ps3` the PS3 branch of `netplay_do_host`. The fields go out in the old order. `rpcn_create_room` was 18 paths and `netplay_do_host` grew past 80 lines in the change; neither is over lizard's warning now. The count of functions with 8 or more parameters went from 23 to 20, and of those over 15 paths from 86 to 84.
+  - *A/B against the base build (A):* a driver built against both sources hosts 20,000 random rooms over TLS to a recording server (refused and accepted states, relay samples, with and without bins, passwords of every length, rules, slot counts from 0 to past the limit, flag attributes), through `rpcn_session_host`, `rpcn_session_host_ps3` and `rpcn_create_room` directly. The return values, request ids and session state are the same, and the 4,121,618 bytes on the wire are identical. `net_test`, `ps3net_test` and `emu_test` pass.

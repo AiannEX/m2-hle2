@@ -1384,25 +1384,31 @@ static inline void rpcn_session_update(rpcn_session_t *s) {
 
 /* ---- Rooms --------------------------------------------------------------- */
 
-/* `room_bin` and `member_bin` are the room's first shared state and our own
- * attribute (room.h), so nobody ever sees the room without them. `ints` (may be
- * null) are its rules, in the searchable ints a search filters on. */
-static inline bool rpcn_session_host(rpcn_session_t *s, uint32_t max_slot, const char *password,
-                                     uint32_t flag_attr,
-                                     const uint8_t *room_bin, uint32_t room_len,
-                                     const uint8_t *member_bin, uint32_t member_len,
-                                     const rpcn_int_attrs_t *ints) {
+/* Ready to create a room of `spec`: signed in and out of any room, with
+ * max_slot held to 2..RPCN_ROOM_MAX_MEMBERS in the copy it fills. */
+static inline bool rpcn_session_host_begin(rpcn_session_t *s, const rpcn_room_spec_t *spec,
+                                           rpcn_room_spec_t *out) {
     if (s->stage != RPCN_STAGE_ONLINE) {
         rpcn_session_fail(s, "cannot host before discovery has finished");
         return false;
     }
     rpcn_session_clear_room(s);
     s->is_host = true;
-    if (max_slot < 2) max_slot = 2;
-    if (max_slot > RPCN_ROOM_MAX_MEMBERS) max_slot = RPCN_ROOM_MAX_MEMBERS;
-    s->pending_room = rpcn_create_room(&s->client, s->com_id, s->world_id, max_slot, password,
-                                       flag_attr, room_bin, room_len, member_bin, member_len,
-                                       rpcn_session_relay_ms(s), ints);
+    *out = *spec;
+    if (out->max_slot < 2) out->max_slot = 2;
+    if (out->max_slot > RPCN_ROOM_MAX_MEMBERS) out->max_slot = RPCN_ROOM_MAX_MEMBERS;
+    return true;
+}
+
+/* `room_bin` and `member_bin` are the room's first shared state and our own
+ * attribute (room.h), so nobody ever sees the room without them. `ints` (may be
+ * null) are its rules, in the searchable ints a search filters on. The session
+ * fills in `relay_ms` itself. */
+static inline bool rpcn_session_host(rpcn_session_t *s, const rpcn_room_spec_t *spec) {
+    rpcn_room_spec_t r;
+    if (!rpcn_session_host_begin(s, spec, &r)) return false;
+    r.relay_ms = rpcn_session_relay_ms(s);
+    s->pending_room = rpcn_create_room(&s->client, s->com_id, s->world_id, &r);
     if (!s->pending_room) { rpcn_session_fail(s, "%s", rpcn_last_error(&s->client)); return false; }
     return true;
 }
@@ -1423,19 +1429,11 @@ static inline bool rpcn_session_join(rpcn_session_t *s, uint64_t room_id, const 
 
 /* A room in the PS3 port's own shape (ps3_link.h, rpcn_ps3_create_room): its
  * rules in the eight searchable ints, and a teamId of 0xFF. */
-static inline bool rpcn_session_host_ps3(rpcn_session_t *s, uint32_t max_slot, const uint32_t int_attr[8],
-                                         const uint8_t *room_bin, uint32_t room_len,
-                                         const uint8_t *member_bin, uint32_t member_len) {
-    if (s->stage != RPCN_STAGE_ONLINE) {
-        rpcn_session_fail(s, "cannot host before discovery has finished");
-        return false;
-    }
-    rpcn_session_clear_room(s);
-    s->is_host = true;
-    if (max_slot < 2) max_slot = 2;
-    if (max_slot > RPCN_ROOM_MAX_MEMBERS) max_slot = RPCN_ROOM_MAX_MEMBERS;
-    s->pending_room = rpcn_ps3_create_room(&s->client, s->com_id, s->world_id, max_slot, int_attr,
-                                           room_bin, room_len, member_bin, member_len);
+static inline bool rpcn_session_host_ps3(rpcn_session_t *s, const rpcn_room_spec_t *spec,
+                                         const uint32_t int_attr[8]) {
+    rpcn_room_spec_t r;
+    if (!rpcn_session_host_begin(s, spec, &r)) return false;
+    s->pending_room = rpcn_ps3_create_room(&s->client, s->com_id, s->world_id, &r, int_attr);
     if (!s->pending_room) { rpcn_session_fail(s, "%s", rpcn_last_error(&s->client)); return false; }
     return true;
 }

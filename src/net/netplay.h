@@ -2649,29 +2649,39 @@ static inline match_rules_t netplay_rules_of_listing(const rpcn_room_listing_t *
     return r;
 }
 
+/* A room in the PS3 port's own shape, run the way a PS3 owner runs one
+ * (ps3_link.h, ps3_owner_pump). Its rules are the PS3's defaults, and a PS3
+ * room has no password of ours to put on it. */
+static inline void netplay_do_host_ps3(const netplay_config_t *cfg) {
+    uint32_t slots = cfg->max_players < 2 ? 2u
+                   : cfg->max_players > ROOM_MAX_MEMBERS ? ROOM_MAX_MEMBERS : cfg->max_players;
+    if (cfg->room_password[0]) netplay_log("PS3 rooms take no password; this one will be open");
+    netplay_forget_room();
+    uint32_t ints[8];
+    match_rules_t rules = cfg->has_rules ? cfg->rules : match_rules_ps3();
+    ps3_link_host(&g_netplay.ps3link, slots, &rules, cfg->country, ints);
+    rpcn_room_spec_t spec = {
+        .max_slot   = slots,
+        .room_bin   = g_netplay.ps3link.blob,
+        .room_len   = PS3_ROOM_BIN_SIZE,
+        .member_bin = ps3_link_member_bin(&g_netplay.ps3link),
+        .member_len = PS3_MEMBER_BIN_SIZE,
+    };
+    if (!rpcn_session_host_ps3(&g_netplay.session, &spec, ints)) {
+        ps3_link_leave(&g_netplay.ps3link);   /* no room: we own nothing */
+        g_netplay.state = NETPLAY_FAILED;
+        return;
+    }
+    rules.rounds = (uint8_t)ints[1]; rules.time = (uint8_t)ints[2];
+    rules.type   = (uint8_t)ints[3]; rules.secret = (uint8_t)ints[4];
+    char rt[96];
+    netplay_log("hosting a PS3 room for up to %u (%s); waiting for players", slots,
+                netplay_rules_text(&rules, rt, sizeof(rt)));
+}
+
 static inline void netplay_do_host(const netplay_config_t *cfg) {
     if (g_netplay.ps3) {
-        /* A room in the PS3 port's own shape, run the way a PS3 owner runs one
-         * (ps3_link.h, ps3_owner_pump). Its rules are the PS3's defaults, and
-         * a PS3 room has no password of ours to put on it. */
-        uint32_t slots = cfg->max_players < 2 ? 2u
-                       : cfg->max_players > ROOM_MAX_MEMBERS ? ROOM_MAX_MEMBERS : cfg->max_players;
-        if (cfg->room_password[0]) netplay_log("PS3 rooms take no password; this one will be open");
-        netplay_forget_room();
-        uint32_t ints[8];
-        match_rules_t rules = cfg->has_rules ? cfg->rules : match_rules_ps3();
-        ps3_link_host(&g_netplay.ps3link, slots, &rules, cfg->country, ints);
-        if (!rpcn_session_host_ps3(&g_netplay.session, slots, ints, g_netplay.ps3link.blob, PS3_ROOM_BIN_SIZE,
-                                   ps3_link_member_bin(&g_netplay.ps3link), PS3_MEMBER_BIN_SIZE)) {
-            ps3_link_leave(&g_netplay.ps3link);   /* no room: we own nothing */
-            g_netplay.state = NETPLAY_FAILED;
-            return;
-        }
-        rules.rounds = (uint8_t)ints[1]; rules.time = (uint8_t)ints[2];
-        rules.type   = (uint8_t)ints[3]; rules.secret = (uint8_t)ints[4];
-        char rt[96];
-        netplay_log("hosting a PS3 room for up to %u (%s); waiting for players", slots,
-                    netplay_rules_text(&rules, rt, sizeof(rt)));
+        netplay_do_host_ps3(cfg);
         return;
     }
     g_netplay.cfg.frame_delay   = cfg->frame_delay;
@@ -2702,9 +2712,17 @@ static inline void netplay_do_host(const netplay_config_t *cfg) {
     uint32_t me_len   = room_member_encode(&g_netplay.me, me_bin);
     rpcn_int_attrs_t ints;
     if (cfg->has_rules) netplay_rules_ints(&cfg->rules, false, false, cfg->country, &ints);
-    if (!rpcn_session_host(&g_netplay.session, slots,
-                           cfg->room_password[0] ? cfg->room_password : NULL, flags,
-                           room_bin, room_len, me_bin, me_len, cfg->has_rules ? &ints : NULL)) {
+    rpcn_room_spec_t spec = {
+        .max_slot   = slots,
+        .password   = cfg->room_password[0] ? cfg->room_password : NULL,
+        .flag_attr  = flags,
+        .room_bin   = room_bin,
+        .room_len   = room_len,
+        .member_bin = me_bin,
+        .member_len = me_len,
+        .ints       = cfg->has_rules ? &ints : NULL,
+    };
+    if (!rpcn_session_host(&g_netplay.session, &spec)) {
         g_netplay.state = NETPLAY_FAILED;
         return;
     }
