@@ -238,12 +238,20 @@ static inline int32_t i960_bt_fetch(i960_bt_t *t, uint32_t ip, uint32_t len, boo
     return e;
 }
 
+/* Set bits in a register mask. MSVC has no __builtin_popcount. */
+static inline int32_t i960_bt_count(uint32_t m) {
+    m = m - ((m >> 1) & 0x55555555u);
+    m = (m & 0x33333333u) + ((m >> 2) & 0x33333333u);
+    m = (m + (m >> 4)) & 0x0F0F0F0Fu;
+    return (int32_t)((m * 0x01010101u) >> 24);
+}
+
 /* The load scoreboard, and this instruction's own load or store. */
 static inline int32_t i960_bt_data(i960_bt_t *t, i960_cpu_t *cpu, uint32_t w1, uint32_t w2) {
     uint32_t op = w1 >> 24;
     uint32_t src = i960_bt_sources(w1);
-    int32_t e = I960_BT_USE0 * __builtin_popcount(src & t->pend0)
-              + I960_BT_USE1 * __builtin_popcount(src & t->pend1);
+    int32_t e = I960_BT_USE0 * i960_bt_count(src & t->pend0)
+              + I960_BT_USE1 * i960_bt_count(src & t->pend1);
     uint32_t older = t->pend0 & ~src;
     t->pend0 = 0;
     t->pend1 = older;
