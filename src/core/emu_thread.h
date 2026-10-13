@@ -543,7 +543,9 @@ static inline void emu_service_sound_again(emu_thread_ctx_t *ctx) {
 /* Slice start: the cycles run since the clock was last brought up to date. */
 static inline void emu_timers_slice_begin(emu_thread_ctx_t *ctx) {
     i960_cycle_table_init();
-    i960_cycle_scale(g_active_profile ? g_active_profile->quirks.i960_cost_permille : 0);
+    i960_bt_init();
+    g_i960_bt_on = g_i960_timing_force >= 0 ? g_i960_timing_force != 0
+                 : g_active_profile && g_active_profile->quirks.i960_board_timing;
     i960_cpu_t *cpu = ctx->cpu;
     /* A board loaded or reset by a host that does not call
      * emu_board_reset_state starts its count again under us. */

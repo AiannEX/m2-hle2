@@ -1762,6 +1762,11 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             g_gems_verify = true;   /* each trapped function both ways, differences logged */
         } else if (strcmp(argv[i], "--texload-i960") == 0) {
             g_texload_hle = 0;   /* STF's texture loader on the i960, not in C (m2_texload.h) */
+        } else if (strcmp(argv[i], "--i960-timing") == 0 && i + 1 < argc) {
+            /* table (MAME's per-opcode costs) or board (i960_timing.h); the
+             * profile picks when it is not given */
+            const char *v = argv[++i];
+            g_i960_timing_force = !strcmp(v, "board") ? 1 : !strcmp(v, "table") ? 0 : -1;
         } else if (strcmp(argv[i], "--spin-i960") == 0) {
             g_spin_skip = 0;     /* idle loops on the i960, not skipped (m2_spin.h) */
         } else if (strcmp(argv[i], "--no-tray") == 0) {

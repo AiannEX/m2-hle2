@@ -1,6 +1,7 @@
 #ifndef I960_H
 #define I960_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 #include "constants.h"
@@ -96,7 +97,7 @@ typedef struct i960_cpu {
     int            halted;
 
     /* Clock cycles the instructions run so far cost, at MAME's per-opcode
-     * estimates (i960_cycle_cost) at the profile's rate (i960_charge). Only
+     * estimates (i960_cycle_cost), or the board's (i960_timing.h). Only
      * live board timers read it. */
     uint64_t       cycles;
 
@@ -106,23 +107,34 @@ typedef struct i960_cpu {
     uint32_t       prcb;
 } i960_cpu_t;
 
-/* The rate the i960 is charged at, in 1/1024ths of MAME's table
- * (game_quirks_t.i960_cost_permille; i960_charge). Off the table's own rate
- * (1024) only for a profile that sets it; the remainder below a cycle is board
- * state that profile saves (savestate_extra), and a reset clears it. The hooks
- * that charge a run of instructions themselves (m2_spin.h, m2_texload.h)
- * decline while the rate is not 1024. */
-#define I960_CYC_ONE 1024u
-static uint32_t g_i960_cyc_mul = I960_CYC_ONE;
-static uint32_t g_i960_cyc_frac;
-
-static inline void i960_cycle_scale(unsigned permille) {
-    g_i960_cyc_mul = permille ? (permille * I960_CYC_ONE + 500u) / 1000u : I960_CYC_ONE;
-}
+/* How the i960 is charged: MAME's per-opcode table (i960_cycle_cost), or, for a
+ * profile that sets game_quirks_t.i960_board_timing, the table plus what the
+ * board's caches and wait states add (i960_timing.h). The board model's
+ * state -- the cache tags, the load scoreboard, the cycle's remainder -- is
+ * board state that profile saves (savestate_extra), and a reset clears it.
+ * The hooks that charge a run of instructions themselves (m2_spin.h,
+ * m2_texload.h) decline while it is on. */
+#define I960_CYC_ONE  1024u
+#define I960_BT_LINES 32u
+typedef struct {
+    uint32_t tag[I960_BT_LINES];  /* line number + 1 held by each cache line, 0 empty */
+    uint32_t last_line;           /* the line the last instruction ended in */
+    uint32_t next_ip;             /* where the last instruction falls through to */
+    uint32_t pend0, pend1;        /* registers the last load / the one before fill */
+    uint32_t brrun;               /* line + 1 that runs on from a branch's missed line, 0 none */
+    uint8_t  prev_op, prev_valid, last_valid, pad;
+    uint8_t  line_ld, line_st, pad2[2];  /* the line holds a long instruction / only long stores */
+} i960_bt_t;
+static bool      g_i960_bt_on;
+static i960_bt_t g_i960_bt;
+static uint32_t  g_i960_cyc_frac;
+/* --i960-timing: -1 the profile's choice, 0 the table, 1 the board's. */
+static int       g_i960_timing_force = -1;
 
 static inline void i960_reset(i960_cpu_t *cpu) {
     memset(cpu, 0, sizeof(i960_cpu_t));
     g_i960_cyc_frac = 0;
+    memset(&g_i960_bt, 0, sizeof g_i960_bt);
 }
 
 #endif // I960_H

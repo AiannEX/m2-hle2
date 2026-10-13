@@ -161,6 +161,7 @@ static inline void srallyc_install(const romset_t *rs, i960_cpu_t *cpu, memory_b
      * loaded state left the i960 reading an empty reply FIFO and drew no 3D. */
     savestate_extra("srallyc", "TGP", &g_tgp, sizeof g_tgp);
     savestate_extra("srallyc", "I960FRAC", &g_i960_cyc_frac, sizeof g_i960_cyc_frac);
+    savestate_extra("srallyc", "I960BT", &g_i960_bt, sizeof g_i960_bt);
     LOG_INFO("srallyc_install: PRCB=0x%08X initial IP=0x%08X", prcb, cpu->sfr.ip);
 }
 
@@ -202,11 +203,12 @@ static const game_profile_t srallyc_profile = {
          * 0x20AAC0, 0x5BB2A0 picks a quota row from it). At MAME's table the
          * frame ends early, the row is 8 and the third car ahead of the player
          * goes to physics on the grid, so at GO it lags the pack (MAME, issue
-         * #305). The board's i960 runs a frame at ~2.3x the table (i-cache
-         * misses, load/store waits; measured on a Model 2B, Pinboard #611/#612),
-         * which gives rows 5-7: the car stays on its path, as on the board and
-         * in the PS2 port (FUN_0012bf70 picks row 7). Pinboard #667. */
-        .i960_cost_permille = 2300,
+         * #305). The board's i960 is slower than the table (i-cache misses,
+         * load-use stalls, wait states; i960_timing.h, measured on a Model 2B,
+         * Pinboard #611-#738), which gives rows 5-7: the car stays on its
+         * path, as on the board and in the PS2 port (FUN_0012bf70 picks row
+         * 7). Pinboard #667, #744. */
+        .i960_board_timing = true,
         .wheel = { .left = 0x8000, .right = 0x4000, .accel = 0x0100, .brake = 0x0200,
                    .shift_up = 0x2000, .shift_down = 0x1000 },
     },

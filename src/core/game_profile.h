@@ -165,12 +165,12 @@ typedef struct {
     bool     io_5649;
     struct { uint32_t left, right, accel, brake, shift_up, shift_down; } wheel;
 
-    /* What the board's i960 costs against MAME's per-opcode table, in parts
-     * per thousand (i960_cycle_scale); 0 is the table. The timers and the
-     * vblank count these cycles, so a game that budgets its work by a timer
-     * sees the board's budget only at the board's rate. Sega Rally sets it
+    /* Charge the i960 what the board's caches and wait states cost on top of
+     * MAME's per-opcode table (i960_timing.h). The timers and the vblank count
+     * these cycles, so a game that budgets its work by a timer sees the
+     * board's budget only at the board's speed. Sega Rally sets it
      * (srallyc.h); STF and FV keep the table, which MAME, their oracle, runs. */
-    uint16_t i960_cost_permille;
+    bool     i960_board_timing;
 } game_quirks_t;
 
 /* ---- Loader / installer function-pointer types --------------------------- */
