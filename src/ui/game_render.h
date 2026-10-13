@@ -120,6 +120,9 @@ typedef struct {
      * variants; id 0 where there is none. */
     sg_shader   fill_shader_opaque;
     sg_pipeline fill_opaque[3];
+    /* Whether the fill was built for per-pixel depth (vertex-depth builds:
+     * game_render__fill_follow_pixel_depth). */
+    int         fill_pixel;
 
     /* Texture luma atlas (decoded from texram0): 2048×1024 R8 */
     sg_image    atlas_image;
@@ -398,6 +401,7 @@ static const char *game_render_fill_vs_glsl =
     "flat out ivec2 tile_log2;\n"   /* log2 of the tile sides (GLSL ES 3.00 has no findMSB) */
     "flat out int ramp_row;\n"      /* colour alpha - 2: the face's colour ramp row, or -1 */
     "flat out float fdepth;\n"      /* the board's flat key as a window depth, or -1 (geo3d_flat_depth) */
+    "flat out vec3 pkey;\n"         /* per-pixel key (fdepth -2): the window's near and far depth, z_adjust's exponent */
     /* A decal is its surface's own faces drawn again, exactly on top, and passes on
      * a depth TIE (LESS_EQUAL). Since the fill was split, the surface can go through
      * the discard-free program and its decal through the discarding one, and two
@@ -436,7 +440,16 @@ static const char *game_render_fill_vs_glsl =
     /* The board's own key (set_camera zflat): a depth in this window's slice,
      * the slice's near end (z = -0.05) to its far end, written per fragment. */
     "  fdepth = -1.0;\n"
-    "  if (a_zs.y < 0.0) {\n"
+    "  pkey = vec3(0.0);\n"
+    /* Per-pixel depth (geo3d.h g_geo3d_pixel_depth, not the board): the fill
+     * takes the key of each pixel's own z, so it writes the depth, and the
+     * vertex z is 0, so the clipper cuts at the eye plane as for a flat key. */
+    "  if (a_zs.y < -2.5) {\n"
+    "    float zfar = -mvp[2][2], znear = zfar + 20.0 * mvp[3][2];\n"
+    "    pkey = vec3(znear, zfar, -a_zs.y - 3.0);\n"
+    "    fdepth = -2.0;\n"
+    "    gl_Position.z = 0.0;\n"
+    "  } else if (a_zs.y < 0.0) {\n"
     "    float zfar = -mvp[2][2], znear = zfar + 20.0 * mvp[3][2];\n"
     "    fdepth = mix(znear, zfar, -a_zs.y - 1.0) * 0.5 + 0.5;\n"
     /* The board clips only at the four sides through the eye: with z = 0 at
@@ -492,6 +505,25 @@ static const char *game_render_fill_vs_glsl =
     "  return (((b >> 23) & 255) - 127) * 256 + LOG2[(b >> 16) & 127];\n" \
     "}\n"
 
+/* Per-pixel depth (geo3d.h g_geo3d_pixel_depth): the board's sort key, MAME's
+ * float_to_zval as geo3d_board_zkey has it, taken of the pixel's own z (ez),
+ * placed in the window's slice as a flat key is. */
+#define GAME_RENDER_PIXEL_KEY_GLSL \
+    "float pixel_depth() {\n" \
+    "  float key = 0.0;\n" \
+    "  if (ez > 0.0) {\n" \
+    "    uint u = floatBitsToUint(ez);\n" \
+    "    int e = int((u >> 23) & 255u) - int(pkey.z + 0.5);\n" \
+    "    uint mant = (u & 0x7fffffu) + 0x400u;\n" \
+    "    if (mant > 0x7fffffu) { e++; mant = (mant & 0x7fffffu) >> 1; }\n" \
+    "    mant >>= 11;\n" \
+    "    if (e >= 15) key = 65535.0;\n" \
+    "    else if (e >= 0) key = float((uint(e + 1) << 12) | mant);\n" \
+    "    else if (e >= -12) key = float((mant | 0x1000u) >> uint(-e));\n" \
+    "  }\n" \
+    "  return mix(pkey.x, pkey.y, (key + 0.5) * (1.0 / 65536.0)) * 0.5 + 0.5;\n" \
+    "}\n"
+
 /*
  * The fill — MAME's model2rd.ipp draw_scanline_tex, as the explorer ports it
  * (vendor/noclip js/viewer.js FRAG_SHADER), whose texel path this follows line
@@ -544,8 +576,10 @@ static const char *game_render_fill_fs_ref_glsl =
     "flat in vec4 tile;\n"
     "flat in vec4 lbpl;\n"
     "flat in float fdepth;\n"
+    "flat in vec3 pkey;\n"
     "out vec4 frag_color;\n"
     GAME_RENDER_FAST_LOG2_GLSL
+    GAME_RENDER_PIXEL_KEY_GLSL
     "bool has(int bit) { return (int(lbpl.z + 0.5) & bit) != 0; }\n"
     "ivec4 level_tile(int L) {\n"
     "  int sheet = has(4) ? 1 : 0;\n"
@@ -640,7 +674,7 @@ static const char *game_render_fill_fs_ref_glsl =
     "  }\n"
     "  frag_color = vec4(rgb, 1.0);\n"
     "#ifndef FLAT_VERTEX_DEPTH\n"
-    "  gl_FragDepth = fdepth >= 0.0 ? fdepth : gl_FragCoord.z;\n"
+    "  gl_FragDepth = fdepth >= 0.0 ? fdepth : fdepth < -1.5 ? pixel_depth() : gl_FragCoord.z;\n"
     "#endif\n"
     "}\n";
 
@@ -679,8 +713,10 @@ static const char *game_render_fill_fs_glsl =
     "flat in ivec2 tile_log2;\n"
     "flat in int ramp_row;\n"
     "flat in float fdepth;\n"
+    "flat in vec3 pkey;\n"
     "out vec4 frag_color;\n"
     GAME_RENDER_FAST_LOG2_GLSL
+    GAME_RENDER_PIXEL_KEY_GLSL
     "vec2 sample_level(int L) {\n"
     "  ivec2 sh = max(tile_log2 - ivec2(L), ivec2(0));\n"   /* log2 of the level's sides */
     "  ivec2 m = (ivec2(1) << sh) - 1;\n"
@@ -773,14 +809,14 @@ static const char *game_render_fill_fs_glsl =
     "  }\n"
     "  frag_color = vec4(rgb, 1.0);\n"
     "#ifndef FLAT_VERTEX_DEPTH\n"
-    "  gl_FragDepth = fdepth >= 0.0 ? fdepth : gl_FragCoord.z;\n"
+    "  gl_FragDepth = fdepth >= 0.0 ? fdepth : fdepth < -1.5 ? pixel_depth() : gl_FragCoord.z;\n"
     "#endif\n"
     "}\n";
 
 static const char *game_render_fill_vs_hlsl =
     "cbuffer params : register(b0) { float4x4 mvp; };\n"
     "struct vs_in { float4 p0 : POSITION0; float4 p1 : POSITION1; float4 p2 : POSITION2; float4 uv01 : TEXCOORD0; float3 uv2zl : TEXCOORD1; float4 color : COLOR0; float4 tile : TEXCOORD2; float4 lbpl : TEXCOORD3; uint vid : SV_VertexID; };\n"
-    "struct vs_out { float4 pos : SV_Position; float4 color : COLOR0; float2 uv : TEXCOORD0; nointerpolation float4 tile : TEXCOORD1; nointerpolation float4 lbpl : TEXCOORD2; float ez : TEXCOORD3; float3 bpix : TEXCOORD4; nointerpolation float fdepth : TEXCOORD5; };\n"
+    "struct vs_out { float4 pos : SV_Position; float4 color : COLOR0; float2 uv : TEXCOORD0; nointerpolation float4 tile : TEXCOORD1; nointerpolation float4 lbpl : TEXCOORD2; float ez : TEXCOORD3; float3 bpix : TEXCOORD4; nointerpolation float fdepth : TEXCOORD5; nointerpolation float3 pkey : TEXCOORD6; };\n"
     "vs_out main(vs_in inp) {\n"
     "  vs_out outp;\n"
     /* The triangle's corner — see the GLSL vertex shader above. */
@@ -799,7 +835,13 @@ static const char *game_render_fill_vs_hlsl =
     "  }\n"
     "  if (outp.pos.w > 0.0 && zs.y > 0.0) outp.pos.z -= zs.y * outp.pos.w;\n"
     "  outp.fdepth = -1.0;\n"
-    "  if (zs.y < 0.0) {\n"
+    "  outp.pkey = float3(0.0, 0.0, 0.0);\n"
+    "  if (zs.y < -2.5) {\n"
+    "    float zfar = -mvp[2][2], znear = zfar + 20.0 * mvp[2][3];\n"
+    "    outp.pkey = float3(znear, zfar, -zs.y - 3.0);\n"
+    "    outp.fdepth = -2.0;\n"
+    "    outp.pos.z = 0.0;\n"
+    "  } else if (zs.y < 0.0) {\n"
     "    float zfar = -mvp[2][2], znear = zfar + 20.0 * mvp[2][3];\n"
     "    outp.fdepth = lerp(znear, zfar, -zs.y - 1.0);\n"
     "    outp.pos.z = 0.0;\n"
@@ -813,7 +855,7 @@ static const char *game_render_fill_fs_hlsl =
     "Texture2D<float4> lumat : register(t1);\n"
     "Texture2D<float4> cxlat : register(t2);\n"
     "SamplerState smp : register(s0);\n"
-    "struct fs_in { float4 pos : SV_Position; float4 color : COLOR0; float2 uv : TEXCOORD0; nointerpolation float4 tile : TEXCOORD1; nointerpolation float4 lbpl : TEXCOORD2; float ez : TEXCOORD3; float3 bpix : TEXCOORD4; nointerpolation float fdepth : TEXCOORD5; };\n"
+    "struct fs_in { float4 pos : SV_Position; float4 color : COLOR0; float2 uv : TEXCOORD0; nointerpolation float4 tile : TEXCOORD1; nointerpolation float4 lbpl : TEXCOORD2; float ez : TEXCOORD3; float3 bpix : TEXCOORD4; nointerpolation float fdepth : TEXCOORD5; nointerpolation float3 pkey : TEXCOORD6; };\n"
     "static const int LOG2[128] = { " GAME_RENDER_LOG2_TABLE " };\n"
     "bool has(float fl, int bit) { return (((int)(fl + 0.5)) & bit) != 0; }\n"
     "int fast_log2(float z) {\n"
@@ -869,8 +911,22 @@ static const char *game_render_fill_fs_hlsl =
     "  }\n"
     "  return float2(lerp(row0, row1, f.y), a);\n"
     "}\n"
+    "float pixel_depth(float z, float3 pkey) {\n"
+    "  float key = 0.0;\n"
+    "  if (z > 0.0) {\n"
+    "    uint u = asuint(z);\n"
+    "    int e = (int)((u >> 23) & 255u) - (int)(pkey.z + 0.5);\n"
+    "    uint mant = (u & 0x7fffffu) + 0x400u;\n"
+    "    if (mant > 0x7fffffu) { e++; mant = (mant & 0x7fffffu) >> 1; }\n"
+    "    mant >>= 11;\n"
+    "    if (e >= 15) key = 65535.0;\n"
+    "    else if (e >= 0) key = (float)(((uint)(e + 1) << 12) | mant);\n"
+    "    else if (e >= -12) key = (float)((mant | 0x1000u) >> (uint)(-e));\n"
+    "  }\n"
+    "  return lerp(pkey.x, pkey.y, (key + 0.5) * (1.0 / 65536.0));\n"
+    "}\n"
     "float4 main(fs_in inp, out float depth : SV_Depth) : SV_Target0 {\n"
-    "  depth = inp.fdepth >= 0.0 ? inp.fdepth : inp.pos.z;\n"
+    "  depth = inp.fdepth >= 0.0 ? inp.fdepth : inp.fdepth < -1.5 ? pixel_depth(inp.ez, inp.pkey) : inp.pos.z;\n"
     "  float fl = inp.lbpl.z;\n"
     "  float lmax = floor(log2(max(min(inp.tile.z, inp.tile.w), 2.0)) + 0.5) - 1.0;\n"
     "  float lod = clamp(log2(max(length(ddx(inp.uv)), length(ddy(inp.uv)))), 0.0, lmax);\n"
@@ -938,7 +994,8 @@ static inline const char *game_render_glsl(sg_backend backend, const char *src, 
         g_game_render_vertex_depth = (e && (*e == '0' || *e == '1')) ? *e - '0'
                                    : backend == SG_BACKEND_GLES3;
     }
-    bool vdepth = g_game_render_vertex_depth > 0 && strstr(src, "FLAT_VERTEX_DEPTH") != NULL;
+    bool vdepth = g_game_render_vertex_depth > 0 && !g_game_render.fill_pixel
+               && strstr(src, "FLAT_VERTEX_DEPTH") != NULL;
     if (backend != SG_BACKEND_GLES3 && !vdepth) return src;
     const char *body = src + sizeof head - 1;
     char *out = buf[stage], *end = out + sizeof buf[0];
@@ -1199,12 +1256,15 @@ static inline void game_render__init_lines(sg_backend backend) {
 }
 
 /* ---- Fill (solid/textured triangle) pipeline -------------------------- */
-static inline void game_render__init_fill_shaders(sg_backend backend) {
+static inline void game_render__init_fill_vbuf(void) {
     g_game_render.fill_vbuf = sg_make_buffer(&(sg_buffer_desc){
         .usage = { .vertex_buffer = true, .dynamic_update = true },
         .size  = GEO3D_MAX_TRIS * sizeof(game_render_fill_tri_t),
         .label = "game-render-fill-vbuf",
     });
+}
+
+static inline void game_render__init_fill_shaders(sg_backend backend) {
     {
         sg_shader_desc d;
         memset(&d, 0, sizeof(d));
@@ -1354,6 +1414,30 @@ static inline void game_render__init_fill_pipelines(void) {
     }
 }
 
+/* A vertex-depth build's fill writes no depth, so the GPU keeps its early
+ * depth test, and so it has no per-pixel key. Per-pixel depth (an option, not
+ * the board) rebuilds the fill without FLAT_VERTEX_DEPTH while it is on, and
+ * with it again when it goes off. Called before a frame's faces are made. */
+static inline void game_render__fill_follow_pixel_depth(void) {
+    if (g_game_render_vertex_depth <= 0 || g_game_render.fill_pixel == g_geo3d_pixel_list) return;
+    g_game_render.fill_pixel = g_geo3d_pixel_list;
+    sg_destroy_pipeline(g_game_render.fill_pipeline);
+    sg_destroy_pipeline(g_game_render.fill_pipeline_cw);
+    sg_destroy_pipeline(g_game_render.fill_pipeline_ccw);
+    for (int i = 0; i < 3; i++) {   /* invalid ids are ignored */
+        sg_destroy_pipeline(g_game_render.fill_ref[i]);
+        sg_destroy_pipeline(g_game_render.fill_opaque[i]);
+        g_game_render.fill_ref[i].id = g_game_render.fill_opaque[i].id = SG_INVALID_ID;
+    }
+    sg_destroy_shader(g_game_render.fill_shader_ref);
+    sg_destroy_shader(g_game_render.fill_shader_opaque);
+    sg_destroy_shader(g_game_render.fill_shader);
+    g_game_render.fill_shader_ref.id = g_game_render.fill_shader_opaque.id = SG_INVALID_ID;
+    game_render__init_fill_shaders(sg_query_backend());
+    game_render__init_fill_pipelines();
+    LOG_INFO("game_render: per-pixel depth %s, fill rebuilt", g_game_render.fill_pixel ? "on" : "off");
+}
+
 /* ---- Texture luma atlas ---------------------------------------------- */
 static inline void game_render__init_textures(sg_backend backend) {
     g_game_render.atlas_image = sg_make_image(&(sg_image_desc){
@@ -1439,6 +1523,7 @@ static inline void game_render_init(void) {
     game_render__init_target(backend, quad);
     game_render__init_overlay(backend);
     game_render__init_lines(backend);
+    game_render__init_fill_vbuf();
     game_render__init_fill_shaders(backend);
     game_render__init_fill_pipelines();
     game_render__init_textures(backend);
@@ -2306,7 +2391,7 @@ static inline geo3d_models_t geo3d_models_of(const romset_t *rs, const game_quir
         .main_data = rs->main_data, .main_data_size = rs->main_data_size,
         .polygons  = rs->polygons,  .polygons_size  = rs->polygons_size,
         .materials = rs->textures,  .materials_size = rs->textures_size,
-        .table_off = q->model_table_offset, .table_count = q->model_table_count,
+        .table = profile_model_table(q),
         .mesh_ptr_subtract = q->mesh_ptr_subtract, .mesh_ptr_add = q->mesh_ptr_add,
     };
 }
@@ -2402,6 +2487,8 @@ static inline game_render_run_t *game_render__geo_decode_run(geo3d_state_t *geo,
 static inline void game_render_draw_geo_list(geo3d_state_t *geo, const geo3d_models_t *md,
                                               int ox, int oy, int w, int h) {
     if (g_geo3d_dump_busy) return;
+    g_geo3d_pixel_list = g_geo3d_pixel_depth;
+    game_render__fill_follow_pixel_depth();
     const int count = geo->captured_count;
     float saved_light[3] = { g_light_dir[0], g_light_dir[1], g_light_dir[2] };
     sg_apply_viewport(ox, oy, w, h, true);

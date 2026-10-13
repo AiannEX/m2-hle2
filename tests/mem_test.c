@@ -60,9 +60,40 @@ int main(void) {
     CHECK(mem_read32(&bus, RAM_BASE + 0x30) == 0xDEADBEEF, "write32/read32 round-trip");
     CHECK(mem_read8(&bus, RAM_BASE + 0x33) == 0xDE, "write32 is little-endian (high byte last)");
 
-    /* Heap region round-trip (MAIN_DATA). */
-    mem_write32(&bus, MAIN_DATA_BASE + 0x4000, 0xCAFEF00D);
-    CHECK(mem_read32(&bus, MAIN_DATA_BASE + 0x4000) == 0xCAFEF00D, "MAIN_DATA round-trip");
+    /* MAIN_DATA is data ROM: a profile fills the buffer, the CPU only reads it. */
+    memcpy(bus.main_data + 0x4000, "\x0D\xF0\xFE\xCA", 4);
+    CHECK(mem_read32(&bus, MAIN_DATA_BASE + 0x4000) == 0xCAFEF00D, "MAIN_DATA reads its buffer");
+    mem_write32(&bus, MAIN_DATA_BASE + 0x4000, 0x12345678);
+    CHECK(mem_read32(&bus, MAIN_DATA_BASE + 0x4000) == 0xCAFEF00D, "MAIN_DATA ignores a CPU write");
+
+    /* Buffer RAM repeats every 128 KB up to 0x97FFFF (MAME .mirror(0x60000)). */
+    mem_write32(&bus, BUFF_RAM_BASE + 0x60010, 0x5A5AA5A5);
+    CHECK(mem_read32(&bus, BUFF_RAM_BASE + 0x10) == 0x5A5AA5A5, "bufferram mirror at 0x960000");
+    CHECK(mem_read32(&bus, BUFF_RAM_BASE + 0x20010) == 0x5A5AA5A5, "bufferram mirror at 0x920000");
+
+    /* The coprocessor ID (MAME tgpid_r) and the GEO reads (geo_r, geo_prg_r). */
+    CHECK(mem_read32(&bus, TGP_ID_BASE) == 0x48415400u, "TGP ID reads \\0TAH");
+    CHECK(mem_read32(&bus, GEO_BASE + 0x10) == 0, "GEO reads 0 off its two registers");
+    CHECK(mem_read32(&bus, GEO_PROGRAM_BASE) == 0xFFFFFFFFu, "GEO FIFO reads all ones");
+
+    /* GEO command 0x0E (geo_test) is 32 FIFO-test words, a block count and
+     * three words a block. Test words that read as a polygon write and an END
+     * are data: the write is not made, and the list goes on past them. */
+    {
+        uint32_t L[48] = {0};
+        uint32_t n = 0;
+        L[n++] = 0x0Eu << 23;
+        L[n++] = 0x05u << 23; L[n++] = 0x20; L[n++] = 1; L[n++] = 0xBADu;
+        L[n++] = 0x0Fu << 23;
+        for (uint32_t k = 5; k < 32; k++) L[n++] = 1u << k;
+        L[n++] = 1; L[n++] = 0; L[n++] = 0; L[n++] = 0;       /* one block */
+        L[n++] = 0x05u << 23; L[n++] = 0x10; L[n++] = 1; L[n++] = 0xABCD1234u;
+        L[n++] = 0x0Fu << 23;
+        g_geo_live.polyram[0][0x10] = g_geo_live.polyram[0][0x20] = 0;
+        geodl_apply_state(L, n, 0, NULL);
+        CHECK(g_geo_live.polyram[0][0x10] == 0xABCD1234u, "geo_test is stepped over whole");
+        CHECK(g_geo_live.polyram[0][0x20] == 0, "geo_test's words are not run as commands");
+    }
 
     /* TEXRAM mirror aliases the same buffer. */
     mem_write32(&bus, TEXRAM0_BASE + 0x100, 0x11223344);

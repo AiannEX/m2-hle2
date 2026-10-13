@@ -26,7 +26,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
+
+#include "model_table.h"
 
 struct i960_cpu;
 struct memory_bus;
@@ -35,10 +38,11 @@ struct romset;
 /* ---- Board variants ------------------------------------------------------ */
 
 typedef enum {
-    BOARD_MODEL2,        /* original — Daytona, VF2 */
-    BOARD_MODEL2A_CRX,   /* Virtua Cop, VF2.1 */
-    BOARD_MODEL2B_CRX,   /* Sonic The Fighters, Fighting Vipers, VC2, Last Bronx */
-    BOARD_MODEL2C_CRX,   /* Sega Rally, Dynamite Cop, Top Skater */
+    /* Which game is on which board is MAME's machine config (model2.cpp). */
+    BOARD_MODEL2,        /* original (model2o) — Daytona, Virtua Cop */
+    BOARD_MODEL2A_CRX,   /* VF2, Sega Rally, Virtua Cop 2, Dynamite Cop */
+    BOARD_MODEL2B_CRX,   /* Sonic The Fighters, Fighting Vipers, Last Bronx */
+    BOARD_MODEL2C_CRX,   /* House of the Dead, Top Skater */
 } board_variant_t;
 
 /* ---- HLE hook table ------------------------------------------------------ */
@@ -92,6 +96,7 @@ typedef struct {
     uint32_t mesh_ptr_add;          /* 0 = board default 0x10 */
     uint32_t model_table_offset;    /* byte offset of model table within main_data */
     uint32_t model_table_count;     /* number of entries in the model table */
+    model_layout_t model_layout;    /* the entry's shape (model_table.h); zero = 1995's */
     uint32_t camera_struct_addr;    /* RAM address of camera eye (x,y,z f32; 0 = no game camera) */
     /* Absolute RAM address of the camera angle word (low16 = pitch, high16 = yaw).
      * The struct layout differs per game: STF packs it at eye+0xC (0x519EA4);
@@ -159,6 +164,13 @@ typedef struct {
      * the held bits named in `wheel`. */
     bool     io_5649;
     struct { uint32_t left, right, accel, brake, shift_up, shift_down; } wheel;
+
+    /* What the board's i960 costs against MAME's per-opcode table, in parts
+     * per thousand (i960_cycle_scale); 0 is the table. The timers and the
+     * vblank count these cycles, so a game that budgets its work by a timer
+     * sees the board's budget only at the board's rate. Sega Rally sets it
+     * (srallyc.h); STF and FV keep the table, which MAME, their oracle, runs. */
+    uint16_t i960_cost_permille;
 } game_quirks_t;
 
 /* ---- Loader / installer function-pointer types --------------------------- */
@@ -257,6 +269,11 @@ typedef struct game_profile {
     game_native_put_fn  native_put;
     game_native_play_fn native_play;
     game_in_play_fn     in_play;
+
+    /* A prepared profile (registry.h, g_prepared_profiles): the set's ROMs and
+     * what is known of its data, with no board to run it yet. Says what the
+     * board lacks; NULL for a runnable profile. */
+    const char         *preliminary;
 } game_profile_t;
 
 /* ---- Registry ------------------------------------------------------------ */
@@ -266,8 +283,21 @@ extern const size_t              g_profile_count;
 
 extern const game_profile_t *g_active_profile;
 
+/* Profiles kept ready for a board that cannot run them yet (Pinboard #660):
+ * each loads its set and names what is missing in `preliminary`. Never picked
+ * by profile_for_rom_set; a front end only says the set is known. */
+extern const game_profile_t *const g_prepared_profiles[];
+extern const size_t              g_prepared_count;
+
 static inline const char *profile_rom_set(const game_profile_t *p) {
     return p->rom_set ? p->rom_set : p->id;
+}
+
+/* The quirks' model table as the board reads it (model_table.h). No quirks:
+ * an empty table. */
+static inline model_table_t profile_model_table(const game_quirks_t *q) {
+    return q ? model_table_make(q->model_table_offset, q->model_table_count, q->model_layout)
+             : model_table_make(0, 0, (model_layout_t)MODEL_LAYOUT_1995);
 }
 
 /* The profile with this id, or NULL. */
@@ -291,6 +321,58 @@ static inline const game_profile_t *profile_for_rom_set(const char *set,
     for (size_t i = 0; i < g_profile_count; i++)
         if (strcmp(profile_rom_set(g_profiles[i]), set) == 0) return g_profiles[i];
     return NULL;
+}
+
+/* The prepared profile for a ROM set, or NULL. */
+static inline const game_profile_t *profile_prepared_for_rom_set(const char *set) {
+    for (size_t i = 0; set && i < g_prepared_count; i++)
+        if (strcmp(profile_rom_set(g_prepared_profiles[i]), set) == 0) return g_prepared_profiles[i];
+    return NULL;
+}
+
+/* For a front end that found no profile for `set`: when the set is prepared,
+ * a sentence saying so into buf, and true. */
+static inline bool profile_prepared_message(const char *set, char *buf, size_t cap) {
+    const game_profile_t *p = profile_prepared_for_rom_set(set);
+    if (!p || !cap) return false;
+    snprintf(buf, cap, "%s ('%s') is known but cannot run yet; the board lacks: %s",
+             p->display_name, set, p->preliminary ? p->preliminary : "its hardware");
+    return true;
+}
+
+/* Why a front end has nothing to run `set` with, into buf: the prepared
+ * profile's sentence, or the sets that do run. */
+static inline void profile_missing_message(const char *set, char *buf, size_t cap) {
+    if (!cap || profile_prepared_message(set, buf, cap)) return;
+    int k = snprintf(buf, cap, "no profile for ROM set '%s'. Supported:", set);
+    for (size_t i = 0; i < g_profile_count && k > 0 && (size_t)k < cap; i++)
+        k += snprintf(buf + k, cap - (size_t)k, " %s", profile_rom_set(g_profiles[i]));
+}
+
+/* The ROM set a path names: its basename without the extension. */
+static inline const char *profile_set_from_path(const char *path, char *id, size_t cap) {
+    const char *sep = strrchr(path, '/'), *bsl = strrchr(path, '\\');
+    if (bsl && (!sep || bsl > sep)) sep = bsl;
+    const char *base = sep ? sep + 1 : path;
+    const char *dot = strrchr(base, '.');
+    size_t n = dot ? (size_t)(dot - base) : strlen(base);
+    if (n >= cap) n = cap - 1;
+    memcpy(id, base, n);
+    id[n] = 0;
+    return base;
+}
+
+/* MAME clone fall-through: p's parent zip, beside `zip`, into buf. NULL for a
+ * set with no parent (or a path too long). */
+static inline const char *profile_parent_path(const game_profile_t *p, const char *zip,
+                                              char *buf, size_t cap) {
+    if (!p->parent_zip_name) return NULL;
+    char id[8];
+    size_t dir_len = (size_t)(profile_set_from_path(zip, id, sizeof id) - zip);
+    if (dir_len + strlen(p->parent_zip_name) >= cap) return NULL;
+    memcpy(buf, zip, dir_len);
+    strcpy(buf + dir_len, p->parent_zip_name);
+    return buf;
 }
 
 /*

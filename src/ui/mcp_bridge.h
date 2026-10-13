@@ -293,6 +293,7 @@ static void mcp_set_camera_depth(const char *req) {
     /* 0: a game frame's faces take the half rule (zsort / zrecede) instead of
      * the board's flat key (geo3d_flat_depth); the layers are the object viewer's. */
     if (mcp_json_get_str(req,"zflat",   v,sizeof v)) g_geo3d_zflat = (atoi(v) != 0);
+    if (mcp_json_get_str(req,"pixdepth",v,sizeof v)) g_geo3d_pixel_depth = (atoi(v) != 0);
     /* 0: polygons the board gives sort key 0 keep their own depth (geo3d.h GEO3D_ZSORT_KEY0). */
     if (mcp_json_get_str(req,"zkey0",   v,sizeof v)) g_geo3d_zsort_key0 = (atoi(v) != 0);
 }
@@ -317,11 +318,12 @@ static void mcp_cmd_set_camera(const char *req, char *resp, int cap) {
     mcp_set_camera_fill(req);
     snprintf(resp,(size_t)cap,
              "{\"ok\":true,\"cam\":[%.2f,%.2f,%.2f],\"rot\":[%.3f,%.3f],\"fov\":%.1f,"
-             "\"lines\":%d,\"tris\":%d,\"test\":%d,\"zflat\":%d,\"zlayers\":%d,\"layer_faces\":%llu,\"zadjust\":\"0x%08X\"}",
+             "\"lines\":%d,\"tris\":%d,\"test\":%d,\"zflat\":%d,\"zlayers\":%d,\"layer_faces\":%llu,\"zadjust\":\"0x%08X\",\"pixdepth\":%d}",
              g_geo3d_state->cam_x,g_geo3d_state->cam_y,g_geo3d_state->cam_z,
              g_geo3d_state->rot_y,g_geo3d_state->rot_x,g_geo3d_state->fov_deg,
              g_geo3d_lines.count, g_geo3d_tris.count, g_geo3d_state->test_triangle ? 1 : 0,
-             g_geo3d_zflat, g_geo3d_layers, (unsigned long long)g_geo3d_layer_faces, g_geo3d_zadjust);
+             g_geo3d_zflat, g_geo3d_layers, (unsigned long long)g_geo3d_layer_faces, g_geo3d_zadjust,
+             g_geo3d_pixel_depth);
 }
 
 static void mcp_cmd_get_registers(char *resp, int cap) {

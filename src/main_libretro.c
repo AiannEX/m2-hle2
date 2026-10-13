@@ -204,6 +204,13 @@ static struct retro_core_option_v2_definition option_defs[] = {
       { { "native", "Native (496x384)" }, { "double", "Double (992x768)" }, { "triple", "Triple (1488x1152)" },
         { "quadruple", "Quadruple (1984x1536)" }, { "fullscreen", "Full screen" }, { NULL, NULL } },
       LR_DEFAULT_RES },
+    { "m2hle_depth", "Depth", NULL,
+      "Board: each polygon is sorted by one depth, as the board does, so a large polygon that starts near the camera "
+      "covers what stands on it (the Tornado's wing hides the backs of Sonic's shoes in the attract intro, on the "
+      "real board too). Per pixel: every pixel by its own depth. On GLES this costs the GPU's early depth test.",
+      NULL, "video",
+      { { "board", "Board" }, { "pixel", "Per pixel" }, { NULL, NULL } },
+      "board" },
     { "m2hle_stf_version", "Sonic the Fighters version", NULL,
       "Console: the game as Sega's console release runs it, with Honey, Metal Sonic and Robotnik selectable "
       "(Start on Amy, Sonic or Bean at character select). Arcade: the arcade board as it shipped. Each has its own "
@@ -326,6 +333,7 @@ static void lr_read_live_options(void) {
         opt.net_delay = d < 1 ? 1 : d > 8 ? 8 : d;
         g_ps3ui_app.default_delay = opt.net_delay;
     }
+    if ((v = lr_var("m2hle_depth")))      g_geo3d_pixel_depth = !strcmp(v, "pixel");
     if ((v = lr_var("m2hle_draw_rate")))  opt.draw_every = strcmp(v, "30") ? 1 : 2;
     if ((v = lr_var("m2hle_sound_thread"))) g_sound_thread_want = strcmp(v, "disabled") != 0;   /* from the next slice */
     if ((v = lr_var("m2hle_heat_guard"))) {
@@ -383,6 +391,7 @@ static void lr_set_options(void) {
         { "m2hle_gems_i960",  "Gems C: main CPU functions; disabled|enabled" },
         { "m2hle_gems_cop",   "Gems C: coprocessor; disabled|enabled" },
         { "m2hle_sound_thread", "Sound board on its own core; enabled|disabled" },
+        { "m2hle_depth",      "Depth; board|pixel" },
         { "m2hle_draw_rate",  "Draw rate; 60|30" },
         { "m2hle_heat_guard", "Heat guard; " LR_DEFAULT_HEAT "|off|80|85|90" },
         { "m2hle_online",     "Online play; retroarch|rpcn|ggpo" },
@@ -463,36 +472,19 @@ static void lr_pkt_reset(void) {
 static bool g_backup_reload;
 
 static bool lr_load_rom(const char *zip) {
-    const char *sep = strrchr(zip, '/'), *bsl = strrchr(zip, '\\');
-    if (bsl && (!sep || bsl > sep)) sep = bsl;
-    const char *base = sep ? sep + 1 : zip;
-    const char *dot = strrchr(base, '.');
-    char id[64] = {0};
-    size_t n = dot ? (size_t)(dot - base) : strlen(base);
-    if (n >= sizeof id) n = sizeof id - 1;
-    memcpy(id, base, n);
-
+    char id[64];
+    const char *base = profile_set_from_path(zip, id, sizeof id);
     g_active_profile = profile_for_rom_set(id, profile_by_id(opt.profile));
     if (!g_active_profile) {
-        char msg[256];
-        int k = snprintf(msg, sizeof msg, "m2hle: no profile for ROM set '%s'. Supported:", id);
-        for (size_t i = 0; i < g_profile_count && k > 0 && (size_t)k < sizeof msg; i++)
-            k += snprintf(msg + k, sizeof msg - (size_t)k, " %s", profile_rom_set(g_profiles[i]));
+        char msg[256] = "m2hle: ";
+        profile_missing_message(id, msg + 7, sizeof msg - 7);
         lr_message(msg, 600);
         return false;
     }
 
     /* MAME clone fall-through: the parent zip sits next to the picked one. */
-    char parent[1024] = {0};
-    const char *parent_ptr = NULL;
-    if (g_active_profile->parent_zip_name) {
-        size_t dir_len = sep ? (size_t)(sep - zip + 1) : 0;
-        if (dir_len + strlen(g_active_profile->parent_zip_name) < sizeof parent) {
-            memcpy(parent, zip, dir_len);
-            strcat(parent, g_active_profile->parent_zip_name);
-            parent_ptr = parent;
-        }
-    }
+    char parent[1024];
+    const char *parent_ptr = profile_parent_path(g_active_profile, zip, parent, sizeof parent);
     if (romset_load(&state.romset, g_active_profile->load_fn, zip, parent_ptr) != 0) {
         char msg[256];
         snprintf(msg, sizeof msg, "m2hle: could not load %s as %s", base, g_active_profile->display_name);

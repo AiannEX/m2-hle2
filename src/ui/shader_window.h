@@ -6,12 +6,14 @@
  * (netplay_cfg_path's directory: %APPDATA%\m2hle2, ~/.config/m2hle2):
  *
  *   arcade=0|1                (the board's picture, under the filter)
+ *   pixdepth=0|1              (depth per pixel, not the board's one key a polygon; geo3d.h)
  *   filter=off|crt|custom     (an old filter=arcade is arcade=1 with the CRT)
  *   preset=<path to the .glslp or .glsl>
  *   input_scale=0..4          (0 = automatic)
  *   param.<NAME>=<value>      (the custom preset's parameters)
  *
- * The command line (--crt, --shader, --shader-scale, --no-shader, --arcade, --no-arcade) applies over
+ * The command line (--crt, --shader, --shader-scale, --no-shader, --arcade, --no-arcade,
+ * --pixel-depth, --no-pixel-depth) applies over
  * it for that run and is not written back.
  */
 #ifndef SHADER_WINDOW_H
@@ -63,6 +65,7 @@ static inline void shader_ui_save(void) {
     if (!f) { LOG_WARN("shader: cannot write %s", tmp); return; }
     const post_shader_mode_t m = post_shader_mode();
     fprintf(f, "arcade=%d\n", post_shader_arcade() ? 1 : 0);
+    fprintf(f, "pixdepth=%d\n", g_geo3d_pixel_depth ? 1 : 0);
     fprintf(f, "filter=%s\n", shader_ui_filter_name[m]);
     if (post_shader_custom_path()[0]) fprintf(f, "preset=%s\n", post_shader_custom_path());
     fprintf(f, "input_scale=%d\n", post_shader_input_scale());
@@ -112,6 +115,7 @@ static inline void shader_ui_load(void) {
         const char *k = line, *v = eq + 1;
         if (!strcmp(k, "filter"))           snprintf(filter, sizeof filter, "%s", v);
         else if (!strcmp(k, "arcade"))      post_shader_set_arcade(atoi(v) != 0);
+        else if (!strcmp(k, "pixdepth"))    g_geo3d_pixel_depth = atoi(v) != 0;
         else if (!strcmp(k, "preset"))      snprintf(preset, sizeof preset, "%s", v);
         else if (!strcmp(k, "input_scale")) post_shader_set_input_scale(atoi(v));
         else if (!strncmp(k, "param.", 6) && n_params < RS_MAX_PARAMS) {
@@ -141,6 +145,14 @@ static inline void shader_ui_builtin_items(post_shader_mode_t m) {
     igSetItemTooltip("The picture of a real Model 2B board, measured from its captured video: brighter "
                      "mid-tones, the ghost its signal trails to the right of edges, its noise, and the "
                      "picture 4:3, as its monitor shows it. Applied first; the filter below goes over it.");
+    if (igMenuItemEx("Depth per pixel (not the board)", NULL, g_geo3d_pixel_depth != 0, true)) {
+        g_geo3d_pixel_depth = !g_geo3d_pixel_depth;
+        shader_ui_save();
+    }
+    igSetItemTooltip("The board sorts each polygon by one depth, so a large polygon that starts near the "
+                     "camera covers what stands on it (the Tornado's wing hides the backs of Sonic's shoes "
+                     "in the attract intro, on the real board too). This sorts every pixel by its own depth "
+                     "instead. Off is the board.");
     igSeparator();
     if (igMenuItemEx("No filter", NULL, m == POST_SHADER_OFF, true)) {
         post_shader_set_mode(POST_SHADER_OFF);

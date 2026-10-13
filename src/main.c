@@ -83,6 +83,7 @@ static int  g_mcp_enable = 0;      /* --mcp: start the TCP debug server */
  * Video menu's filter and Arcade for this run, over what video.cfg remembers (shader_window.h). */
 static int  g_shader_arg = -1;    /* -1 as remembered, else a post_shader_mode_t */
 static int  g_arcade_arg = -1;    /* -1 as remembered, else 0 or 1 */
+static int  g_pixdepth_arg = -1;  /* --pixel-depth / --no-pixel-depth, the same */
 static char g_shader_preset[512] = {0};
 static int  g_shader_scale = -1;
 static int  g_mcp_port   = 7172;   /* --mcp-port N */
@@ -177,9 +178,10 @@ static const game_profile_t *startup_profile(void) {
 /* Pick the profile that runs the zip's ROM set, by basename (e.g. "fvipers.zip"
  * → fvipers). The active profile is kept when it runs that set, so --profile or
  * a Game-menu choice between STF's Console and Arcade survives the load; else
- * the set's default. Falls back to leaving g_active_profile unchanged if no
- * profile runs the set. */
-static void select_profile_for_zip(const char *path) {
+ * the set's default. False when no profile runs the set, or it is a prepared
+ * one (registry.h) that no board can run yet: nothing is loaded then, as the
+ * handheld and the libretro core refuse it (profile_missing_message). */
+static bool select_profile_for_zip(const char *path) {
     const char *sep_f = strrchr(path, '/');
     const char *sep_b = strrchr(path, '\\');
     const char *base  = (sep_f > sep_b ? sep_f : sep_b);
@@ -190,10 +192,16 @@ static void select_profile_for_zip(const char *path) {
     if (n >= sizeof(id)) n = sizeof(id) - 1;
     memcpy(id, base, n);
     const game_profile_t *p = profile_for_rom_set(id, g_active_profile);
-    if (!p) return;
+    if (!p) {
+        char why[256];
+        profile_missing_message(id, why, sizeof why);
+        LOG_ERROR("%s", why);
+        return false;
+    }
     if (g_active_profile != p)
         LOG_INFO("auto-selected profile: %s", p->display_name);
     g_active_profile = p;
+    return true;
 }
 
 /* MAME clone fall-through: the parent zip's path (same directory as the picked
@@ -245,7 +253,7 @@ static void load_sound_board(void) {
 }
 
 static void load_active_profile(const char *primary_zip) {
-    select_profile_for_zip(primary_zip);
+    if (!select_profile_for_zip(primary_zip)) return;
     if (!g_active_profile) { LOG_ERROR("no active profile selected"); return; }
 
     char parent_zip[512] = {0};
@@ -769,6 +777,7 @@ static void init_renderer(void) {
         LOG_WARN("--shader %s: %s", g_shader_preset, post_shader_error());
     if (g_shader_arg >= 0) post_shader_set_mode((post_shader_mode_t)g_shader_arg);
     if (g_arcade_arg >= 0) post_shader_set_arcade(g_arcade_arg);
+    if (g_pixdepth_arg >= 0) g_geo3d_pixel_depth = g_pixdepth_arg;
     if (g_shader_scale >= 0) post_shader_set_input_scale(g_shader_scale);
     geo3d_init(&state.geo3d);
     g_geo3d_state = &state.geo3d;
@@ -1313,11 +1322,9 @@ static void draw_windows(void) {
     if (state.show_cop)         cop_window_draw(&state.show_cop);
     if (state.show_geo3d) {
         const game_quirks_t *gq = g_active_profile ? &g_active_profile->quirks : NULL;
-        geo3d_window_draw(&state.geo3d, &state.show_geo3d,
-                          state.romset.main_data, state.romset.main_data_size,
-                          gq ? gq->model_table_offset : 0,
-                          gq ? gq->model_table_count  : 0,
-                          gq ? gq->mesh_ptr_subtract  : 0);
+        geo3d_models_t md = { .table = profile_model_table(gq) };
+        if (gq) md = geo3d_models_of(&state.romset, gq);
+        geo3d_window_draw(&state.geo3d, &state.show_geo3d, &md);
     }
     objview_window_draw(&state.show_objview, &state.romset, &state.bus);
     if (state.show_bus_stats)   draw_bus_stats_window();
@@ -1417,12 +1424,11 @@ static void extract_model_tick(void) {
     if (g_extract_model >= 0 && g_active_profile && state.romset.main_data) {
         static int _ec = 0;
         if ((_ec++ % 60) == 0) {
-            const game_quirks_t *q = &g_active_profile->quirks;
+            model_table_t table = profile_model_table(&g_active_profile->quirks);
             geo3d_extract_model_texture(g_extract_model,
                 state.romset.main_data, state.romset.main_data_size,
                 state.romset.textures,  state.romset.textures_size,
-                state.bus.texram0, state.bus.texram1,
-                q->model_table_offset, q->model_table_count);
+                state.bus.texram0, state.bus.texram1, &table);
             if (g_extract_seq >= 0) g_extract_seq++;
         }
     }
@@ -1825,6 +1831,10 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             g_arcade_arg = 1;
         } else if (strcmp(argv[i], "--no-arcade") == 0) {
             g_arcade_arg = 0;
+        } else if (strcmp(argv[i], "--pixel-depth") == 0) {
+            g_pixdepth_arg = g_geo3d_pixel_depth = 1;
+        } else if (strcmp(argv[i], "--no-pixel-depth") == 0) {
+            g_pixdepth_arg = g_geo3d_pixel_depth = 0;
         } else if (strcmp(argv[i], "--no-shader") == 0) {
             g_shader_arg = POST_SHADER_OFF;
         } else if (strcmp(argv[i], "--shader") == 0 && i + 1 < argc) {

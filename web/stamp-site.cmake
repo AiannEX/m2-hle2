@@ -17,3 +17,22 @@ foreach(page index.html m2hle.css)
   string(REPLACE "@M2HLE_VERSION@" "${VERSION}" text "${text}")
   file(WRITE "${SITE}/${page}" "${text}")
 endforeach()
+
+# srally.sonicthefighte.rs serves these same files, and m2hle-game.js gives the
+# page Sega Rally's title once it runs. A link preview (Discord, a chat app, a
+# search engine) reads the page without running it, so srally's proxy serves
+# srally.html for / instead: index.html with Sega Rally's words in its head
+# (web/srally/Caddyfile, Pinboard #673). The same text as m2hle-game.js sets.
+file(READ "${SITE}/index.html" text)
+set(sonic_title "<title>Sonic the Fighters</title>")
+set(sonic_desc "content=\"Play Sonic the Fighters in your browser, online, with your own copy of the game.\"")
+foreach(want sonic_title sonic_desc)
+  string(FIND "${text}" "${${want}}" at)
+  if(at EQUAL -1)
+    message(FATAL_ERROR "stamp-site: index.html no longer has ${${want}}; update srally.html's words here")
+  endif()
+endforeach()
+string(REPLACE "${sonic_title}" "<title>Sega Rally Championship</title>" text "${text}")
+string(REPLACE "${sonic_desc}"
+  "content=\"Play Sega Rally Championship in your browser, with your own copy of the game.\"" text "${text}")
+file(WRITE "${SITE}/srally.html" "${text}")
