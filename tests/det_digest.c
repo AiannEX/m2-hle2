@@ -25,7 +25,8 @@
  *
  * --cop FROM:TO:FILE writes every word of the COP conversation during those
  * frames (g_cop_tap: command/argument words in, replies out), one per line with
- * its frame, so the first differing reply names the command that split.
+ * its frame, so the first differing reply names the command that split. On a
+ * Model 2A board it is the TGP's conversation (g_tgp_tap), tagged the same way.
  *
  * --inputs FILE replays a netplay session's input log (netplay.h, "The session
  * input log"): each frame gets the two players' words the session ran on, and
@@ -541,6 +542,7 @@ int main(int argc, char **argv) {
                 return 2;
             }
             g_cop_tap = cop_tap;
+            g_tgp_tap = cop_tap;
         }
     }
 
