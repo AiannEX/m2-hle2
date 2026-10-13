@@ -1007,8 +1007,9 @@ static inline int32_t scsp_pcm_wave(const scsp_t *s, const uint8_t *ram, uint32_
 }
 
 /* scsp_slot_loop for scsp_slot_run_pcm: no loop or a forward one, both positions */
-static inline void scsp_pcm_loop(scsp_slot_t *sl, int lpctl, uint32_t ad0, uint32_t ad1,
-                                 uint32_t *cur, uint32_t *nxt, uint32_t lsa, uint32_t lea) {
+static inline void scsp_pcm_loop(scsp_slot_t *sl, int lpctl, uint32_t *cur, uint32_t *nxt,
+                                 uint32_t lsa, uint32_t lea) {
+    const uint32_t ad0 = *cur >> SCSP_SHIFT, ad1 = *nxt >> SCSP_SHIFT;
     if (lpctl == 0) {
         if ((ad0 >= lsa && ad0 >= lea) || (ad1 >= lsa && ad1 >= lea)) scsp_slot_stop(sl, 0);
     } else {
@@ -1041,9 +1042,8 @@ static uint32_t scsp_slot_run_pcm(scsp_t *s, scsp_slot_t *sl, unsigned i, uint32
 
         cur += step;
         nxt = cur + (1u << SCSP_SHIFT);
-        uint32_t ad0 = cur >> SCSP_SHIFT, ad1 = nxt >> SCSP_SHIFT;
-        if (ad0 >= lsa && lpslnk && sl->state == SCSP_ATTACK) sl->state = SCSP_DECAY1;
-        scsp_pcm_loop(sl, lpctl, ad0, ad1, &cur, &nxt, lsa, lea);
+        if ((cur >> SCSP_SHIFT) >= lsa && lpslnk && sl->state == SCSP_ATTACK) sl->state = SCSP_DECAY1;
+        scsp_pcm_loop(sl, lpctl, &cur, &nxt, lsa, lea);
 
         if (!sdir) sample = scsp_slot_env(sl, alfo, sample);
         if (!stwinh) s->sous[((s->sous_ptr ^ ((k & 1u) << 5)) + i) & 63] = (int16_t)((sample * gs) >> (SCSP_SHIFT + 1));
