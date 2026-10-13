@@ -1,0 +1,6 @@
+# Overlay plugin swap (`overlay_swap`, `ui/overlay_host.h`, host-side)
+
+Part of m2-hle2's load-bearing invariants, indexed in [CLAUDE.md](../../CLAUDE.md): facts reverse-engineered or debugged into the emulator, in no datasheet. Do not re-derive them.
+
+- **A swap to a different file shuts the old plugin down but never `FreeLibrary`s it** (`overlay_host__unload_ex(true)`). stf-fly's `feed_stop` waits 300 ms for its feed thread and then lets it go. After a swap the new copy of the same DLL is mapped at the old base, so the orphan runs the new copy's code with the old copy's stack cookie, and the CRT fast-fails (`c0000409`, in `flyoverlay!m2_overlay_query+…` on a `BaseThreadInitThunk` stack). That was the very first swap tried. `--overlay-reload` still frees, because it reloads the same path, and the loader would otherwise hand back the old module.
+- **The standby card has to be delivered before the load stalls the render thread.** The A/V capture reads frames back a few frames late, and a thread blocked in `LoadLibrary` reads back nothing. With two frames of card before the load, the stream froze on the last game frame for the whole load (measured). The swap waits 8 frames and 0.15 s.
