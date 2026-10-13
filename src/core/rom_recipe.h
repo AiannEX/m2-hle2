@@ -26,6 +26,7 @@ typedef enum {
     ROM_AUDIOCPU, ROM_SAMPLES, ROM_TGP_TABLES,
     ROM_REGION_COUNT
 } rom_region_id_t;
+_Static_assert(ROM_REGION_COUNT == ROMSET_FILES, "a region the directory form does not know");
 
 typedef enum { ROM_PART_PAIR32, ROM_PART_SWAP16, ROM_PART_BYTES, ROM_PART_COPY } rom_part_kind_t;
 
@@ -55,10 +56,9 @@ typedef struct {
     size_t            older_count;
 } rom_recipe_t;
 
-/* The first seven are romset_region's, in its order; the TGP tables follow. */
+/* The regions are romset_region's, in its order. */
 static inline uint8_t **rom_recipe_region(romset_t *rs, rom_region_id_t r, size_t **size) {
-    if (r == ROM_TGP_TABLES) { *size = &rs->tgp_tables_size; return &rs->tgp_tables; }
-    if ((unsigned)r < ROM_TGP_TABLES) return romset_region(rs, (int)r, size);
+    if ((unsigned)r < ROMSET_FILES) return romset_region(rs, (int)r, size);
     *size = NULL;
     return NULL;
 }

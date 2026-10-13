@@ -178,9 +178,9 @@ static const game_profile_t *startup_profile(void) {
 /* Pick the profile that runs the zip's ROM set, by basename (e.g. "fvipers.zip"
  * → fvipers). The active profile is kept when it runs that set, so --profile or
  * a Game-menu choice between STF's Console and Arcade survives the load; else
- * the set's default. Falls back to leaving g_active_profile unchanged if no
- * profile runs the set. False when the set is a prepared one (registry.h),
- * which no board can run yet: nothing is loaded then. */
+ * the set's default. False when no profile runs the set, or it is a prepared
+ * one (registry.h) that no board can run yet: nothing is loaded then, as the
+ * handheld and the libretro core refuse it (profile_missing_message). */
 static bool select_profile_for_zip(const char *path) {
     const char *sep_f = strrchr(path, '/');
     const char *sep_b = strrchr(path, '\\');
@@ -194,8 +194,9 @@ static bool select_profile_for_zip(const char *path) {
     const game_profile_t *p = profile_for_rom_set(id, g_active_profile);
     if (!p) {
         char why[256];
-        if (profile_prepared_message(id, why, sizeof why)) { LOG_ERROR("%s", why); return false; }
-        return true;
+        profile_missing_message(id, why, sizeof why);
+        LOG_ERROR("%s", why);
+        return false;
     }
     if (g_active_profile != p)
         LOG_INFO("auto-selected profile: %s", p->display_name);
