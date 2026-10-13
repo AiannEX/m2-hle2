@@ -121,7 +121,9 @@ typedef struct {
     uint32_t last_line;           /* the line the last instruction ended in */
     uint32_t next_ip;             /* where the last instruction falls through to */
     uint32_t pend0, pend1;        /* registers the last load / the one before fill */
+    uint32_t brrun;               /* line + 1 that runs on from a branch's missed line, 0 none */
     uint8_t  prev_op, prev_valid, last_valid, pad;
+    uint8_t  line_ld, line_st, pad2[2];  /* the line holds a long instruction / only long stores */
 } i960_bt_t;
 static bool      g_i960_bt_on;
 static i960_bt_t g_i960_bt;

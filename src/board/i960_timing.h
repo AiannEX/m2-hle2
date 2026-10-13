@@ -7,10 +7,12 @@
  * The shape is the 80960KB's own (Intel, 80960KB Programmer's Reference Manual,
  * appendix C, and the Hardware Designer's Reference Manual's L-bus chapter):
  *   - a 512-byte direct-mapped instruction cache, 32 lines of 16 bytes. The
- *     fetch unit runs ahead of execution, so a line that hits costs (almost)
- *     nothing; a miss is a 16-byte burst on the L-bus, and a branch into a
- *     line that misses waits for all of it, where running on into one overlaps
- *     part of the burst with what was already queued.
+ *     fetch unit runs ahead of execution, so continuing into a line that hits
+ *     costs a cycle only when the line left held nothing slow enough to hide
+ *     it. A miss is a 16-byte burst on the L-bus; a branch into a line that
+ *     misses waits for the burst up to the word it lands on, and the line
+ *     after it waits behind that burst, where running on into a line overlaps
+ *     part of its burst with what was already queued.
  *   - a taken branch breaks the pipeline; one not taken costs a cycle less
  *     than the table's compare-and-branch.
  *   - loads are scoreboarded: the instruction after a load waits for the data
@@ -18,15 +20,20 @@
  *     the whole block), less if one instruction is between them.
  *   - stores are posted to the bus controller's queue; what they cost is the
  *     region's wait states once the queue fills.
+ *   - a MEMB address with a scaled index (modes 7, 14, 15) takes the address
+ *     unit an extra half cycle.
  *   - mulo is the integer multiply's early-out (Tables C-2..C-13), cheaper
  *     than the table's 18 for the operands games use.
  *
  * The costs are not Intel's: those depend on the board's wait states, which
  * the manuals cannot give. They are the owner's measurements on a Model 2B
  * (Pinboard #611-#738): timed loops of each kind, run on the board and read
- * off its own timers, fitted as extras over MAME's table (#738's rule). The
- * board's i960 runs STF's frames at a median 1.003 of this model (189 frames;
- * the fight +4.7%). Two things are assumed, not measured:
+ * off its own timers, as extras over MAME's table. Each cost is fitted on the
+ * bench that measures it alone, and every bench is then held to the model:
+ * all but six land within their measurement noise (the rest are #744's
+ * residual table; off the benches the costs were fitted on, 0.55 cycles a
+ * loop turn RMS). The model has not been fitted to game frames. Two things
+ * are assumed, not measured:
  *   - code fetched from RAM costs what code fetched from ROM does. Sega Rally
  *     runs from RAM; every bench ran from ROM. A single-word RAM read costs
  *     what a ROM read does on the board, so the line fill should too.
@@ -74,36 +81,46 @@ static inline void i960_bt_init(void) {
     static bool done;
     if (done) return;
     done = true;
-    static const double ld_ram[5]  = { 0, 0.0975, 1.6125, 1.39, 1.155 };
-    static const double ld_drom[5] = { 0, 2.0, 5.1666667, 8.3333333, 11.5 };
-    static const double st_ram[5]  = { 0, 2.0775, 2.1025, 2.14, 2.655 };
-    static const double st_bus[5]  = { 0, 1.625, 3.5833333, 5.5416667, 7.5 };  /* buf, geo */
+    static const double ld_ram[5]  = { 0, 0.3475, 2.1125, 1.64, 1.155 };
+    static const double ld_drom[5] = { 0, 2.25, 5.5, 8.75, 12.0 };
+    static const double st_ram[5]  = { 0, 2.1866667, 2.3208333, 2.14, 2.8733333 };
+    static const double st_bus[5]  = { 0, 1.7341667, 3.7288889, 5.7236111, 7.7183333 };  /* buf, geo */
+    static const double st_slow[5] = { 0, 47.1241667, 95.3638889, 143.6036111, 191.8433333 };  /* tile, io */
     static const double ld_word[I960_BT_REGIONS] = {
-        [I960_BT_BUF] = -0.73875, [I960_BT_CSTAT] = -0.75, [I960_BT_GEO] = -0.75,
-        [I960_BT_TMR] = -0.5, [I960_BT_TILE] = 45.015, [I960_BT_IO] = 45.015,
+        [I960_BT_ROM] = 0.25, [I960_BT_BUF] = -0.48875, [I960_BT_CSTAT] = -0.5, [I960_BT_GEO] = -0.5,
+        [I960_BT_TMR] = -0.25, [I960_BT_TILE] = 45.265, [I960_BT_IO] = 45.265,
     };
     for (int r = 0; r < I960_BT_REGIONS; r++)
         for (int w = 1; w <= 4; w++) {
             double l = r == I960_BT_RAM ? ld_ram[w] : r == I960_BT_DROM ? ld_drom[w] : ld_word[r] * w;
             double s = r == I960_BT_BUF || r == I960_BT_GEO ? st_bus[w]
-                     : r == I960_BT_TILE || r == I960_BT_IO ? 47.015 * w
-                     : r == I960_BT_FIFO ? 12.0 * w      /* the COP's reply wait (#705) */
+                     : r == I960_BT_TILE || r == I960_BT_IO ? st_slow[w]
+                     : r == I960_BT_FIFO ? 10.4182292 * w   /* the COP's reply wait (#705) */
                      : st_ram[w];
             g_i960_bt_ld[r][w] = I960_BT(l);
             g_i960_bt_st[r][w] = I960_BT(s);
         }
 }
 
-#define I960_BT_SEQMISS  I960_BT(10.034)   /* running on into a line that misses */
-#define I960_BT_BRMISS   I960_BT(20.115)   /* a branch into a line that misses */
+#define I960_BT_SEQMISS  I960_BT(10.0)     /* running on into a line that misses */
+#define I960_BT_BRRUN    I960_BT(6.0)      /* ... the line after a branch's missed line */
+#define I960_BT_BRMISS   I960_BT(19.875)   /* a branch into a line that misses, at its word 0 */
 #define I960_BT_SEQHIT   I960_BT(1.0)      /* running on into another line that hits */
+#define I960_BT_SEQHIT_ST I960_BT(0.5633333) /* ... from a line whose long work was stores */
 #define I960_BT_TAKEN    I960_BT(1.0)      /* every taken branch, call and return */
-#define I960_BT_COBR_NT  I960_BT(-1.5)     /* compare-and-branch not taken */
-#define I960_BT_BCC      I960_BT(1.25)     /* conditional branch, taken or not */
+#define I960_BT_COBR_NT  I960_BT(-1.125)   /* compare-and-branch not taken */
+#define I960_BT_BCC      I960_BT(1.75)     /* conditional branch, taken or not */
 #define I960_BT_CALLRET  I960_BT(-0.5)     /* call, callx, calls, ret, bal, balx */
-#define I960_BT_MULO     I960_BT(-3.5)
-#define I960_BT_USE0     I960_BT(3.2775)   /* reading a register the last load fills */
-#define I960_BT_USE1     I960_BT(1.2375)   /* ... the load before that */
+#define I960_BT_MULO     I960_BT(-3.25)
+#define I960_BT_USE0     I960_BT(3.5275)   /* reading a register the last load fills */
+#define I960_BT_USE1     I960_BT(1.4875)   /* ... the load before that */
+#define I960_BT_INDEX    I960_BT(0.50375)  /* a MEMB address with a scaled index */
+
+/* A branch into a missed line by the word it lands on: words 0, 2 and 3 are
+ * the jump benches; word 1 is taken halfway between 0 and 2. */
+static const int32_t g_i960_bt_brword[4] = {
+    0, I960_BT(0.046875), I960_BT(0.09375), I960_BT(0.5625),
+};
 
 /* The words a load or store moves, 0 for anything else; bit 1 of the
  * opcode is a store. */
@@ -172,8 +189,30 @@ static inline int32_t i960_bt_branch(i960_bt_t *t, uint32_t ip, bool *taken) {
     return e;
 }
 
-/* Fetching this instruction's lines through the cache. */
-static inline int32_t i960_bt_fetch(i960_bt_t *t, uint32_t ip, uint32_t len, bool branched) {
+/* Running on into a line that hits: free while the line left held a long
+ * instruction (a load, a compare-and-branch, anything of two table cycles or
+ * more) the fetch overlaps, part of it after only stores, a cycle otherwise. */
+static inline int32_t i960_bt_seqhit(const i960_bt_t *t) {
+    return t->line_ld ? 0 : t->line_st ? I960_BT_SEQHIT_ST : I960_BT_SEQHIT;
+}
+
+/* A line that misses. A branch's waits for the whole burst, a little longer
+ * the later the word it lands on; the line after it waits for its own burst
+ * behind that one's. */
+static inline int32_t i960_bt_miss(i960_bt_t *t, uint32_t ln, uint32_t ip, bool target) {
+    if (target) {
+        t->brrun = ln + 2;
+        return I960_BT_BRMISS + g_i960_bt_brword[(ip >> 2) & 3];
+    }
+    int32_t e = I960_BT_SEQMISS + (t->brrun == ln + 1 ? I960_BT_BRRUN : 0);
+    t->brrun = 0;
+    return e;
+}
+
+/* Fetching this instruction's lines through the cache, then noting what it
+ * leaves its line holding. */
+static inline int32_t i960_bt_fetch(i960_bt_t *t, uint32_t ip, uint32_t len, bool branched,
+                                    uint32_t op, unsigned cost) {
     int32_t e = 0;
     uint32_t first = ip >> 4, last = (ip + len - 1) >> 4;
     for (uint32_t ln = first; ; ln++) {
@@ -181,11 +220,18 @@ static inline int32_t i960_bt_fetch(i960_bt_t *t, uint32_t ip, uint32_t len, boo
         bool target = branched && ln == first;
         if (*tag != ln + 1) {
             *tag = ln + 1;
-            e += target ? I960_BT_BRMISS : I960_BT_SEQMISS;
-        } else if (!target && (!t->last_valid || ln != t->last_line)) {
-            e += I960_BT_SEQHIT;
+            e += i960_bt_miss(t, ln, ip, target);
+        } else if (target) {
+            t->brrun = 0;
+        } else if (!t->last_valid || ln != t->last_line) {
+            e += i960_bt_seqhit(t);
         }
         if (ln == last) break;
+    }
+    if (branched || !t->last_valid || first != t->last_line) t->line_ld = t->line_st = 0;
+    if (cost >= 2) {
+        if (i960_bt_words(op) && (op & 2)) t->line_st = 1;
+        else t->line_ld = 1;
     }
     t->last_line = last;
     t->last_valid = 1;
@@ -204,6 +250,8 @@ static inline int32_t i960_bt_data(i960_bt_t *t, i960_cpu_t *cpu, uint32_t w1, u
     if (op == 0x70 && ((w1 >> 7) & 15) == 1) e += I960_BT_MULO;
     int n = i960_bt_words(op);
     if (!n) return e;
+    uint32_t m = (w1 >> 10) & 15;
+    if (((w1 >> 12) & 1) && (m == 7 || m == 14 || m == 15)) e += I960_BT_INDEX;
     int len;
     int r = i960_bt_region(mem_ea(cpu, w1, w2, &len));
     if (op & 2) return e + g_i960_bt_st[r][n];
@@ -222,7 +270,7 @@ static inline void i960_bt_charge(i960_cpu_t *cpu, uint32_t ip, uint32_t w1, uin
     uint32_t len = op >= 0x80 && ((w1 >> 12) & 1) && mode >= 5 && mode != 6 && mode != 7 ? 8 : 4;
     bool branched;
     int32_t e = i960_bt_branch(t, ip, &branched);
-    e += i960_bt_fetch(t, ip, len, branched);
+    e += i960_bt_fetch(t, ip, len, branched, op, cost);
     e += i960_bt_data(t, cpu, w1, w2);
     int64_t a = (int64_t)cost * I960_CYC_ONE + e + g_i960_cyc_frac;
     if (a < 0) a = 0;
