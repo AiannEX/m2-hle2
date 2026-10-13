@@ -67,10 +67,14 @@ static inline void game_frame_prepare(video_state_t *video, geo3d_state_t *geo3d
 
     if (geo3d->enabled && g_active_profile && rs->main_data && rs->polygons) {
         const game_quirks_t *q = &g_active_profile->quirks;
+        const model_table_t table = profile_model_table(q);
         /* One snapshot for the walk and the decode: the texture points and
          * polygon RAM it reads are the ones published with it (memory.h). */
         const uint32_t *snap = g_geodl_snap;
         g_geo_rs = geodl_raster_for(snap);
+        /* Set each frame, both ways: a game loaded after m2-snake in the same
+         * process used to keep the homebrew's flat colours. */
+        g_geo_flat_color = q->geo_displaylist ? 1 : 0;
         if (q->geo_displaylist) {
             /* Authentic hardware path: decode the GEO display list the i960 built
              * in bufferram. Scan the snapshot captured at geo_flush (g_geodl_snap),
@@ -80,7 +84,7 @@ static inline void game_frame_prepare(video_state_t *video, geo3d_state_t *geo3d
                 geo3d_scan_displaylist(geo3d,
                                        snap,         BUFF_RAM_SIZE / 4, 0x10000,
                                        rs->main_data, rs->main_data_size,
-                                       q->model_table_offset, q->model_table_count,
+                                       &table,
                                        bus->palette, PALETTE_SIZE);
         } else if (!(g_geodl_snap_ready &&
                      geo3d_scan_geo_list(geo3d, snap, BUFF_RAM_SIZE / 4,
@@ -88,7 +92,7 @@ static inline void game_frame_prepare(video_state_t *video, geo3d_state_t *geo3d
                                          (int16_t)mem_read16(bus, H_SYNC_BASE),
                                          (int16_t)mem_read16(bus, V_SYNC_BASE),
                                          rs->main_data, rs->main_data_size,
-                                         q->model_table_offset, q->model_table_count))) {
+                                         &table))) {
             /* No display list yet, or it did not reach END (only the first two
              * frames after boot): no 3D this frame. */
             geo3d->captured_count = 0;
@@ -156,7 +160,6 @@ static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
         geo3d->lines_only = false;
         if (q->geo_displaylist) {
             g_geo_wireframe  = 0;
-            g_geo_flat_color = 1;
             g_backface_cull  = 0;
         }
         /* The homebrew's display-list object order changes every frame (stars

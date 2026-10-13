@@ -112,8 +112,6 @@ Sega Rally has no table and already reads the mesh at the object's address (`gam
 
 - **An unknown command is given 0 arguments** (`sharc_args_for_cmd`, `sharc_exec.h:179`). Its arguments are then read as commands, which has happened twice (`0x2A805555`, `0x17002E2E`). The command word's low byte is the firmware's dispatch index (0x..5151 is dispatch[0x51]). A table of argument counts by index, read from cpres1's PM, would cover every command, including ones not yet seen.
 - **Every command empties the reply FIFO** (`sharc_exec.h:679-680`, and `cop.h:175-176` for the stream command). Replies the i960 has not read are dropped, where the board would hand them to the next read. Since an empty read answers 0, this hides a handler that answers too many words. An under-read should be logged at WARN, as an underflow is, not dropped silently.
-- **`0x13002626` clamps asin's argument to ±1** (`sharc_exec.h:1450-1458`). `sharc_fw_asin_word`'s own comment (`:407-408`) says the firmware does not clamp (`_L20332`). Delete the clamp and run `cop_replay` and `match-replay`.
-- **`0x34006868` is `Fn_ld_glb_mat` (cpres1 PM 0x205A3), and its handler is empty** (`sharc_exec.h:1233-1236`, whose comment calls it a "kage/shadow bone init"). The firmware copies 12 words from bufferram `0x1400000 + arg` into the current matrix: it is the mirror of 0x67 `Fn_st_glb_mat`. `name_char_kage_disp` sends it with 0x3D00, the kage slot 0x67 stores, so its shadow is drawn with whatever matrix was current instead. Port it like 0x67.
 - The short-argument fallbacks that push zeros (`:985`, `:1218` and others) can only be reached from a truncated `cop_replay` input. They are harmless.
 
 ## 4. Smaller things
@@ -139,7 +137,7 @@ Sega Rally has no table and already reads the mesh at the object's address (`gam
 - the flat-colour ×2 boost, "approximating the colorxlat ramp" (`:614-628`, `game_render.h:649-650`);
 - the overrides in `game_frame.h:147-165`: flat colour on, because "model 456's ROM material is a meaningless placeholder", and backface culling off.
 
-All of it is gated on `g_geo_flat_color` / `geo_displaylist`, so no game sees it, with one leak: `game_frame.h:159` is the only write to `g_geo_flat_color` and nothing clears it, so a game loaded after m2-snake in the same process keeps the flat-colour fill (`game_render.h:649-650`). **Real fix:** put m2-snake's list through the board's walk, as m2-pacman's is, and delete this walker. Failing that, use the clip planes of §2.4 here too.
+All of it is gated on `g_geo_flat_color` / `geo_displaylist`, so no game sees it. (The one leak, a flag nothing cleared, is fixed: see "Fixed in #678".) **Real fix:** put m2-snake's list through the board's walk, as m2-pacman's is, and delete this walker. Failing that, use the clip planes of §2.4 here too.
 
 ## 5. What became of the 2026-09-30 audit
 
@@ -195,7 +193,6 @@ These were checked and are deliberate, measured or proven board-identical:
 
 ## Doc drift found on the way
 
-- CLAUDE.md (HLE Hooks) says FV has its own `co_processor_error_hang` hook. FV's table has only its frame-pace hook.
 - `fvipers.h:217-221` still lists `_700000_loop` as a hook to port. It was removed in #254.
 - `fvipers.h:166-168`: the data-window comment contradicts its code (§2.2).
 - `m68k.h:45` calls the 68000's cycle count "approximate" (§5).
@@ -203,9 +200,23 @@ These were checked and are deliberate, measured or proven board-identical:
 - `game_profile.h:146-151` says `geo_displaylist` is "required for non-STF games". Sega Rally and m2-pacman use the board's GEO walk.
 - The scanner section's header comment (`geo3d.h:888-894`) is stale, and so is the line reject's "-6" (`:690`).
 
+## Fixed in #678 (branch `idea-678-cheap-fixes`)
+
+Checked with `det_digest --profile sfight` against master `c279795`. A 9000-frame scripted game is identical. 15000 frames of attract differ only in buffer RAM on frames 2508-3258 (the 0x68 commit), and work RAM, COP DM, cycles and the netplay check are identical there too.
+
+- **`0x34006868` `Fn_ld_glb_mat`** is ported from cpres1 PM 0x205A3 (`sharc_exec.h:1233`, commit `315f47d`). It loads the 12 words at bufferram `0x01400000 + arg0` into the current matrix: col0, col1, col2, then T.
+  - In STF it changes only the Tornado's shadow in the attract intro, which `name_char_kage_disp` draws under the kage slot 0x3D00. That shadow is now the plane's whole silhouette on the water, as MAME (`-nodrc`) draws it, where it was scattered smudges.
+  - The i960 cannot tell the difference, and netplay is unchanged.
+  - Any other game that sends 0x68 gets the firmware's behaviour.
+- **`0x13002626` no longer clamps asin's argument** (`sharc_exec.h:1471`, commit `832ed32`), as `_L20332` does not. Only an argument with |a| > 1 sees a change, and STF never sends one: removing it changes nothing in either `det_digest` run.
+- **`g_geo_flat_color` is set from each frame's own list** in `game_frame_prepare` (`game_frame.h:77`, commit `c50e8e3`). Before this, nothing cleared it. Only a process that runs m2-snake and then another game can see a difference: that game no longer keeps the flat-colour fill.
+- **CLAUDE.md:301 now says FV has no `co_processor_error_hang` hook yet** (`fvipers.h:217-220`; commit `0ac619b`). This is a doc change only.
+
+The sound pin (§2.1) and the board install (§2.2) were looked at and are not cheap. Dropping the STF-only gate on the sound pin would start that interrupt in FV, Sega Rally and homebrew, and FV has no sound board turned on yet. Both stay open.
+
 ## Suggested order
 
-1. **The cheap fixes that move no STF frame.** These are the sound pin (§2.1), the board install (§2.2), the asin clamp and the empty 0x68 handler (§3). For each, run `cop_replay`, `match-replay` and `det_digest`.
+1. **The cheap fixes that move no STF frame.** The asin clamp and the empty 0x68 handler are done (see above). The sound pin (§2.1) and the board install (§2.2) are left, and are not cheap: they move FV, Sega Rally and homebrew, and need a protocol bump. For each, run `cop_replay`, `match-replay` and `det_digest`.
 2. **The COP argument table by dispatch index, and keeping unread replies (§3).** Both are ROM-free and testable with `cop_test` / `cop_replay`.
 3. **The model catalogue out of the game draw (§2.3).** Run `grade-models`, `grade-stages` and `grade-zsort`. This also unblocks Daytona's 20-byte table.
 4. **Real call frames, then table interrupts for STF (§1.1, §1.2).** These remove `EMU_IRQ_TABLE_MAX_SLICES` and the STF interrupt path. Re-grade everything and bump the protocol.
