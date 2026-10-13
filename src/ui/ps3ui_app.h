@@ -1624,15 +1624,28 @@ static const char *ps3ui_rule_value(const ps3ui_app_t *a, int id, char *buf, siz
     }
 }
 
+/* What a value list shows: its title and n rows of label, value and whether
+ * the value is the default. `dim` halves the text and hides the cursor (VERSUS
+ * before a second pad). */
+#define PS3UI_VALUE_ROWS 8
+typedef struct {
+    const char *title;
+    const char *labels[PS3UI_VALUE_ROWS];
+    const char *values[PS3UI_VALUE_ROWS];
+    int is_default[PS3UI_VALUE_ROWS];
+    int n;
+    int dim;
+} ps3ui_value_list_t;
+
 /* A value list, as TaskMenuArcade_Draw, TaskOptionSetting_Draw and
  * TaskMultiMenuRule_Draw draw one: the label left at p_txt_01_lt, the value
  * right-aligned at p_txt_03_rt, green (0x00F040) while it is the default, and
- * the arrows round the current row's value. `dim` halves the text and hides
- * the cursor (VERSUS before a second pad). */
-static void ps3ui_draw_values(ps3ui_canvas_t *cv, const ps3ui_win_t *w, int cursor, float cursor_t, const char *title,
-                              const char *const *labels, const char *const *values, const int *is_default, int n,
-                              int dim)
+ * the arrows round the current row's value. */
+static void ps3ui_draw_values(ps3ui_canvas_t *cv, const ps3ui_win_t *w, int cursor, float cursor_t,
+                              const ps3ui_value_list_t *l)
 {
+    const char *title = l->title;
+    int dim = l->dim;
     ps3ui_slots_t s = { 0 };
     ps3ui_win_draw(cv, w, 0, 0, &s);
     float lx, ly, rx, ry, ex, ey, tx, ty;
@@ -1642,14 +1655,14 @@ static void ps3ui_draw_values(ps3ui_canvas_t *cv, const ps3ui_win_t *w, int curs
     if (!dim && w->state == PS3UI_WIN_IDLE && ps3ui_slot_xy(&s, "p_win_edg_lt", 0, 0, &ex, &ey))
         ps3ui_draw_cursor(cv, &ps3ui_n_cmn_base, "cursor_cmn01_46", ex, ey + 54.0f * (float)cursor, cursor_t);
     ps3ui_text_style_t st = ps3ui_style_text(37.0f);
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < l->n; i++) {
         float y = ly + 54.0f * (float)i;
-        ps3ui_text_left(cv, &st, lx, y, labels[i], alpha);
+        ps3ui_text_left(cv, &st, lx, y, l->labels[i], alpha);
         ps3ui_text_style_t vs = st;
-        vs.rgb = is_default[i] ? 0x00F040 : 0xFFFFFF;
-        ps3ui_text_right(cv, &vs, rx, y, values[i], alpha);
+        vs.rgb = l->is_default[i] ? 0x00F040 : 0xFFFFFF;
+        ps3ui_text_right(cv, &vs, rx, y, l->values[i], alpha);
         if (i == cursor && !dim) {
-            float vw = ps3ui_rich_width(&vs, values[i]);
+            float vw = ps3ui_rich_width(&vs, l->values[i]);
             ps3ui_draw_value_arrows(cv, &st, rx - vw * 0.5f, y, vw, alpha);
         }
     }
@@ -2081,15 +2094,14 @@ static void ps3ui_app_draw(ps3ui_app_t *a, ps3ui_canvas_t *cv)
         case PS3UI_SCR_OSK: ps3ui_draw_osk(cv, a); break;
         case PS3UI_SCR_MENU: ps3ui_draw_menu(cv, a, ps3ui_str_title, ps3ui_str_menu, 5, NULL); break;
         case PS3UI_SCR_RULE: {
-            int ids[8], n = ps3ui_rule_list(a, ids);
-            const char *labels[8], *values[8];
-            int is_def[8];
-            char buf[8][24];
-            for (int i = 0; i < n; i++) {
-                labels[i] = ps3ui_rule_label[ids[i]];
-                values[i] = ps3ui_rule_value(a, ids[i], buf[i], sizeof buf[i], &is_def[i]);
+            int ids[PS3UI_VALUE_ROWS];
+            ps3ui_value_list_t l = { .title = ps3ui_str_title, .n = ps3ui_rule_list(a, ids) };
+            char buf[PS3UI_VALUE_ROWS][24];
+            for (int i = 0; i < l.n; i++) {
+                l.labels[i] = ps3ui_rule_label[ids[i]];
+                l.values[i] = ps3ui_rule_value(a, ids[i], buf[i], sizeof buf[i], &l.is_default[i]);
             }
-            ps3ui_draw_values(cv, &a->main, a->cursor, a->cursor_t, ps3ui_str_title, labels, values, is_def, n, 0);
+            ps3ui_draw_values(cv, &a->main, a->cursor, a->cursor_t, &l);
             break;
         }
         case PS3UI_SCR_CONNECT:

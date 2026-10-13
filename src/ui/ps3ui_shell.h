@@ -494,10 +494,9 @@ static void ps3ui_shell_frame(ps3ui_shell_t *sh, uint32_t pad, uint32_t pad2, in
 /* ---- draw ------------------------------------------------------------------------- */
 
 /* A value list (ARCADE / VERSUS / Settings): ps3ui_draw_values. */
-static void ps3ui_sh_draw_values(ps3ui_canvas_t *cv, ps3ui_shell_t *sh, const char *title, const char *const *labels,
-                                 const char *const *values, const int *is_default, int n, int dim)
+static void ps3ui_sh_draw_values(ps3ui_canvas_t *cv, ps3ui_shell_t *sh, const ps3ui_value_list_t *l)
 {
-    ps3ui_draw_values(cv, &sh->main, sh->cursor, sh->cursor_t, title, labels, values, is_default, n, dim);
+    ps3ui_draw_values(cv, &sh->main, sh->cursor, sh->cursor_t, l);
 }
 
 static void ps3ui_sh_draw_list(ps3ui_canvas_t *cv, ps3ui_shell_t *sh, const char *title, const char *const *rows,
@@ -656,15 +655,13 @@ static void ps3ui_shell_draw(ps3ui_shell_t *sh, ps3ui_canvas_t *cv)
         int versus = sh->scr == PS3UI_SH_VERSUS, first = versus ? 1 : 0, n = PS3UI_SETS - first;
         const uint8_t *v = versus ? sh->versus : sh->arcade;
         const uint8_t *def = versus ? ps3ui_set_versus_def : ps3ui_set_arcade_def;
-        const char *labels[PS3UI_SETS], *values[PS3UI_SETS];
-        int is_def[PS3UI_SETS];
+        ps3ui_value_list_t l = { .title = versus ? "OFFLINE VERSUS" : "ARCADE", .n = n, .dim = versus && !sh->two_p };
         for (int i = 0; i < n; i++) {
-            labels[i] = ps3ui_set_label[i + first];
-            values[i] = ps3ui_set_values[i + first][v[i + first]];
-            is_def[i] = v[i + first] == def[i + first];
+            l.labels[i] = ps3ui_set_label[i + first];
+            l.values[i] = ps3ui_set_values[i + first][v[i + first]];
+            l.is_default[i] = v[i + first] == def[i + first];
         }
-        ps3ui_sh_draw_values(cv, sh, versus ? "OFFLINE VERSUS" : "ARCADE", labels, values, is_def, n,
-                             versus && !sh->two_p);
+        ps3ui_sh_draw_values(cv, sh, &l);
         ps3ui_sh_draw_explain(cv, sh, versus && !sh->two_p
                                   ? "Two controllers are needed. Press the START button on Player 2's controller."
                                   : "Press the cross button to start.");
@@ -681,13 +678,15 @@ static void ps3ui_shell_draw(ps3ui_shell_t *sh, ps3ui_canvas_t *cv)
         ps3ui_sh_draw_controls(cv, sh);
         break;
     case PS3UI_SH_SETTINGS: {
-        static const char *const labels[2] = { "Volume: Music", "Volume: Sound Effects" };
         char m[8], e[8];
         snprintf(m, sizeof m, "%d", sh->music);
         snprintf(e, sizeof e, "%d", sh->se);
-        const char *values[2] = { m, e };
-        int is_def[2] = { sh->music == 5, sh->se == 5 };
-        ps3ui_sh_draw_values(cv, sh, "SETTINGS", labels, values, is_def, 2, 0);
+        ps3ui_value_list_t l = { .title = "SETTINGS",
+                                 .labels = { "Volume: Music", "Volume: Sound Effects" },
+                                 .values = { m, e },
+                                 .is_default = { sh->music == 5, sh->se == 5 },
+                                 .n = 2 };
+        ps3ui_sh_draw_values(cv, sh, &l);
         break;
     }
     case PS3UI_SH_PAUSE:
