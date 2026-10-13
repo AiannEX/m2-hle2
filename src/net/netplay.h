@@ -179,8 +179,10 @@
  *    in place of a flat 2.3x, so its timers and every frame differ (#744).
  * 18: the board timing reads the game's wait table at 0xE00000: Sega Rally's
  *    program ROM and backup SRAM cost more, its code in work RAM less (#763).
+ * 19: the wait table's DRAM bit costs about a cycle a burst, and a branch into
+ *    a missed line six a wait: the board's #766 benches (#772).
  */
-#define NETPLAY_PROTO_REV 18
+#define NETPLAY_PROTO_REV 19
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.
