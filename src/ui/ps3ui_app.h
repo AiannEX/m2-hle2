@@ -169,10 +169,6 @@ static void ps3ui_text_right(ps3ui_canvas_t *cv, const ps3ui_text_style_t *st, f
     ps3ui_rich(cv, st, x - ps3ui_rich_width(st, s), top + 42.0f * st->cap / 37.0f, s, a);
 }
 
-/* A text box between two slots' corners: x0, y0 the top left, x1, y1 the
- * bottom right. */
-typedef struct { float x0, y0, x1, y1; } ps3ui_box_t;
-
 /* The box from slot `lt`'s top left to slot `rb`'s bottom right; 0 when the
  * layout lacks either. */
 static int ps3ui_slot_box(const ps3ui_slots_t *s, const char *lt, const char *rb, ps3ui_box_t *box)
@@ -1872,8 +1868,8 @@ static void ps3ui_draw_room_list(ps3ui_canvas_t *cv, ps3ui_app_t *a)
             continue;
         if ((uint32_t)i >= st->max_slot) {
             /* a row past the room's size: covered */
-            ps3ui_fill_rect(cv, px - 37.0f, py - 11.0f, px - 37.0f + 880.0f, py - 11.0f + 70.0f, 0x000000, 0.5f * alpha,
-                            PS3UI_BLEND_NORMAL);
+            ps3ui_fill_rect(cv, (ps3ui_box_t){ px - 37.0f, py - 11.0f, px - 37.0f + 880.0f, py - 11.0f + 70.0f }, 0x000000,
+                            0.5f * alpha, PS3UI_BLEND_NORMAL);
             continue;
         }
         if ((uint32_t)i >= st->member_count)
@@ -2021,7 +2017,7 @@ static void ps3ui_draw_osk(ps3ui_canvas_t *cv, ps3ui_app_t *a)
         float y = ey + 54.0f * (float)(a->osk_row + 1);
         int cols = a->osk_row == 4 ? PS3UI_OSK_ACTS : 10;
         float w = (rx - lx) / (float)cols;
-        ps3ui_fill_rect(cv, lx + w * (float)a->osk_col, y + 2.0f, lx + w * (float)(a->osk_col + 1), y + 52.0f,
+        ps3ui_fill_rect(cv, (ps3ui_box_t){ lx + w * (float)a->osk_col, y + 2.0f, lx + w * (float)(a->osk_col + 1), y + 52.0f },
                         0x00BAFF, 0.3f * alpha, PS3UI_BLEND_ADD);
     }
     for (int r = 0; r < 4; r++)

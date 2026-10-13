@@ -551,14 +551,17 @@ static inline void ps3ui_clear(ps3ui_canvas_t *cv, uint32_t hex)
     ps3ui_fill_px(cv, 0, 0, cv->w, cv->h, c, 1.0f, PS3UI_BLEND_NORMAL);
 }
 
+/* A box in layout units: x0, y0 the top left, x1, y1 the bottom right (a text
+ * box between two slots' corners, a filled rectangle). */
+typedef struct { float x0, y0, x1, y1; } ps3ui_box_t;
+
 /* A solid rectangle in layout units, snapped to pixel centres. */
-static inline void ps3ui_fill_rect(ps3ui_canvas_t *cv, float x0, float y0, float x1, float y1,
-                                   uint32_t hex, float a, int blend)
+static inline void ps3ui_fill_rect(ps3ui_canvas_t *cv, ps3ui_box_t b, uint32_t hex, float a, int blend)
 {
     float c[3];
     ps3ui_rgb_hex(hex, c);
-    int px0 = (int)ceilf(x0 * cv->k + cv->ox - 0.5f), px1 = (int)ceilf(x1 * cv->k + cv->ox - 0.5f);
-    int py0 = (int)ceilf(y0 * cv->k + cv->oy - 0.5f), py1 = (int)ceilf(y1 * cv->k + cv->oy - 0.5f);
+    int px0 = (int)ceilf(b.x0 * cv->k + cv->ox - 0.5f), px1 = (int)ceilf(b.x1 * cv->k + cv->ox - 0.5f);
+    int py0 = (int)ceilf(b.y0 * cv->k + cv->oy - 0.5f), py1 = (int)ceilf(b.y1 * cv->k + cv->oy - 0.5f);
     if (px0 < cv->clip_x0) px0 = cv->clip_x0;
     if (py0 < cv->clip_y0) py0 = cv->clip_y0;
     if (px1 > cv->clip_x1) px1 = cv->clip_x1;
