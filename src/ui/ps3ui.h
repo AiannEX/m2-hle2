@@ -552,7 +552,7 @@ static inline void ps3ui_clear(ps3ui_canvas_t *cv, uint32_t hex)
 }
 
 /* A box in layout units: x0, y0 the top left, x1, y1 the bottom right (a text
- * box between two slots' corners, a filled rectangle). */
+ * box between two slots' corners, a filled rectangle, a glyph's fitted ink). */
 typedef struct { float x0, y0, x1, y1; } ps3ui_box_t;
 
 /* A solid rectangle in layout units, snapped to pixel centres. */

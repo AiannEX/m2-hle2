@@ -282,9 +282,9 @@ static void ps3ui__paint_glass(ps3ui_image_t *im, int side)
 
 /* ---- lettering: a glyph of the title face fitted into a measured box ------- */
 
-static void ps3ui__glyph_path(ps3ui_path_t *p, int font, int cp, float x0, float y0, float x1, float y1,
-                              float shear)
+static void ps3ui__glyph_path(ps3ui_path_t *p, int font, int cp, ps3ui_box_t b, float shear)
 {
+    float x0 = b.x0, y0 = b.y0, x1 = b.x1, y1 = b.y1;
     ps3ui_text_init();
     const stbtt_fontinfo *fi = &g_ps3ui_text.info[font];
     int ix0, iy0, ix1, iy1;
@@ -321,7 +321,7 @@ static float *ps3ui__letters(int w, int h, const ps3ui__letter_t *l, int n, floa
         ps3ui_path_reset(&p);
         /* the box is the sheared ink's extent; fit the upright glyph to it */
         float slant = (y1 - y0) * shear;
-        ps3ui__glyph_path(&p, PS3UI_FONT_TITLE, l[i].cp, l[i].x0, y0, l[i].x1 - slant, y1, shear);
+        ps3ui__glyph_path(&p, PS3UI_FONT_TITLE, l[i].cp, (ps3ui_box_t){ l[i].x0, y0, l[i].x1 - slant, y1 }, shear);
         ps3ui_path_cover(&p, m, w, h);
     }
     return m;
