@@ -536,6 +536,7 @@ static inline void geodl_apply_state(const uint32_t *L, uint32_t nw, uint32_t rs
             case 0x0A: case 0x1A: case 0x0C: case 0x1C: len = 3; break;
             case 0x0B: case 0x1B: len = 12; break;
             case 0x1D: len = 2 + 3 * LA(1); break;
+            case 0x0E: len = 33 + 3 * LA(32); break;      /* geo_test */
             case 0x02: case 0x12: len = geodl_direct_len(L, nw, p); break;
             case 0x0F: case 0x1F: len = 0; guard = 0x8000u; break;   /* END */
             default: break;

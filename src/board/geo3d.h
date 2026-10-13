@@ -1317,6 +1317,9 @@ static inline uint32_t geo3d__geol_skip(uint32_t cmd, const uint32_t *words, uin
         case 0x10: case 0x1E: return 1;
         case 0x0D: return 2;
         case 0x1D: return 2 + 3 * geo3d__geol_arg(words, nw, p, 1);
+        /* geo_test: 32 FIFO-test words, a block count, three words a block
+         * (model2_v.cpp geo_test) */
+        case 0x0E: return 33 + 3 * geo3d__geol_arg(words, nw, p, 32);
         default:   return 0;
     }
 }

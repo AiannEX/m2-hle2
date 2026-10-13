@@ -76,6 +76,25 @@ int main(void) {
     CHECK(mem_read32(&bus, GEO_BASE + 0x10) == 0, "GEO reads 0 off its two registers");
     CHECK(mem_read32(&bus, GEO_PROGRAM_BASE) == 0xFFFFFFFFu, "GEO FIFO reads all ones");
 
+    /* GEO command 0x0E (geo_test) is 32 FIFO-test words, a block count and
+     * three words a block. Test words that read as a polygon write and an END
+     * are data: the write is not made, and the list goes on past them. */
+    {
+        uint32_t L[48] = {0};
+        uint32_t n = 0;
+        L[n++] = 0x0Eu << 23;
+        L[n++] = 0x05u << 23; L[n++] = 0x20; L[n++] = 1; L[n++] = 0xBADu;
+        L[n++] = 0x0Fu << 23;
+        for (uint32_t k = 5; k < 32; k++) L[n++] = 1u << k;
+        L[n++] = 1; L[n++] = 0; L[n++] = 0; L[n++] = 0;       /* one block */
+        L[n++] = 0x05u << 23; L[n++] = 0x10; L[n++] = 1; L[n++] = 0xABCD1234u;
+        L[n++] = 0x0Fu << 23;
+        g_geo_live.polyram[0][0x10] = g_geo_live.polyram[0][0x20] = 0;
+        geodl_apply_state(L, n, 0, NULL);
+        CHECK(g_geo_live.polyram[0][0x10] == 0xABCD1234u, "geo_test is stepped over whole");
+        CHECK(g_geo_live.polyram[0][0x20] == 0, "geo_test's words are not run as commands");
+    }
+
     /* TEXRAM mirror aliases the same buffer. */
     mem_write32(&bus, TEXRAM0_BASE + 0x100, 0x11223344);
     CHECK(mem_read32(&bus, TEXRAM0_MIRROR_BASE + 0x100) == 0x11223344, "TEXRAM0 mirror aliases base");
