@@ -2556,26 +2556,26 @@ static inline void game_render_draw_captured_models(geo3d_state_t *geo, const ge
 }
 
 /*
- * Compute the letterboxed rectangle for the game inside (fb_w × fb_h).
- * Result respects VIDEO_WIDTH:VIDEO_HEIGHT aspect ratio.
+ * The letterboxed rectangle for a game_w × game_h picture inside (fb_w × fb_h):
+ * as large as fits at the picture's aspect ratio, centred.
  */
-static inline void game_render_letterbox(int fb_w, int fb_h,
-                                          int game_w, int game_h,
-                                          int *ox, int *oy,
-                                          int *out_w, int *out_h) {
+static inline game_rect_t game_render_letterbox(int fb_w, int fb_h,
+                                                int game_w, int game_h) {
     float game_aspect = (float)game_w / (float)game_h;
     float win_aspect  = (float)fb_w   / (float)fb_h;
+    game_rect_t r;
     if (win_aspect > game_aspect) {
-        *out_h = fb_h;
-        *out_w = (int)(fb_h * game_aspect);
-        *ox    = (fb_w - *out_w) / 2;
-        *oy    = 0;
+        r.h = fb_h;
+        r.w = (int)(fb_h * game_aspect);
+        r.x = (fb_w - r.w) / 2;
+        r.y = 0;
     } else {
-        *out_w = fb_w;
-        *out_h = (int)(fb_w / game_aspect);
-        *ox    = 0;
-        *oy    = (fb_h - *out_h) / 2;
+        r.w = fb_w;
+        r.h = (int)(fb_w / game_aspect);
+        r.x = 0;
+        r.y = (fb_h - r.h) / 2;
     }
+    return r;
 }
 
 #endif /* GAME_RENDER_H */

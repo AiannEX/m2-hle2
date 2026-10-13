@@ -819,9 +819,9 @@ static bool web_keep_picture(bool have_game, bool lobby, bool overlay, bool affo
 static void web_record_menus(ps3ui_canvas_t *cv, bool overlay) {
     if (overlay) {
         /* over the game: the 16:9 layout fitted to the game's letterboxed picture */
-        int ox, oy, gw, gh;
-        game_render_letterbox(sapp_width(), sapp_height(), post_shader_picture_width(), VIDEO_HEIGHT,
-                              &ox, &oy, &gw, &gh);
+        game_rect_t r = game_render_letterbox(sapp_width(), sapp_height(),
+                                              post_shader_picture_width(), VIDEO_HEIGHT);
+        int ox = r.x, oy = r.y, gw = r.w, gh = r.h;
         ps3ui_gpu_record(cv, sapp_width(), sapp_height());
         ps3ui_canvas_size(cv, sapp_width(), sapp_height());
         float k = (float)gw / 1920.0f;
@@ -885,9 +885,8 @@ static void web_present_game(const web_picture_t *pic, ps3ui_canvas_t *cv) {
 
 /* The object viewer in place of the game, letterboxed to the viewer target's own shape. */
 static void web_present_objview(void) {
-    int ox, oy, w, h;
-    game_render_letterbox(sapp_width(), sapp_height(), g_objview.rt_w, g_objview.rt_h, &ox, &oy, &w, &h);
-    game_render_draw_target(g_objview.color_tex, true, ox, oy, w, h);
+    game_rect_t r = game_render_letterbox(sapp_width(), sapp_height(), g_objview.rt_w, g_objview.rt_h);
+    game_render_draw_target(g_objview.color_tex, true, r.x, r.y, r.w, r.h);
 }
 
 /* The object viewer's passes, then the swapchain pass: the lobby, the object
@@ -954,8 +953,9 @@ static void frame(void) {
 
     /* A filter over the picture (post_shader.h) reads the game from a target of
      * its own, at the render scale, and only covers the game's 4:3 rectangle. */
-    game_render_letterbox(sapp_width(), sapp_height(), post_shader_picture_width(), VIDEO_HEIGHT,
-                          &pic.ox, &pic.oy, &pic.w, &pic.h);
+    game_rect_t r = game_render_letterbox(sapp_width(), sapp_height(),
+                                          post_shader_picture_width(), VIDEO_HEIGHT);
+    pic.ox = r.x; pic.oy = r.y; pic.w = r.w; pic.h = r.h;
     crt_pots_place(&pic.ox, &pic.oy, &pic.w, &pic.h);
     post_shader_set_input_scale(g_web_rt.want);
     pic.post = game && !g_web_objview_show && post_shader_active();

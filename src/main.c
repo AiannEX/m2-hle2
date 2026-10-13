@@ -1413,8 +1413,8 @@ static void window_game_rect(int *ox, int *oy, int *w, int *h) {
      * target has its own aspect, chosen by --av-size. */
     int src_w = s_av_mirror ? av_stream_width()  : post_shader_picture_width();
     int src_h = s_av_mirror ? av_stream_height() : VIDEO_HEIGHT;
-    game_render_letterbox(sapp_width(), avail_h, src_w, src_h, ox, oy, w, h);
-    *oy += menu_h;
+    game_rect_t r = game_render_letterbox(sapp_width(), avail_h, src_w, src_h);
+    *ox = r.x; *oy = r.y + menu_h; *w = r.w; *h = r.h;
 }
 
 /* Programmatic per-model texture extractor (--extract N). Re-runs ~once/

@@ -509,8 +509,8 @@ static inline bool overlay_host_game_rect(int canvas_w, int canvas_h, int top,
     }
     int avail = canvas_h - top;
     if (avail < 1) avail = 1;
-    game_render_letterbox(canvas_w, avail, VIDEO_WIDTH, VIDEO_HEIGHT, ox, oy, w, h);
-    *oy += top;
+    game_rect_t r = game_render_letterbox(canvas_w, avail, VIDEO_WIDTH, VIDEO_HEIGHT);
+    *ox = r.x; *oy = r.y + top; *w = r.w; *h = r.h;
     return true;
 }
 
