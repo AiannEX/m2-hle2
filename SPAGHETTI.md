@@ -1,19 +1,19 @@
-# How much of m2-hle2 is spaghetti? (Pinboard #321, #756, #757)
+# How much of m2-hle2 is spaghetti? (Pinboard #321, #756, #757, #761)
 
-A measurement of master at `48cb645` (2026-10-13) with #757's splits on top (`a835045`), with `python3 tools/spaghetti.py` (it needs `pip install lizard`). Master alone is the last column of the [Progress](#progress) table. The first measurement, at `66f4d4e` (2026-10-01), is kept below under [Where it started](#where-it-started), and what was done between the two under [Progress](#progress) and [Untangled so far](#untangled-so-far).
+A measurement of master at `48cb645` (2026-10-13) with #757's splits and #761's parameter structs on top, with `python3 tools/spaghetti.py` (it needs `pip install lizard`). Master alone is the last column of the [Progress](#progress) table. The first measurement, at `66f4d4e` (2026-10-01), is kept below under [Where it started](#where-it-started), and what was done between the two under [Progress](#progress) and [Untangled so far](#untangled-so-far).
 
 ## The number
 
-**One function, 0.1% of the emulator's function code.** 1 of 3,561 hand-written functions holds 44 of 48,921 lines of code, and has more than 20 independent paths through it, which is about where a function stops fitting in one head. At `66f4d4e` it was 114 functions and 25.7% of the code; on master at `48cb645`, before #757, 6 functions and 0.8%. None is over 30 paths.
+**One function, 0.1% of the emulator's function code.** 1 of 3,562 hand-written functions holds 44 of 48,905 lines of code, and has more than 20 independent paths through it, which is about where a function stops fitting in one head. At `66f4d4e` it was 114 functions and 25.7% of the code; on master at `48cb645`, before #757, 6 functions and 0.8%. None is over 30 paths.
 
 | Branchiness (modified CCN) | Functions | Lines | Share of code | At `66f4d4e` |
 |---|---:|---:|---:|---:|
-| over 15 | 86 | 3,180 | 6.5% | 33.7% |
+| over 15 | 86 | 3,175 | 6.5% | 33.7% |
 | **over 20** | **1** | **44** | **0.1%** | **25.7%** |
 | over 30 | 0 | 0 | 0 | 15.7% |
 | over 50 | 0 | 0 | 0 | 6.7% |
 
-The code has grown by a quarter since then (38,873 lines in functions to 48,921: savestates, rewind, GGPO, replays, the one-way follow, Gems, Sega Rally's TGP), and the new code came in small. Agent sessions run `lizard -w -C 15 -L 80` on the files they change before they build, and split a function as soon as it warns. That is why so little grew back: what is over 20 now was written before that check, or grew a case at a time since.
+The code has grown by a quarter since then (38,873 lines in functions to 48,905: savestates, rewind, GGPO, replays, the one-way follow, Gems, Sega Rally's TGP), and the new code came in small. Agent sessions run `lizard -w -C 15 -L 80` on the files they change before they build, and split a function as soon as it warns. That is why so little grew back: what is over 20 now was written before that check, or grew a case at a time since.
 
 ## How it was measured
 
@@ -45,7 +45,7 @@ The five that came in since PR #181 (`savestate__load_zip` 62, `gems_verify` 32,
 Two smells the path count does not see, and the splitting made one of them worse:
 
 - **Globals.** There are 350 `g_` variables, up from 268, and 39 are read from five or more files, up from 22. `g_active_profile` is read in 24 files, across every layer (18 at `66f4d4e`). Most of the growth is the new features' state: GGPO, the replay recorder, the follow feed, the Gems switches, and the run loop's latches that savestates and rollback have to reach. A header-only C emulator with one board is built this way on purpose (it is how MAME's drivers looked for years), but it means a function's inputs are not all in its parameter list.
-- **Long parameter lists.** 45 functions take 8 or more parameters, up from 32. A function split into steps hands its locals to the steps, and where they were not gathered into a struct first, the steps took them one by one. `geo3d_emit_tri_uv` still takes 25; `geo3d_dump_face_tex` (15), `geo3d_cface_fill` (13), `game_render_draw_captured_models` (13, down from 22), `s24_draw_line` (12) and `rpcn_create_room` (12) come next. The geo3d ones could take `geo3d_models_t` / `geo3d_paint_t`, as #332 and #335 did for the decoder.
+- **Long parameter lists.** 45 functions took 8 or more parameters after #757, up from 32 at `66f4d4e`: a function split into steps hands its locals to the steps, and where they were not gathered into a struct first, the steps took them one by one. #761 gathered them for the geo3d decode and draw family and the tile compositor, and 23 are left, none in `geo3d.h` or `tile_renderer.h` (`geo3d_emit_tri_uv` took 25). The longest now is `rpcn_create_room` (12), then `rpcn_parse_twitch_start` / `_poll`, `app_icon__coverage` and `ps3ui_draw_values` (10 each). `python3 tools/spaghetti.py --params 8` lists them.
 
 ## Where it started
 
@@ -105,16 +105,17 @@ It is ordinary for an emulator, and the parts that matter most are better than t
 
 Each column is `python3 tools/spaghetti.py` with the `_Static_assert` fix, so `f1c5ee7` here is not the `66f4d4e` table above: it has `geo3d_mesh_layers` and the rest of `geo3d.h` back in, and #325's draw work in. #332 to #338 split the worst ten a PR at a time; #341 and #372 then took every function over 20, a file at a time, on the `idea-332-despaghetti` branch that PR #181 merged on 2026-10-03.
 
-| | master `f1c5ee7` | #332 `461cc2c` | #334 `7f39255` | #335 `05d3d6a` | #336 `90c6ee9` | #338 `19066ad` | #341 `2728c7b` | #372 `1edd518` | PR #181 `c51bf9a` | master `48cb645` | #757 `a835045` |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| over 20 paths (the headline) | 25.7% (114 functions) | 25.6% (113) | 24.6% (113) | 23.8% (114) | 22.3% (112) | 20.8% (108) | 11.8% (60) | 0.6% (4) | 0.1% (1) | **0.8%** (6) | **0.1%** (1) |
-| over 30 | 15.5% (51) | 15.4% (51) | 14.4% (50) | 13.2% (49) | 11.6% (46) | 10.1% (42) | 5.6% (22) | 0.2% (1) | 0 | 0.5% (3) | 0 |
-| over 50 | 6.7% (15) | 6.7% (15) | 5.6% (14) | 4.3% (12) | 2.8% (9) | 1.6% (6) | 0.3% (1) | 0 | 0 | 0.3% (1) | 0 |
-| `main*.c` over 20 | 32.3% | 32.3% | 22.8% | 22.8% | 22.8% | 19.3% | 12.0% | 1.1% | 1.1% | 0.9% | 0.9% |
-| `board/` over 20 | 23.2% | 22.6% | 22.6% | 19.5% | 18.2% | 18.2% | 11.8% | 0 | 0 | 0 | 0 |
-| `ui/` over 20 | | | | 28.2% | 25.0% | 25.0% | 17.3% | 0 | 0 | 0.3% | 0 |
-| `net/` over 20 | | | | | 25.5% | 21.0% | 6.5% | 2.7% | 0 | 0 | 0 |
-| `core/` over 20 | | | | | 20.6% | 15.5% | 0 | 0 | 0 | 4.9% | 0 |
+| | master `f1c5ee7` | #332 `461cc2c` | #334 `7f39255` | #335 `05d3d6a` | #336 `90c6ee9` | #338 `19066ad` | #341 `2728c7b` | #372 `1edd518` | PR #181 `c51bf9a` | master `48cb645` | #757 `a835045` | #761 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| over 20 paths (the headline) | 25.7% (114 functions) | 25.6% (113) | 24.6% (113) | 23.8% (114) | 22.3% (112) | 20.8% (108) | 11.8% (60) | 0.6% (4) | 0.1% (1) | **0.8%** (6) | **0.1%** (1) | **0.1%** (1) |
+| over 30 | 15.5% (51) | 15.4% (51) | 14.4% (50) | 13.2% (49) | 11.6% (46) | 10.1% (42) | 5.6% (22) | 0.2% (1) | 0 | 0.5% (3) | 0 | 0 |
+| over 50 | 6.7% (15) | 6.7% (15) | 5.6% (14) | 4.3% (12) | 2.8% (9) | 1.6% (6) | 0.3% (1) | 0 | 0 | 0.3% (1) | 0 | 0 |
+| `main*.c` over 20 | 32.3% | 32.3% | 22.8% | 22.8% | 22.8% | 19.3% | 12.0% | 1.1% | 1.1% | 0.9% | 0.9% | 0.9% |
+| `board/` over 20 | 23.2% | 22.6% | 22.6% | 19.5% | 18.2% | 18.2% | 11.8% | 0 | 0 | 0 | 0 | 0 |
+| `ui/` over 20 | | | | 28.2% | 25.0% | 25.0% | 17.3% | 0 | 0 | 0.3% | 0 | 0 |
+| `net/` over 20 | | | | | 25.5% | 21.0% | 6.5% | 2.7% | 0 | 0 | 0 | 0 |
+| `core/` over 20 | | | | | 20.6% | 15.5% | 0 | 0 | 0 | 4.9% | 0 | 0 |
+| 8 or more parameters | | | | | | | | | | | 45 | 23 |
 
 PR #181 left one function over 20, `lobby_event`, and it is still there. Five came in with new work after it: `savestate__load_zip` and `savestate__entries` (savestates, #426), `gems_verify` and `gems_apply` (Gems, #454), and `ps3ui_draw_result` (the go-again prompt, #8). #757 split all five, each held to the code before by an A/B (below).
 
@@ -142,3 +143,8 @@ PR #181 left one function over 20, `lobby_event`, and it is still there. Five ca
   - `savestate__load_zip` (62 paths to 7) is the header check (`savestate__check`, 14: INFO, profile, LAYOUT, version, ROM, with the same refusals in the same order), a scratch set (`savestate_scratch_t`, `_alloc`, `_read` from a table of entries, `_commit`, `_free`) and the load that runs them. `savestate__entries` (27 to 9) lists the parts through `savestate__add_ids`, `_cop`, `_board`, `_sound` and `_extra`, in the old order. *A/B:* `det_digest --frames 900 --save-at 500`: identical rows, all 46 zip entries byte-identical, each build loading the other's file matches the saving run's tail, and twelve broken files (no INFO, another profile, a bad LAYOUT, an old version, another program, data or sound ROM, a missing or short part, no CPU, no LAYOUT, no ROM, not a zip) are refused with the same message.
   - `gems_verify` (32 to 11) is the stride test (`gems_verify_this_call`), the i960 run to where the C resumed (`gems_verify_i960_to`), the compare of the seven memories and the registers (`gems_compare`, 8) and the log (`gems_verify_log`). `gems_apply` (31 to 13) is the COP callbacks (`gems_cop_hooks`, also what a netplay session turns off), the trap sites (`gems_publish_sites`) and the set check (`gems_for_set`). `det_digest` now takes `--gems-i960`, `--gems-cop` and `--gems-verify`, which is how it was held: seven runs of 3,000 frames (none, each option, i960 with verify, the Console profile with verify, COP with `M2HLE_GEMS_VERIFY_ALL=1`, both) give identical rows, stderr and Gems log lines. None of those differs, so a fault put into `gems_run` in both builds (not committed; on with an environment variable) spoils every fifth C result four ways: registers alone, one word in each of the seven memories plus the display-list pointer, a float-close word, and an IP the i960 never reaches. Two runs of 1,500 frames, `--gems-i960 --gems-verify` and `M2HLE_GEMS_VERIFY_ALL=1` on the Console profile with `--gems-cop` too, give identical rows, stderr and Gems log lines: 520 and 461 lines, with 81 and 72 mismatch reports, 4 unreached each, and the per-trap counts of exact, float-close, registers-only, differ and lost.
   - `ps3ui_draw_result` (21 to 2) draws each side (`ps3ui_draw_result_side`, 9), the timer and the menu (`_menu`, 10) in the old order. *A/B:* `ps3ui_render app` and `shell`: all 36 pictures byte-identical, the go-again ones (`11_result`, `13_again`, `13b_again_exit`, `15_again_not_vs`, `s13`, `s14`) among them.
+- **Long parameter lists (Pinboard #761).** Every function in `geo3d.h` and `tile_renderer.h` that took 8 or more parameters now takes a struct for what travelled together, 22 functions in all; the count over the tree went from 45 to 23. The paths and the code each function runs are as before.
+  - `geo3d.h`: a face's paint (colour, texture header, flags) is `geo3d_paint_t`, and `geo3d_emit_tri_uv` (25 parameters) takes three corners, their UVs and one paint; `geo3d_emit_line` takes two `vec3_t`. A direct-data polygon is `geo3d_direct_poly_t` (`geo3d_direct_emit`), the sort-key walk `geo3d_zsort_t` (`geo3d_zsort_step`), and a face being decoded `geo3d_shape_t` (`geo3d_emit_face`, `_face_lines`, `geo3d_decode_face_luma`). The cached draw's per-call state is `geo3d_cdraw_t` (`geo3d_cached_face`, `_cface_corners`, `_cface_paint`). The display-list scans take the list as `geo3d_list_t` (words, count, start) and the ROMs as `geo3d_rom_t` (`geo3d_scan_displaylist`, `geo3d_scan_geo_list`, `geo3d__geol_object`, `geo3d__geol_command`), and `geo3d_extract_model_texture` takes `geo3d_models_t`. `geo3d_dump_face_tex` (15) works out the face's corner count itself, as its caller did.
+  - `tile_renderer.h`: one tilemap pass (its words, the graphics, tilemap, category, opaque and mode) is `s24_pass_t`, which `s24_draw_tilemap`, `s24_draw_line` (12), `s24_line_split` and `s24_cell_load` take.
+  - `game_render_draw_captured_models` (13) reads the host camera from the `geo3d_state_t` it is handed, which its one caller filled the arguments from; nothing between the old read and the new one writes it.
+  - *A/B against the base build (A):* `arc_bench --draw-digest` over 6,000 frames of attract (4,789 distinct), identical with the mesh cache and with `--no-mesh-cache`; `tile_test` (48 scenarios, 1,920 incremental frames) and `geo_test` the same in both. A driver built against both sources ran 40,000 random display lists through `geo3d_scan_displaylist` + `geo3d_build_wireframes` and direct-data runs through `geo3d_decode_direct`: 28,798 objects captured and 2,323,122 triangles, every case's hash the same. The two debug dumps (`M2HLE_DEBUG_DUMPS`) were checked by reading: they bind the same values to the same names.

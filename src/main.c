@@ -1424,11 +1424,12 @@ static void extract_model_tick(void) {
     if (g_extract_model >= 0 && g_active_profile && state.romset.main_data) {
         static int _ec = 0;
         if ((_ec++ % 60) == 0) {
-            model_table_t table = profile_model_table(&g_active_profile->quirks);
-            geo3d_extract_model_texture(g_extract_model,
-                state.romset.main_data, state.romset.main_data_size,
-                state.romset.textures,  state.romset.textures_size,
-                state.bus.texram0, state.bus.texram1, &table);
+            const geo3d_models_t md = {
+                .main_data = state.romset.main_data, .main_data_size = state.romset.main_data_size,
+                .materials = state.romset.textures,  .materials_size = state.romset.textures_size,
+                .table     = profile_model_table(&g_active_profile->quirks),
+            };
+            geo3d_extract_model_texture(g_extract_model, &md, state.bus.texram0, state.bus.texram1);
             if (g_extract_seq >= 0) g_extract_seq++;
         }
     }

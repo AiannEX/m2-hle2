@@ -2425,8 +2425,7 @@ static inline void game_render__geo_decode_one(geo3d_state_t *geo, const geo3d_m
     g_geo3d_zadjust = cm->zadjust;
     g_geo3d_lod  = cm->geo_lod;
     if (cm->direct_len) {           /* direct data: the polygons are in the list */
-        geo3d_decode_direct(geo->direct_words + cm->direct_off, cm->direct_len,
-                            md->materials, md->materials_size, md->main_data, md->main_data_size,
+        geo3d_decode_direct(geo->direct_words + cm->direct_off, cm->direct_len, md,
                             cm->gproj[0], cm->gproj[1]);
     } else {
         geo3d_models_t from = *md;
@@ -2530,12 +2529,10 @@ static inline void game_render_draw_geo_list(geo3d_state_t *geo, const geo3d_mod
  * lengths and all), anything else through the host camera.
  *
  * ox/oy/w/h are the letterbox rect in framebuffer pixels (from game_render_letterbox).
+ * The host camera is geo's own (cam_x/y/z, rot_y/x, fov_deg).
  */
 static inline void game_render_draw_captured_models(geo3d_state_t *geo, const geo3d_models_t *md,
-                                                     int ox, int oy, int w, int h,
-                                                     float cam_x, float cam_y, float cam_z,
-                                                     float rot_y, float rot_x, float fov_deg,
-                                                     float lerp_t) {
+                                                     int ox, int oy, int w, int h, float lerp_t) {
     if (!g_game_render.initialized) return;
     if (!geo->enabled) { geo3d_lines_reset(); return; }
 
@@ -2546,10 +2543,11 @@ static inline void game_render_draw_captured_models(geo3d_state_t *geo, const ge
 
     /* Homebrew lists (geo3d_scan_displaylist), the test triangle and the
      * free camera: one batch through the host camera. */
+    float cam_x = geo->cam_x, cam_y = geo->cam_y, cam_z = geo->cam_z;
     geo3d_build_wireframes(geo, md, lerp_t, cam_x, cam_y, cam_z);
     if (!geo->lines_only)
-        game_render_draw_fills(cam_x, cam_y, cam_z, rot_y, rot_x, fov_deg, 0.0f);
-    game_render_draw_lines(cam_x, cam_y, cam_z, rot_y, rot_x, fov_deg, 0.0f);
+        game_render_draw_fills(cam_x, cam_y, cam_z, geo->rot_y, geo->rot_x, geo->fov_deg, 0.0f);
+    game_render_draw_lines(cam_x, cam_y, cam_z, geo->rot_y, geo->rot_x, geo->fov_deg, 0.0f);
 }
 
 /*
