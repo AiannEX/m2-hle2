@@ -72,6 +72,9 @@ static inline void game_frame_prepare(video_state_t *video, geo3d_state_t *geo3d
          * polygon RAM it reads are the ones published with it (memory.h). */
         const uint32_t *snap = g_geodl_snap;
         g_geo_rs = geodl_raster_for(snap);
+        /* Set each frame, both ways: a game loaded after m2-snake in the same
+         * process used to keep the homebrew's flat colours. */
+        g_geo_flat_color = q->geo_displaylist ? 1 : 0;
         if (q->geo_displaylist) {
             /* Authentic hardware path: decode the GEO display list the i960 built
              * in bufferram. Scan the snapshot captured at geo_flush (g_geodl_snap),
@@ -157,7 +160,6 @@ static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
         geo3d->lines_only = false;
         if (q->geo_displaylist) {
             g_geo_wireframe  = 0;
-            g_geo_flat_color = 1;
             g_backface_cull  = 0;
         }
         /* The homebrew's display-list object order changes every frame (stars
