@@ -1803,15 +1803,22 @@ static const char *ps3ui_search_message(const ps3ui_app_t *a, char *buf, size_t 
     return buf;
 }
 
+/* What every member row of the room shares: the two fighters' rows and the
+ * name and tag styles. */
+typedef struct {
+    int f[2];
+    ps3ui_text_style_t name, tag;
+} ps3ui_member_rows_t;
+
 /* One member's row of the room: link icon, name, and the 1P / 2P or ENTRY tag. */
-static void ps3ui_draw_room_member(ps3ui_canvas_t *cv, const netplay_member_status_t *m, int i, const int f[2],
-                                   const ps3ui_text_style_t *name, ps3ui_text_style_t *tag, float px, float py,
-                                   float alpha)
+static void ps3ui_draw_room_member(ps3ui_canvas_t *cv, const ps3ui_member_rows_t *rows,
+                                   const netplay_member_status_t *m, int i, float px, float py, float alpha)
 {
+    const int *f = rows->f;
     if (!m->is_me)
         ps3ui_draw_image(cv, ps3ui_sprite(ps3ui_net_icon(m->rtt_ms)), ps3ui_mat_translate(px, py), alpha,
                          PS3UI_BLEND_NORMAL, NULL);
-    ps3ui_text(cv, name, px + 240.0f, py + 2.0f + 42.0f, m->npid, alpha);
+    ps3ui_text(cv, &rows->name, px + 240.0f, py + 2.0f + 42.0f, m->npid, alpha);
     const char *t = NULL;
     uint32_t rgb = 0xFF0000;
     if (i == f[0] || i == f[1]) {
@@ -1822,9 +1829,10 @@ static void ps3ui_draw_room_member(ps3ui_canvas_t *cv, const netplay_member_stat
         rgb = m->data.entry == 1 ? 0xFF0000 : 0x0000FF;
     }
     if (t) {
-        tag->rgb = rgb;
+        ps3ui_text_style_t tag = rows->tag;
+        tag.rgb = rgb;
         /* baseline 47 of the 56 cell, scaled to 32 and centred on the row's 24 */
-        ps3ui_text(cv, tag, px + 750.0f - ps3ui_text_width(tag, t) * 0.5f, py + 24.0f - 16.0f + 47.0f * 32.0f / 56.0f,
+        ps3ui_text(cv, &tag, px + 750.0f - ps3ui_text_width(&tag, t) * 0.5f, py + 24.0f - 16.0f + 47.0f * 32.0f / 56.0f,
                    t, alpha);
     }
 }
@@ -1854,10 +1862,9 @@ static void ps3ui_draw_room_list(ps3ui_canvas_t *cv, ps3ui_app_t *a)
     ps3ui_draw_room_info(cv, &s, &st->room_rules, alpha);
     /* ENTRY 1P / 1P tags: font 2 set 24 wide and 32 high, centred on (750, 24)
      * of the row. Font 2's own cell is 56 with a cap of 40. */
-    ps3ui_text_style_t name = ps3ui_style_name(), tag = ps3ui_style_title(40.0f * 32.0f / 56.0f);
-    tag.wscale = 24.0f / 32.0f;
-    int f[2];
-    ps3ui_fighters(st, f);
+    ps3ui_member_rows_t rows = { .name = ps3ui_style_name(), .tag = ps3ui_style_title(40.0f * 32.0f / 56.0f) };
+    rows.tag.wscale = 24.0f / 32.0f;
+    ps3ui_fighters(st, rows.f);
     for (int i = 0; i < PS3UI_ROWS; i++) {
         char slot[16];
         snprintf(slot, sizeof slot, "p_player%d_lt", i + 1);
@@ -1871,7 +1878,7 @@ static void ps3ui_draw_room_list(ps3ui_canvas_t *cv, ps3ui_app_t *a)
         }
         if ((uint32_t)i >= st->member_count)
             continue;
-        ps3ui_draw_room_member(cv, &st->members[i], i, f, &name, &tag, px, py, alpha);
+        ps3ui_draw_room_member(cv, &rows, &st->members[i], i, px, py, alpha);
     }
     const char *msg = st->member_count >= 2 ? "Now accepting match entries. The top players in 1P Entry and 2P Entry get priority."
                                             : "Please wait.";
