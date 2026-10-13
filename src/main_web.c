@@ -843,7 +843,7 @@ static void web_draw_post_source(int gw, int gh, float lerp_t) {
     int sw, sh;
     post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, gw, gh, &sw, &sh);
     post_shader_begin_source(sw, sh, &state.pass_action);
-    game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, 0, 0, sw, sh, lerp_t);
+    game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){0, 0, sw, sh}, lerp_t);
     post_shader_end_source();
     post_shader_prepare(gw, gh);
 }
@@ -855,7 +855,8 @@ static void web_draw_offscreen(float lerp_t) {
         .attachments = { .colors[0] = g_web_rt.color_att, .depth_stencil = g_web_rt.depth_att },
     });
     game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                    0, 0, VIDEO_WIDTH * g_web_rt.scale, VIDEO_HEIGHT * g_web_rt.scale, lerp_t);
+                    (game_rect_t){0, 0, VIDEO_WIDTH * g_web_rt.scale, VIDEO_HEIGHT * g_web_rt.scale},
+                    lerp_t);
     sg_end_pass();
 }
 
@@ -875,7 +876,8 @@ static void web_present_game(const web_picture_t *pic, ps3ui_canvas_t *cv) {
     int ox = pic->ox, oy = pic->oy, w = pic->w, h = pic->h;
     if (pic->post)           post_shader_draw(ox, oy, w, h, sapp_width(), sapp_height());
     else if (pic->offscreen) game_render_draw_target(g_web_rt.texture, true, ox, oy, w, h);
-    else           game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, ox, oy, w, h, pic->lerp_t);
+    else           game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){ox, oy, w, h},
+                                   pic->lerp_t);
     crt_pots_record(ox, oy, w, h, sapp_width(), sapp_height());
     if (pic->overlay) ps3ui_gpu_draw(cv);   /* the pause menu over the game */
     sgl_draw();

@@ -1221,7 +1221,7 @@ static void headless_av_frame(void) {
                          .depth_stencil = av_capture_depth_att() },
     });
     game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                    ox, oy, gw, gh, 1.0f);
+                    (game_rect_t){ox, oy, gw, gh}, 1.0f);
     overlay_host_draw();
     sg_end_pass();
     av_capture_submit(av_frame, av_sample);
@@ -1375,7 +1375,7 @@ static void av_stream_pass(void) {
                              .depth_stencil = av_capture_depth_att() },
         });
         game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                        ox, oy, gw, gh, 1.0f);
+                        (game_rect_t){ox, oy, gw, gh}, 1.0f);
         overlay_host_draw();
         sg_end_pass();
         av_capture_submit(av_frame, av_sample);
@@ -1497,7 +1497,7 @@ static void frame(void) {
         int sw, sh;
         post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, w, h, &sw, &sh);
         post_shader_begin_source(sw, sh, &state.pass_action);
-        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, 0, 0, sw, sh, lerp_t);
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){0, 0, sw, sh}, lerp_t);
         post_shader_end_source();
         post_shader_prepare(w, h);
     }
@@ -1519,7 +1519,7 @@ static void frame(void) {
             post_shader_draw(ox, oy, w, h, sapp_width(), sapp_height());
         else
             game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                            ox, oy, w, h, lerp_t);
+                            (game_rect_t){ox, oy, w, h}, lerp_t);
 
         /* The overlay goes UNDER any debug window that is open, which is right:
          * those are for the person at the keyboard and the overlay is for the

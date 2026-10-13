@@ -72,6 +72,11 @@ typedef struct {
     float mvp[16];
 } game_render_vs_params_t;
 
+/* A viewport in pixels of the current pass: its top-left corner and size. */
+typedef struct {
+    int x, y, w, h;
+} game_rect_t;
+
 typedef struct {
     /* Tile (fullscreen-quad) pipeline */
     sg_buffer   quad_vbuf;

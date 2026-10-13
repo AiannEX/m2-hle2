@@ -99,11 +99,12 @@ static inline void game_frame_prepare(video_state_t *video, geo3d_state_t *geo3d
     hprof_leave(zone);
 }
 
-/* Draw the game into the viewport (ox, oy, w, h) of the current pass.
+/* Draw the game into the viewport vp of the current pass.
  * Layer order: back colour → background tiles → 3D scene → foreground/HUD. */
 static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
                                    memory_bus_t *bus, const romset_t *rs,
-                                   int ox, int oy, int w, int h, float lerp_t) {
+                                   game_rect_t vp, float lerp_t) {
+    const int ox = vp.x, oy = vp.y, w = vp.w, h = vp.h;
     int64_t t0 = emu_now_us();
     int zone = hprof_enter(HPROF_UPLOAD);   /* host_prof.h */
     /* Decode both 4-bit luma texture banks → GPU atlas for textured fills, and

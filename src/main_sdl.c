@@ -1128,7 +1128,7 @@ static void render_frame(void) {
             .attachments = { .colors[0] = g_rt.color_att, .depth_stencil = g_rt.depth_att },
         });
         game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                        0, 0, g_rt.w, g_rt.h, lerp_t);
+                        (game_rect_t){0, 0, g_rt.w, g_rt.h}, lerp_t);
         sg_end_pass();
         if (opt.gl_finish) {
             /* The game pass is the tile layer quads and the 3D fills: its GPU
@@ -1152,7 +1152,7 @@ static void render_frame(void) {
     if (show_game && opt.render_scale > 0)
         game_render_draw_target(g_rt.texture, opt.linear, ox, oy, w, h);
     else if (show_game)
-        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, ox, oy, w, h, lerp_t);
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){ox, oy, w, h}, lerp_t);
     if (opt.osd) {
         osd_update(SDL_GetTicksNS());
         osd_draw(fb_w, fb_h);

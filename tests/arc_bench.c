@@ -325,7 +325,7 @@ __attribute__((noinline)) static void render_frame(void) {
     });
     int ox, oy, w, h;
     game_render_letterbox(FB_W, FB_H, VIDEO_WIDTH, VIDEO_HEIGHT, &ox, &oy, &w, &h);
-    game_frame_draw(&video, &geo3d, &bus, &romset, ox, oy, w, h, lerp_t);
+    game_frame_draw(&video, &geo3d, &bus, &romset, (game_rect_t){ox, oy, w, h}, lerp_t);
     sg_end_pass();
     sg_commit();
 
