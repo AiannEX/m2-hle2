@@ -525,11 +525,11 @@ static void ps3ui_sh_draw_explain(ps3ui_canvas_t *cv, ps3ui_shell_t *sh, const c
 {
     ps3ui_slots_t s = { 0 };
     ps3ui_win_draw(cv, &sh->msg, 0, 0, &s);
-    float x0, y0, x1, y1;
-    if (!ps3ui_slot_xy(&s, "p_txt_01_lt", 0, 0, &x0, &y0) || !ps3ui_slot_xy(&s, "p_txt_02_rb", 1, 1, &x1, &y1))
+    ps3ui_box_t box;
+    if (!ps3ui_slot_box(&s, "p_txt_01_lt", "p_txt_02_rb", &box))
         return;
     ps3ui_text_style_t st = ps3ui_style_text(37.0f);
-    ps3ui_text_box(cv, &st, x0, y0, x1, y1, text, ps3ui_slot_alpha(&s, "p_txt_01_lt"), 0);
+    ps3ui_text_box(cv, &st, box, text, ps3ui_slot_alpha(&s, "p_txt_01_lt"), 0);
 }
 
 static void ps3ui_sh_draw_controls(ps3ui_canvas_t *cv, ps3ui_shell_t *sh)

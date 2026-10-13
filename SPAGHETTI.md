@@ -1,19 +1,19 @@
-# How much of m2-hle2 is spaghetti? (Pinboard #321, #756, #757, #761, #764, #765)
+# How much of m2-hle2 is spaghetti? (Pinboard #321, #756, #757, #761, #764, #765, #767, #768)
 
-A measurement of master at `48cb645` (2026-10-13) with #757's splits and the parameter structs of #761, #764 and #765 on top, with `python3 tools/spaghetti.py` (it needs `pip install lizard`). Master alone is the last column of the [Progress](#progress) table. The first measurement, at `66f4d4e` (2026-10-01), is kept below under [Where it started](#where-it-started), and what was done between the two under [Progress](#progress) and [Untangled so far](#untangled-so-far).
+A measurement of master at `48cb645` (2026-10-13) with #757's splits and the parameter structs of #761, #764, #765, #767 and #768 on top, with `python3 tools/spaghetti.py` (it needs `pip install lizard`). Master alone is the last column of the [Progress](#progress) table. The first measurement, at `66f4d4e` (2026-10-01), is kept below under [Where it started](#where-it-started), and what was done between the two under [Progress](#progress) and [Untangled so far](#untangled-so-far).
 
 ## The number
 
-**One function, 0.1% of the emulator's function code.** 1 of 3,568 hand-written functions holds 44 of 48,893 lines of code, and has more than 20 independent paths through it, which is about where a function stops fitting in one head. At `66f4d4e` it was 114 functions and 25.7% of the code; on master at `48cb645`, before #757, 6 functions and 0.8%. None is over 30 paths.
+**One function, 0.1% of the emulator's function code.** 1 of 3,570 hand-written functions holds 44 of 48,896 lines of code, and has more than 20 independent paths through it, which is about where a function stops fitting in one head. At `66f4d4e` it was 114 functions and 25.7% of the code; on master at `48cb645`, before #757, 6 functions and 0.8%. None is over 30 paths.
 
 | Branchiness (modified CCN) | Functions | Lines | Share of code | At `66f4d4e` |
 |---|---:|---:|---:|---:|
-| over 15 | 84 | 3,071 | 6.3% | 33.7% |
+| over 15 | 83 | 3,023 | 6.2% | 33.7% |
 | **over 20** | **1** | **44** | **0.1%** | **25.7%** |
 | over 30 | 0 | 0 | 0 | 15.7% |
 | over 50 | 0 | 0 | 0 | 6.7% |
 
-The code has grown by a quarter since then (38,873 lines in functions to 48,893: savestates, rewind, GGPO, replays, the one-way follow, Gems, Sega Rally's TGP), and the new code came in small. Agent sessions run `lizard -w -C 15 -L 80` on the files they change before they build, and split a function as soon as it warns. That is why so little grew back: what is over 20 now was written before that check, or grew a case at a time since.
+The code has grown by a quarter since then (38,873 lines in functions to 48,896: savestates, rewind, GGPO, replays, the one-way follow, Gems, Sega Rally's TGP), and the new code came in small. Agent sessions run `lizard -w -C 15 -L 80` on the files they change before they build, and split a function as soon as it warns. That is why so little grew back: what is over 20 now was written before that check, or grew a case at a time since.
 
 ## How it was measured
 
@@ -45,7 +45,7 @@ The five that came in since PR #181 (`savestate__load_zip` 62, `gems_verify` 32,
 Two smells the path count does not see, and the splitting made one of them worse:
 
 - **Globals.** There are 350 `g_` variables, up from 268, and 39 are read from five or more files, up from 22. `g_active_profile` is read in 24 files, across every layer (18 at `66f4d4e`). Most of the growth is the new features' state: GGPO, the replay recorder, the follow feed, the Gems switches, and the run loop's latches that savestates and rollback have to reach. A header-only C emulator with one board is built this way on purpose (it is how MAME's drivers looked for years), but it means a function's inputs are not all in its parameter list. Re-measured at #765 by one script on master `48cb645` and on #764's branch: the same count on both, 39 read from five or more files and `g_active_profile` in 24, so the parameter structs since have added none.
-- **Long parameter lists.** 45 functions took 8 or more parameters after #757, up from 32 at `66f4d4e`: a function split into steps hands its locals to the steps, and where they were not gathered into a struct first, the steps took them one by one. #761 gathered them for the geo3d decode and draw family and the tile compositor, and 23 were left, none in `geo3d.h` or `tile_renderer.h` (`geo3d_emit_tri_uv` took 25). #764 gathered the RPCN room's (`rpcn_create_room` took 12), and 20 were left. #765 gathered the Twitch sign-in's replies (`rpcn_parse_twitch_start` and `_poll` took 10 each), and 18 were left. #767 gathered the PS3 menus' value lists (`ps3ui_draw_values` took 10), and 16 are left. The longest now is `app_icon__coverage` (10). `python3 tools/spaghetti.py --params 8` lists them.
+- **Long parameter lists.** 45 functions took 8 or more parameters after #757, up from 32 at `66f4d4e`: a function split into steps hands its locals to the steps, and where they were not gathered into a struct first, the steps took them one by one. #761 gathered them for the geo3d decode and draw family and the tile compositor, and 23 were left, none in `geo3d.h` or `tile_renderer.h` (`geo3d_emit_tri_uv` took 25). #764 gathered the RPCN room's (`rpcn_create_room` took 12), and 20 were left. #765 gathered the Twitch sign-in's replies (`rpcn_parse_twitch_start` and `_poll` took 10 each), and 18 were left. #767 gathered the PS3 menus' value lists (`ps3ui_draw_values` took 10), and 16 were left. #768 gave the PS3 menus' wrapped text a box (`ps3ui_text_box` took 9), and 15 are left. The longest now is `app_icon__coverage` (10). `python3 tools/spaghetti.py --params 8` lists them.
 
 ## Where it started
 
@@ -105,17 +105,17 @@ It is ordinary for an emulator, and the parts that matter most are better than t
 
 Each column is `python3 tools/spaghetti.py` with the `_Static_assert` fix, so `f1c5ee7` here is not the `66f4d4e` table above: it has `geo3d_mesh_layers` and the rest of `geo3d.h` back in, and #325's draw work in. #332 to #338 split the worst ten a PR at a time; #341 and #372 then took every function over 20, a file at a time, on the `idea-332-despaghetti` branch that PR #181 merged on 2026-10-03.
 
-| | master `f1c5ee7` | #332 `461cc2c` | #334 `7f39255` | #335 `05d3d6a` | #336 `90c6ee9` | #338 `19066ad` | #341 `2728c7b` | #372 `1edd518` | PR #181 `c51bf9a` | master `48cb645` | #757 `a835045` | #761 `e81ecb2` | #764 `67f9759` | #765 `b2d9ca3` | #767 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| over 20 paths (the headline) | 25.7% (114 functions) | 25.6% (113) | 24.6% (113) | 23.8% (114) | 22.3% (112) | 20.8% (108) | 11.8% (60) | 0.6% (4) | 0.1% (1) | **0.8%** (6) | **0.1%** (1) | **0.1%** (1) | **0.1%** (1) | **0.1%** (1) | **0.1%** (1) |
-| over 30 | 15.5% (51) | 15.4% (51) | 14.4% (50) | 13.2% (49) | 11.6% (46) | 10.1% (42) | 5.6% (22) | 0.2% (1) | 0 | 0.5% (3) | 0 | 0 | 0 | 0 | 0 |
-| over 50 | 6.7% (15) | 6.7% (15) | 5.6% (14) | 4.3% (12) | 2.8% (9) | 1.6% (6) | 0.3% (1) | 0 | 0 | 0.3% (1) | 0 | 0 | 0 | 0 | 0 |
-| `main*.c` over 20 | 32.3% | 32.3% | 22.8% | 22.8% | 22.8% | 19.3% | 12.0% | 1.1% | 1.1% | 0.9% | 0.9% | 0.9% | 0.9% | 0.9% | 0.9% |
-| `board/` over 20 | 23.2% | 22.6% | 22.6% | 19.5% | 18.2% | 18.2% | 11.8% | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `ui/` over 20 | | | | 28.2% | 25.0% | 25.0% | 17.3% | 0 | 0 | 0.3% | 0 | 0 | 0 | 0 | 0 |
-| `net/` over 20 | | | | | 25.5% | 21.0% | 6.5% | 2.7% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `core/` over 20 | | | | | 20.6% | 15.5% | 0 | 0 | 0 | 4.9% | 0 | 0 | 0 | 0 | 0 |
-| 8 or more parameters | | | | | | | | | | | 45 | 23 | 20 | 18 | 16 |
+| | master `f1c5ee7` | #332 `461cc2c` | #334 `7f39255` | #335 `05d3d6a` | #336 `90c6ee9` | #338 `19066ad` | #341 `2728c7b` | #372 `1edd518` | PR #181 `c51bf9a` | master `48cb645` | #757 `a835045` | #761 `e81ecb2` | #764 `67f9759` | #765 `b2d9ca3` | #767 `f24ab48` | #768 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| over 20 paths (the headline) | 25.7% (114 functions) | 25.6% (113) | 24.6% (113) | 23.8% (114) | 22.3% (112) | 20.8% (108) | 11.8% (60) | 0.6% (4) | 0.1% (1) | **0.8%** (6) | **0.1%** (1) | **0.1%** (1) | **0.1%** (1) | **0.1%** (1) | **0.1%** (1) | **0.1%** (1) |
+| over 30 | 15.5% (51) | 15.4% (51) | 14.4% (50) | 13.2% (49) | 11.6% (46) | 10.1% (42) | 5.6% (22) | 0.2% (1) | 0 | 0.5% (3) | 0 | 0 | 0 | 0 | 0 | 0 |
+| over 50 | 6.7% (15) | 6.7% (15) | 5.6% (14) | 4.3% (12) | 2.8% (9) | 1.6% (6) | 0.3% (1) | 0 | 0 | 0.3% (1) | 0 | 0 | 0 | 0 | 0 | 0 |
+| `main*.c` over 20 | 32.3% | 32.3% | 22.8% | 22.8% | 22.8% | 19.3% | 12.0% | 1.1% | 1.1% | 0.9% | 0.9% | 0.9% | 0.9% | 0.9% | 0.9% | 0.9% |
+| `board/` over 20 | 23.2% | 22.6% | 22.6% | 19.5% | 18.2% | 18.2% | 11.8% | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `ui/` over 20 | | | | 28.2% | 25.0% | 25.0% | 17.3% | 0 | 0 | 0.3% | 0 | 0 | 0 | 0 | 0 | 0 |
+| `net/` over 20 | | | | | 25.5% | 21.0% | 6.5% | 2.7% | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `core/` over 20 | | | | | 20.6% | 15.5% | 0 | 0 | 0 | 4.9% | 0 | 0 | 0 | 0 | 0 | 0 |
+| 8 or more parameters | | | | | | | | | | | 45 | 23 | 20 | 18 | 16 | 15 |
 
 PR #181 left one function over 20, `lobby_event`, and it is still there. Five came in with new work after it: `savestate__load_zip` and `savestate__entries` (savestates, #426), `gems_verify` and `gems_apply` (Gems, #454), and `ps3ui_draw_result` (the go-again prompt, #8). #757 split all five, each held to the code before by an A/B (below).
 
@@ -154,3 +154,5 @@ PR #181 left one function over 20, `lobby_event`, and it is still there. Five ca
   - *A/B against the base build (A):* a driver built against both sources sends 200,000 random replies through `rpcn_twitch_on_start_reply` and `_on_poll_reply` (every error code the flow handles, missing and unterminated strings, strings past each buffer's size, short and long tails, and half the time a state left over from an earlier flow, to catch a partial write) and hashes the whole state after each: the return value, the flow's state, every byte of the nine buffers and its error text, the lifetime, interval and the two deadlines. Both give the same hash, with 41,982 replies accepted. Two faults put into B for the check, a default of 901 s and a login token buffer one byte short, each change it. `net_test`, `ps3net_test` and `emu_test` pass, and the desktop build compiles.
 - **The PS3 menus' value lists (Pinboard #767).** `ps3ui_draw_values`, the list of label and value rows that the rule menu (Create Match, Custom Match), ARCADE, OFFLINE VERSUS and SETTINGS draw, took the title, the labels, the values, the default flags, the row count and the dim flag one argument at a time (10 parameters), and the shell's wrapper `ps3ui_sh_draw_values` the same less the window (8). What the list shows is now one struct, `ps3ui_value_list_t` (`ps3ui_app.h`), whose rows (at most `PS3UI_VALUE_ROWS`, 8, as the callers' arrays were) the callers fill in place of their own three arrays; the two functions take it (5 and 3 parameters). The drawing is as before. The count of functions with 8 or more parameters went from 18 to 16.
   - *A/B against the base build (A, #765 `b2d9ca3`):* `ps3ui_render app` and `ps3ui_render shell` from both sources, 36 screens, are byte-identical PNGs; they draw every caller (the rule menu before and after a change, ARCADE with a changed row, VERSUS dimmed before the second pad and live after it, SETTINGS). With every ARCADE/VERSUS row forced off its default on purpose, the three screens that draw those rows differed, so the check sees the function's output.
+- **The PS3 menus' wrapped text (Pinboard #768).** `ps3ui_text_box`, which word-wraps the bottom message box, the status window and the shell's explain box, took the box's four corners one argument at a time beside the canvas, style, text, alpha and flags (9 parameters, 18 paths). The box is now a struct, `ps3ui_box_t` (`ps3ui_app.h`), that `ps3ui_slot_box` fills from the layout's two corner slots, as the three callers each did with two `ps3ui_slot_xy` calls; and finding one line's break is its own function, `ps3ui__wrap_line`, so `ps3ui_text_box` keeps only the line loop and the placing (6 parameters, under lizard's warning). The breaks fall where they did. The count of functions with 8 or more parameters went from 16 to 15, and of those over 15 paths from 84 to 83.
+  - *A/B against the base build (A, #767 `f24ab48`):* `ps3ui_render app` and `ps3ui_render shell` from both sources, 36 screens, are byte-identical PNGs. With the wrap width cut by 300 on purpose, the screens with wrapped text in each kind of box (the sign-in server message, the room match status, the shell's VERSUS explain) differed, so the check sees the function's output.

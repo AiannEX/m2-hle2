@@ -169,57 +169,71 @@ static void ps3ui_text_right(ps3ui_canvas_t *cv, const ps3ui_text_style_t *st, f
     ps3ui_rich(cv, st, x - ps3ui_rich_width(st, s), top + 42.0f * st->cap / 37.0f, s, a);
 }
 
-/* Word-wrap `s` into the box [x0, x1] (Text_Printf flag 0x800), from the top
- * of the box as the explain and info windows print, or with PS3UI_TB_VCENTRE
- * centred in [y0, y1] as Lobby_DrawStatusWin measures and centres its text.
+/* A text box between two slots' corners: x0, y0 the top left, x1, y1 the
+ * bottom right. */
+typedef struct { float x0, y0, x1, y1; } ps3ui_box_t;
+
+/* The box from slot `lt`'s top left to slot `rb`'s bottom right; 0 when the
+ * layout lacks either. */
+static int ps3ui_slot_box(const ps3ui_slots_t *s, const char *lt, const char *rb, ps3ui_box_t *box)
+{
+    return ps3ui_slot_xy(s, lt, 0, 0, &box->x0, &box->y0) && ps3ui_slot_xy(s, rb, 1, 1, &box->x1, &box->y1);
+}
+
+/* One line of `p` that fits `width`, broken at its last space if it has to be,
+ * into `line` (159 characters at most). Returns where the next line starts. */
+static const char *ps3ui__wrap_line(const ps3ui_text_style_t *st, const char *p, float width, char line[160])
+{
+    const char *q = p;
+    const char *brk = NULL;
+    while (*q && *q != '\n') {
+        char test[160];
+        int tl = (int)(q - p) + 1;
+        if (tl >= 159)
+            break;
+        memcpy(test, p, (size_t)tl);
+        test[tl] = 0;
+        if (ps3ui_rich_width(st, test) > width && brk)
+            break;
+        if (*q == ' ')
+            brk = q;
+        q++;
+    }
+    const char *end = q;
+    if (*q && *q != '\n' && brk)
+        end = brk;
+    int len = (int)(end - p);
+    if (len > 159)
+        len = 159;
+    memcpy(line, p, (size_t)len);
+    line[len] = 0;
+    p = end;
+    while (*p == ' ')
+        p++;
+    if (*p == '\n')
+        p++;
+    return p;
+}
+
+/* Word-wrap `s` into the box (Text_Printf flag 0x800), from the top of the
+ * box as the explain and info windows print, or with PS3UI_TB_VCENTRE
+ * centred in it as Lobby_DrawStatusWin measures and centres its text.
  * Lines are left-aligned, as the PS3's are; PS3UI_TB_HCENTRE centres them. */
 enum { PS3UI_TB_HCENTRE = 1, PS3UI_TB_VCENTRE = 2 };
-static void ps3ui_text_box(ps3ui_canvas_t *cv, const ps3ui_text_style_t *st, float x0, float y0, float x1, float y1,
-                           const char *s, float a, int flags)
+static void ps3ui_text_box(ps3ui_canvas_t *cv, const ps3ui_text_style_t *st, ps3ui_box_t box, const char *s, float a,
+                           int flags)
 {
     char lines[8][160];
     int n = 0;
-    const char *p = s;
-    while (*p && n < 8) {
-        char line[160] = "";
-        int len = 0;
-        const char *q = p;
-        const char *brk = NULL;
-        while (*q && *q != '\n') {
-            char test[160];
-            int tl = (int)(q - p) + 1;
-            if (tl >= 159)
-                break;
-            memcpy(test, p, (size_t)tl);
-            test[tl] = 0;
-            if (ps3ui_rich_width(st, test) > x1 - x0 && brk)
-                break;
-            if (*q == ' ')
-                brk = q;
-            q++;
-        }
-        const char *end = q;
-        if (*q && *q != '\n' && brk)
-            end = brk;
-        len = (int)(end - p);
-        if (len > 159)
-            len = 159;
-        memcpy(line, p, (size_t)len);
-        line[len] = 0;
-        snprintf(lines[n++], sizeof lines[0], "%s", line);
-        p = end;
-        while (*p == ' ')
-            p++;
-        if (*p == '\n')
-            p++;
-    }
+    for (const char *p = s; *p && n < 8; n++)
+        p = ps3ui__wrap_line(st, p, box.x1 - box.x0, lines[n]);
     float lh = 46.0f * st->cap / 37.0f + 8.0f;
-    float top = flags & PS3UI_TB_VCENTRE ? (y0 + y1) * 0.5f - (lh * (float)n - 8.0f) * 0.5f : y0;
+    float top = flags & PS3UI_TB_VCENTRE ? (box.y0 + box.y1) * 0.5f - (lh * (float)n - 8.0f) * 0.5f : box.y0;
     for (int i = 0; i < n; i++) {
         if (flags & PS3UI_TB_HCENTRE)
-            ps3ui_text_centre(cv, st, (x0 + x1) * 0.5f, top + lh * (float)i, lines[i], a);
+            ps3ui_text_centre(cv, st, (box.x0 + box.x1) * 0.5f, top + lh * (float)i, lines[i], a);
         else
-            ps3ui_text_left(cv, st, x0, top + lh * (float)i, lines[i], a);
+            ps3ui_text_left(cv, st, box.x0, top + lh * (float)i, lines[i], a);
     }
 }
 
@@ -1678,11 +1692,11 @@ static void ps3ui_draw_message(ps3ui_canvas_t *cv, ps3ui_app_t *a, const char *t
 {
     ps3ui_slots_t s = { 0 };
     ps3ui_win_draw(cv, &a->msg, 0, 0, &s);
-    float x0, y0, x1, y1;
-    if (!ps3ui_slot_xy(&s, "p_txt_01_lt", 0, 0, &x0, &y0) || !ps3ui_slot_xy(&s, "p_txt_02_rb", 1, 1, &x1, &y1))
+    ps3ui_box_t box;
+    if (!ps3ui_slot_box(&s, "p_txt_01_lt", "p_txt_02_rb", &box))
         return;
     ps3ui_text_style_t st = ps3ui_style_text(37.0f);
-    ps3ui_text_box(cv, &st, x0, y0, x1, y1, text, ps3ui_slot_alpha(&s, "p_txt_01_lt"), 0);
+    ps3ui_text_box(cv, &st, box, text, ps3ui_slot_alpha(&s, "p_txt_01_lt"), 0);
 }
 
 /* The status window (connect_win): its text wrapped, left-aligned and centred
@@ -1692,11 +1706,11 @@ static void ps3ui_draw_status(ps3ui_canvas_t *cv, ps3ui_app_t *a, const char *te
 {
     ps3ui_slots_t s = { 0 };
     ps3ui_win_draw(cv, &a->main, 0, 0, &s);
-    float x0, y0, x1, y1;
-    if (!ps3ui_slot_xy(&s, "p_connect_01_lt", 0, 0, &x0, &y0) || !ps3ui_slot_xy(&s, "p_connect_02_rb", 1, 1, &x1, &y1))
+    ps3ui_box_t box;
+    if (!ps3ui_slot_box(&s, "p_connect_01_lt", "p_connect_02_rb", &box))
         return;
     ps3ui_text_style_t st = ps3ui_style_text(37.0f);
-    ps3ui_text_box(cv, &st, x0, y0, x1, y1, text, ps3ui_slot_alpha(&s, "p_connect_01_lt"), PS3UI_TB_VCENTRE);
+    ps3ui_text_box(cv, &st, box, text, ps3ui_slot_alpha(&s, "p_connect_01_lt"), PS3UI_TB_VCENTRE);
 }
 
 /* The panel right of the room rows: four labels at p_txt_01_lt, font 1 at 32,
