@@ -1726,25 +1726,27 @@ static inline uint64_t shle_entry(uint64_t d) {
     return e > g_shle.l2_free ? e : g_shle.l2_free;
 }
 
-/* The board at clock period `now`: MIDI bytes, then any timer handler whose
- * turn has come, then the main loop's dispatch. */
-static void shle_events(uint64_t now) {
-    if (!g_shle.booted) {
-        if (g_shle.restart_at && now >= g_shle.restart_at) {
-            uint64_t boot_at = g_shle.boot_at;
-            shle_boot();
-            g_shle.boot_at = boot_at;
-        }
-        if (now < g_shle.boot_at) return;
-        g_shle.booted = true;
-        shle_sw8(0x401, 0x0F);                          /* master volume 15, the last thing before the interrupts */
-        /* all three expired long ago; the board takes them A, B, C, a few
-         * hundred clock periods apart, and that is their phase from then on */
-        g_shle.due_a = (now - SHLE_IRQ_LAT) * SHLE_T16;
-        g_shle.due_b = (now + 225u - SHLE_IRQ_LAT) * SHLE_T16;
-        g_shle.due_c = (now + 828u - SHLE_IRQ_LAT) * SHLE_T16;
-        g_shle.l2_free = now;
+/* The driver's boot, at clock period `now`: false until it has come. */
+static bool shle_events_boot(uint64_t now) {
+    if (g_shle.restart_at && now >= g_shle.restart_at) {
+        uint64_t boot_at = g_shle.boot_at;
+        shle_boot();
+        g_shle.boot_at = boot_at;
     }
+    if (now < g_shle.boot_at) return false;
+    g_shle.booted = true;
+    shle_sw8(0x401, 0x0F);                          /* master volume 15, the last thing before the interrupts */
+    /* all three expired long ago; the board takes them A, B, C, a few
+     * hundred clock periods apart, and that is their phase from then on */
+    g_shle.due_a = (now - SHLE_IRQ_LAT) * SHLE_T16;
+    g_shle.due_b = (now + 225u - SHLE_IRQ_LAT) * SHLE_T16;
+    g_shle.due_c = (now + 828u - SHLE_IRQ_LAT) * SHLE_T16;
+    g_shle.l2_free = now;
+    return true;
+}
+
+/* The MIDI bytes waiting at `now`: false when one restarts the driver. */
+static bool shle_events_midi(uint64_t now) {
     scsp_t *s = &g_sound.scsp;
     while (s->mi_r != s->mi_w) {
         uint8_t b = s->mi[s->mi_r];
@@ -1758,37 +1760,62 @@ static void shle_events(uint64_t now) {
             g_shle.clear_at = now + SHLE_CLEAR_DELAY;
             g_shle.cleared = 0;
             g_shle.boot_at = now + SHLE_BOOT_CYCLES;
-            return;
+            return false;
         }
     }
-    for (int guard = 0; guard < 16; guard++) {
-        uint64_t eb = shle_entry(g_shle.due_b), ec = shle_entry(g_shle.due_c), ea = shle_entry(g_shle.due_a);
-        uint64_t e = eb;
-        int which = 1;                                  /* B's bit is tested first */
-        if (ec < e) { e = ec; which = 2; }
-        if (ea < e) { e = ea; which = 0; }
-        if (e > now) break;
-        g_shle.enq = 0;
-        if (which == 1) {                               /* Int2_Timer, timer B: the music */
-            g_shle.due_b = (e + SHLE_RELOAD_AT + shle_period(G8(0x1440), 0)) * SHLE_T16;
-            if (G8(0x1406) != 0xFF) { shle_fade(); shle_seq(SHLE_SEQS); }
-            uint32_t dur = SHLE_DUR_B + g_shle.enq * SHLE_DUR_EVENT;
-            g_shle.l2_free = e + dur;
-            shle_suspend(e, dur);
-        } else if (which == 2) {                        /* timer C: the effects */
-            g_shle.due_c = (e + SHLE_RELOAD_AT + shle_period(G8(0x1441), 0)) * SHLE_T16;
-            if (G8(0x1406) != 0xFF)
-                for (uint32_t k = 1; k < 8; k++) shle_seq(SHLE_SEQS + k * 16u);
-            uint32_t dur = SHLE_DUR_C + g_shle.enq * SHLE_DUR_EVENT;
-            g_shle.l2_free = e + dur;
-            shle_suspend(e, dur);
-        } else {                                        /* Interrupt1, timer A: releases */
-            g_shle.due_a = (e + SHLE_RELOAD_AT_A + shle_period(0xC0, 3)) * SHLE_T16;
-            shle_timer_a();
-            shle_suspend(e, SHLE_DUR_A);
-        }
-        shle_dispatch(now);
+    return true;
+}
+
+/* The end of timer B or C's handler, entered at e: the main loop was
+ * suspended for it, longer for every event it queued. */
+static void shle_timer_done(uint64_t e, uint32_t base_dur) {
+    uint32_t dur = base_dur + g_shle.enq * SHLE_DUR_EVENT;
+    g_shle.l2_free = e + dur;
+    shle_suspend(e, dur);
+}
+
+/* Int2_Timer, timer B: the music. */
+static void shle_timer_b(uint64_t e) {
+    g_shle.due_b = (e + SHLE_RELOAD_AT + shle_period(G8(0x1440), 0)) * SHLE_T16;
+    if (G8(0x1406) != 0xFF) { shle_fade(); shle_seq(SHLE_SEQS); }
+    shle_timer_done(e, SHLE_DUR_B);
+}
+
+/* Timer C: the effects. */
+static void shle_timer_c(uint64_t e) {
+    g_shle.due_c = (e + SHLE_RELOAD_AT + shle_period(G8(0x1441), 0)) * SHLE_T16;
+    if (G8(0x1406) != 0xFF)
+        for (uint32_t k = 1; k < 8; k++) shle_seq(SHLE_SEQS + k * 16u);
+    shle_timer_done(e, SHLE_DUR_C);
+}
+
+/* The timer handler whose turn has come by `now`, then the main loop's
+ * dispatch: false when none has. */
+static bool shle_events_timer(uint64_t now) {
+    uint64_t eb = shle_entry(g_shle.due_b), ec = shle_entry(g_shle.due_c), ea = shle_entry(g_shle.due_a);
+    uint64_t e = eb;
+    int which = 1;                                  /* B's bit is tested first */
+    if (ec < e) { e = ec; which = 2; }
+    if (ea < e) { e = ea; which = 0; }
+    if (e > now) return false;
+    g_shle.enq = 0;
+    if (which == 1) shle_timer_b(e);
+    else if (which == 2) shle_timer_c(e);
+    else {                                          /* Interrupt1, timer A: releases */
+        g_shle.due_a = (e + SHLE_RELOAD_AT_A + shle_period(0xC0, 3)) * SHLE_T16;
+        shle_timer_a();
+        shle_suspend(e, SHLE_DUR_A);
     }
+    shle_dispatch(now);
+    return true;
+}
+
+/* The board at clock period `now`: MIDI bytes, then any timer handler whose
+ * turn has come, then the main loop's dispatch. */
+static void shle_events(uint64_t now) {
+    if (!g_shle.booted && !shle_events_boot(now)) return;
+    if (!shle_events_midi(now)) return;
+    for (int guard = 0; guard < 16 && shle_events_timer(now); guard++) {}
     shle_dispatch(now);
 }
 
