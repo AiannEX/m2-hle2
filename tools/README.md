@@ -1076,12 +1076,16 @@ songs (88 s or the MIDI's end), 62,854 of 65,004 notes have a key-on within 12 m
     the same fixed tracks (instruments 81 and 82). Nothing switches them to
     another instrument: no song or effect in the music table sends a program
     change on channels 13-16, and song 0x10's `A0 07 0E` library entry has no
-    track there. The notes also fit the drum kit (program 11), but only because
-    its keys 52 and 36 share their root keys (64 and 48) with 81's and 82's.
-    Key 53 differs by an octave between the two kits, and so does key 69, which
-    song 0x17 plays on the same track. So M2MidiDec should not write program 11
-    here. It should start every song with the fixed tracks' program changes
-    (channels 13-15: 80, 81, 82) and their volume.
+    track there. Pitch does not tell the kits apart here: the fit scored 11,
+    80 and 81 at 100% on channel 14, and 11, 80 and 82 on channel 15. Over the whole
+    song, keys 52 (134 notes) and 36 (40) have the same root key under each
+    (64 and 48). Key 53 (28 notes, 14 in the first 88 s) has root 53 in kit 11 and 65 in 80-82, an octave apart,
+    yet both scored, because the fit takes any key-on within 12 ms at the
+    expected pitch. So the program comes from the driver, not from the fit.
+    The records at 0x608081 are `89 0C 50 F1`, `89 0D 51 F1` and `89 0E 52 F1`:
+    flag, channel, instrument (+2, `shle_program`), volume (+3). M2MidiDec
+    should start every song with programs 80, 81 and 82 and volume 0xF1 on
+    channels 13-15, not program 11.
   - A few notes on song 0x10 channel 12 and song 0x17 channel 2: 32 of 393 and
     26 of 777, with an explicit program 0.
 
