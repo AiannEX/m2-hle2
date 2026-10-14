@@ -72,6 +72,11 @@ typedef struct {
     float mvp[16];
 } game_render_vs_params_t;
 
+/* A viewport in pixels of the current pass: its top-left corner and size. */
+typedef struct {
+    int x, y, w, h;
+} game_rect_t;
+
 typedef struct {
     /* Tile (fullscreen-quad) pipeline */
     sg_buffer   quad_vbuf;
@@ -2425,8 +2430,7 @@ static inline void game_render__geo_decode_one(geo3d_state_t *geo, const geo3d_m
     g_geo3d_zadjust = cm->zadjust;
     g_geo3d_lod  = cm->geo_lod;
     if (cm->direct_len) {           /* direct data: the polygons are in the list */
-        geo3d_decode_direct(geo->direct_words + cm->direct_off, cm->direct_len,
-                            md->materials, md->materials_size, md->main_data, md->main_data_size,
+        geo3d_decode_direct(geo->direct_words + cm->direct_off, cm->direct_len, md,
                             cm->gproj[0], cm->gproj[1]);
     } else {
         geo3d_models_t from = *md;
@@ -2530,12 +2534,10 @@ static inline void game_render_draw_geo_list(geo3d_state_t *geo, const geo3d_mod
  * lengths and all), anything else through the host camera.
  *
  * ox/oy/w/h are the letterbox rect in framebuffer pixels (from game_render_letterbox).
+ * The host camera is geo's own (cam_x/y/z, rot_y/x, fov_deg).
  */
 static inline void game_render_draw_captured_models(geo3d_state_t *geo, const geo3d_models_t *md,
-                                                     int ox, int oy, int w, int h,
-                                                     float cam_x, float cam_y, float cam_z,
-                                                     float rot_y, float rot_x, float fov_deg,
-                                                     float lerp_t) {
+                                                     int ox, int oy, int w, int h, float lerp_t) {
     if (!g_game_render.initialized) return;
     if (!geo->enabled) { geo3d_lines_reset(); return; }
 
@@ -2546,33 +2548,34 @@ static inline void game_render_draw_captured_models(geo3d_state_t *geo, const ge
 
     /* Homebrew lists (geo3d_scan_displaylist), the test triangle and the
      * free camera: one batch through the host camera. */
+    float cam_x = geo->cam_x, cam_y = geo->cam_y, cam_z = geo->cam_z;
     geo3d_build_wireframes(geo, md, lerp_t, cam_x, cam_y, cam_z);
     if (!geo->lines_only)
-        game_render_draw_fills(cam_x, cam_y, cam_z, rot_y, rot_x, fov_deg, 0.0f);
-    game_render_draw_lines(cam_x, cam_y, cam_z, rot_y, rot_x, fov_deg, 0.0f);
+        game_render_draw_fills(cam_x, cam_y, cam_z, geo->rot_y, geo->rot_x, geo->fov_deg, 0.0f);
+    game_render_draw_lines(cam_x, cam_y, cam_z, geo->rot_y, geo->rot_x, geo->fov_deg, 0.0f);
 }
 
 /*
- * Compute the letterboxed rectangle for the game inside (fb_w × fb_h).
- * Result respects VIDEO_WIDTH:VIDEO_HEIGHT aspect ratio.
+ * The letterboxed rectangle for a game_w × game_h picture inside (fb_w × fb_h):
+ * as large as fits at the picture's aspect ratio, centred.
  */
-static inline void game_render_letterbox(int fb_w, int fb_h,
-                                          int game_w, int game_h,
-                                          int *ox, int *oy,
-                                          int *out_w, int *out_h) {
+static inline game_rect_t game_render_letterbox(int fb_w, int fb_h,
+                                                int game_w, int game_h) {
     float game_aspect = (float)game_w / (float)game_h;
     float win_aspect  = (float)fb_w   / (float)fb_h;
+    game_rect_t r;
     if (win_aspect > game_aspect) {
-        *out_h = fb_h;
-        *out_w = (int)(fb_h * game_aspect);
-        *ox    = (fb_w - *out_w) / 2;
-        *oy    = 0;
+        r.h = fb_h;
+        r.w = (int)(fb_h * game_aspect);
+        r.x = (fb_w - r.w) / 2;
+        r.y = 0;
     } else {
-        *out_w = fb_w;
-        *out_h = (int)(fb_w / game_aspect);
-        *ox    = 0;
-        *oy    = (fb_h - *out_h) / 2;
+        r.w = fb_w;
+        r.h = (int)(fb_w / game_aspect);
+        r.x = 0;
+        r.y = (fb_h - r.h) / 2;
     }
+    return r;
 }
 
 #endif /* GAME_RENDER_H */

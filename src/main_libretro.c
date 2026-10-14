@@ -1532,7 +1532,7 @@ static void lr_draw_pass(int w, int h, bool lobby, bool overlay, ps3ui_canvas_t 
                        .gl.framebuffer = (uint32_t)hw_render.get_current_framebuffer() },
     });
     if (!lobby)
-        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, 0, 0, w, h, 1.0f);
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){0, 0, w, h}, 1.0f);
     if (lobby || overlay) {
         ps3ui_gpu_draw(cv);   /* over the game, for the title prompt and the pause menu */
         sgl_draw();

@@ -874,16 +874,57 @@ static volatile int g_sound_out_reader;
 static void (*g_sound_step_trace)(uint32_t pc, uint64_t cycles, void *ud);
 static void  *g_sound_step_trace_ud;
 
+/* sound_run with the driver in C (sound_hle.h): timed as the 68000 is. */
+static void sound_run_hle(uint32_t n) {
+    int64_t t0 = emu_now_us();
+    shle_run(n);
+    g_emu_times.sound_us      += emu_now_us() - t0;
+    g_emu_times.sound_samples += n;
+}
+
+/* One step of the 68000 inside a sample's budget: an interrupt taken, an
+ * instruction run, or the rest of the budget spent halted or stopped.
+ * Answers 0 when the budget is gone that way, 1 to carry on.
+ *
+ * The 68000 samples its interrupt lines while an instruction runs,
+ * SOUND_IPL_LEAD periods before it ends (MAME's m68000 loads the pending
+ * interrupt where the microcode moves IR to IRD, with the instruction's last
+ * prefetch): a timer that expires later than that, or a byte the serial line
+ * lands later than that, is only acted on after the next instruction. The
+ * mask it compares against is the one the instruction leaves: after an RTE
+ * that lowers it, a pending interrupt is taken before the next instruction
+ * (MAME's trace shows timer C's handler entered straight from timer B's RTE;
+ * a rule that let one instruction run first put the two handlers 70 clocks
+ * further apart, every period). Measurable in the driver's timer periods,
+ * fire to fire: MAME has 50.014 samples for timer B and 505.437 for timer A
+ * over 90 s of attract (tools/README.md, "The sound board"). */
+static inline int sound_step(m68k_state_t *m) {
+    if (m->cpu.halted) { g_sound.budget = 0; return 0; }
+    uint64_t c0 = m->cpu.cycles;
+    uint64_t sampled = c0 >= SOUND_IPL_LEAD ? c0 - SOUND_IPL_LEAD : 0;
+    scsp_timers(&g_sound.scsp, sampled);
+    if (g_sound.uart.count) sound_uart_service(&g_sound, sampled);
+    int lvl = scsp_irq_level(&g_sound.scsp);
+    int ipl = m68k_ipl(&m->cpu);
+    if (lvl > ipl && m68k_interrupt(m, lvl)) {
+        g_sound.irqs[lvl]++;
+        if (sndcap_on()) sndcap_put(4, (uint32_t)lvl, 0, m->cpu.pc);
+    } else if (m->cpu.stopped) {
+        m->cpu.cycles += (uint64_t)g_sound.budget;   /* time passes while it waits */
+        g_sound.budget = 0;
+        return 0;
+    } else {
+        if (g_sound_step_trace) g_sound_step_trace(m->cpu.pc, c0, g_sound_step_trace_ud);
+        m68k_step_core(m);
+    }
+    g_sound.budget -= (int32_t)(m->cpu.cycles - c0);
+    return 1;
+}
+
 /* Run the board for n output samples. */
 static void sound_run(uint32_t n) {
     if (!g_sound.rom_loaded || g_sound.detached) return;
-    if (g_shle.on) {
-        int64_t t0 = emu_now_us();
-        shle_run(n);
-        g_emu_times.sound_us      += emu_now_us() - t0;
-        g_emu_times.sound_samples += n;
-        return;
-    }
+    if (g_shle.on) { sound_run_hle(n); return; }
     m68k_state_t *m = &g_sound.m68k;
     int64_t run_t0 = emu_now_us();
     int zone = hprof_enter(HPROF_M68K);
@@ -891,43 +932,7 @@ static void sound_run(uint32_t n) {
     for (uint32_t i = 0; i < n; i++) {
         if (g_snd_watch.on) snd_watch_sample();
         g_sound.budget += SOUND_CYCLES_PER_SAMPLE;
-        while (g_sound.budget > 0) {
-            if (m->cpu.halted) { g_sound.budget = 0; break; }
-            uint64_t c0 = m->cpu.cycles;
-            /* The 68000 samples its interrupt lines while an instruction
-             * runs, SOUND_IPL_LEAD periods before it ends (MAME's m68000 loads
-             * the pending interrupt where the microcode moves IR to IRD, with
-             * the instruction's last prefetch): a timer that expires later
-             * than that, or a byte the serial line lands later than that, is
-             * only acted on after the next instruction. The mask it compares
-             * against is the one the instruction leaves: after an RTE that
-             * lowers it, a pending interrupt is taken before the next
-             * instruction (MAME's trace shows timer C's handler entered
-             * straight from timer B's RTE; a rule that let one instruction run
-             * first put the two handlers 70 clocks further apart, every
-             * period). Measurable in the driver's timer periods, fire to fire:
-             * MAME has 50.014 samples for timer B and 505.437 for timer A over
-             * 90 s of attract (tools/README.md, "The sound board"). */
-            uint64_t sampled = c0 >= SOUND_IPL_LEAD ? c0 - SOUND_IPL_LEAD : 0;
-            scsp_timers(&g_sound.scsp, sampled);
-            if (g_sound.uart.count) sound_uart_service(&g_sound, sampled);
-            int lvl = scsp_irq_level(&g_sound.scsp);
-            int ipl = m68k_ipl(&m->cpu);
-            if (lvl > ipl && m68k_interrupt(m, lvl)) {
-                g_sound.irqs[lvl]++;
-                if (sndcap_on()) sndcap_put(4, (uint32_t)lvl, 0, m->cpu.pc);
-            } else if (m->cpu.stopped) {
-                m->cpu.cycles += (uint64_t)g_sound.budget;   /* time passes while it waits */
-                g_sound.budget = 0;
-                break;
-            } else {
-                if (g_sound_step_trace) g_sound_step_trace(m->cpu.pc, c0, g_sound_step_trace_ud);
-                m68k_step_core(m);
-                g_sound.budget -= (int32_t)(m->cpu.cycles - c0);
-                continue;
-            }
-            g_sound.budget -= (int32_t)(m->cpu.cycles - c0);
-        }
+        while (g_sound.budget > 0 && sound_step(m)) {}
         /* The chip owes the sample and makes it when something needs it
          * (scsp.h, "The chip's own time"). The watchdog and a capture look at
          * the slots every sample, so they have them made every sample. */

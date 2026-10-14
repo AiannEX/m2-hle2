@@ -11,7 +11,7 @@
  *     if (post_shader_active()) {
  *         post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, rect_w, rect_h, &sw, &sh);
  *         post_shader_begin_source(sw, sh, &pass_action);
- *         game_frame_draw(..., 0, 0, sw, sh, lerp_t);
+ *         game_frame_draw(..., (game_rect_t){0, 0, sw, sh}, lerp_t);
  *         post_shader_end_source();
  *         post_shader_prepare(rect_w, rect_h);          // outside any pass
  *     }

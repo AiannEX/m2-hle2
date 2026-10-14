@@ -1699,6 +1699,17 @@ static inline void netplay_settings_backup(void) {
     netplay_log("the sign-in was copied to %s before being forgotten", path);
 }
 
+/* A numeric line of the settings file; false when `key` is not one. */
+static inline bool netplay_settings_number(netplay_config_t *cfg, const char *key, const char *val) {
+    if      (!strcmp(key, "port"))         cfg->port = (uint16_t)atoi(val);
+    else if (!strcmp(key, "frame_delay"))  cfg->frame_delay = (uint32_t)atoi(val);
+    else if (!strcmp(key, "max_players"))  cfg->max_players = (uint32_t)atoi(val);
+    else if (!strcmp(key, "browse_yamp"))  cfg->browse_yamp = atoi(val) != 0;
+    else if (!strcmp(key, "twitch_port"))  cfg->twitch_port = (uint16_t)atoi(val);
+    else return false;
+    return true;
+}
+
 static inline void netplay_settings_parse_line(netplay_config_t *cfg, char *line) {
     if (line[0] == '#') return;
     char *eq = strchr(line, '=');
@@ -1708,19 +1719,19 @@ static inline void netplay_settings_parse_line(netplay_config_t *cfg, char *line
     size_t n = strlen(val);
     while (n && (val[n - 1] == '\n' || val[n - 1] == '\r')) val[--n] = '\0';
 
-    if      (!strcmp(key, "server"))       snprintf(cfg->server, sizeof(cfg->server), "%s", val);
-    else if (!strcmp(key, "port"))         cfg->port = (uint16_t)atoi(val);
-    else if (!strcmp(key, "npid"))         snprintf(cfg->npid, sizeof(cfg->npid), "%s", val);
-    else if (!strcmp(key, "fingerprint"))  snprintf(cfg->fingerprint, sizeof(cfg->fingerprint), "%s", val);
-    else if (!strcmp(key, "frame_delay"))  cfg->frame_delay = (uint32_t)atoi(val);
-    else if (!strcmp(key, "max_players"))  cfg->max_players = (uint32_t)atoi(val);
-    else if (!strcmp(key, "browse_yamp"))  cfg->browse_yamp = atoi(val) != 0;
-    else if (!strcmp(key, "password"))     snprintf(cfg->password, sizeof(cfg->password), "%s", val);
-    else if (!strcmp(key, "token"))        snprintf(cfg->token, sizeof(cfg->token), "%s", val);
-    else if (!strcmp(key, "twitch_token")) snprintf(cfg->twitch_token, sizeof(cfg->twitch_token), "%s", val);
-    else if (!strcmp(key, "twitch_npid"))  snprintf(cfg->twitch_npid, sizeof(cfg->twitch_npid), "%s", val);
-    else if (!strcmp(key, "twitch_server")) snprintf(cfg->twitch_server, sizeof(cfg->twitch_server), "%s", val);
-    else if (!strcmp(key, "twitch_port"))  cfg->twitch_port = (uint16_t)atoi(val);
+    if (netplay_settings_number(cfg, key, val)) return;
+#define NETPLAY_CFG_STR(f) { #f, offsetof(netplay_config_t, f), sizeof ((netplay_config_t *)0)->f }
+    static const struct { const char *key; size_t off, cap; } str[] = {
+        NETPLAY_CFG_STR(server),   NETPLAY_CFG_STR(npid),         NETPLAY_CFG_STR(fingerprint),
+        NETPLAY_CFG_STR(password), NETPLAY_CFG_STR(token),        NETPLAY_CFG_STR(twitch_token),
+        NETPLAY_CFG_STR(twitch_npid), NETPLAY_CFG_STR(twitch_server),
+    };
+#undef NETPLAY_CFG_STR
+    for (size_t k = 0; k < sizeof str / sizeof str[0]; k++)
+        if (!strcmp(key, str[k].key)) {
+            snprintf((char *)cfg + str[k].off, str[k].cap, "%s", val);
+            return;
+        }
 }
 
 /* What a file from before `twitch_npid` / `twitch_server` meant: a token
@@ -2002,8 +2013,8 @@ static inline void netplay_status_account(netplay_status_t *st) {
     st->twitch_signed_in = g_netplay.cfg.twitch_token[0] != '\0';
     netplay_copy_str(st->npid, sizeof(st->npid), g_netplay.cfg.npid);
     netplay_copy_str(st->server, sizeof(st->server), g_netplay.cfg.server);
-    netplay_copy_str(st->twitch_user_code, sizeof(st->twitch_user_code), g_netplay.twitch.user_code);
-    netplay_copy_str(st->twitch_uri, sizeof(st->twitch_uri), g_netplay.twitch.verification_uri);
+    netplay_copy_str(st->twitch_user_code, sizeof(st->twitch_user_code), g_netplay.twitch.code.user_code);
+    netplay_copy_str(st->twitch_uri, sizeof(st->twitch_uri), g_netplay.twitch.code.verification_uri);
     /* The token's owner, not whoever is in the account box: the window prints
      * this as "Signed in with Twitch as ...", and with two accounts on one
      * machine those are no longer the same name. */
@@ -2653,29 +2664,39 @@ static inline match_rules_t netplay_rules_of_listing(const rpcn_room_listing_t *
     return r;
 }
 
+/* A room in the PS3 port's own shape, run the way a PS3 owner runs one
+ * (ps3_link.h, ps3_owner_pump). Its rules are the PS3's defaults, and a PS3
+ * room has no password of ours to put on it. */
+static inline void netplay_do_host_ps3(const netplay_config_t *cfg) {
+    uint32_t slots = cfg->max_players < 2 ? 2u
+                   : cfg->max_players > ROOM_MAX_MEMBERS ? ROOM_MAX_MEMBERS : cfg->max_players;
+    if (cfg->room_password[0]) netplay_log("PS3 rooms take no password; this one will be open");
+    netplay_forget_room();
+    uint32_t ints[8];
+    match_rules_t rules = cfg->has_rules ? cfg->rules : match_rules_ps3();
+    ps3_link_host(&g_netplay.ps3link, slots, &rules, cfg->country, ints);
+    rpcn_room_spec_t spec = {
+        .max_slot   = slots,
+        .room_bin   = g_netplay.ps3link.blob,
+        .room_len   = PS3_ROOM_BIN_SIZE,
+        .member_bin = ps3_link_member_bin(&g_netplay.ps3link),
+        .member_len = PS3_MEMBER_BIN_SIZE,
+    };
+    if (!rpcn_session_host_ps3(&g_netplay.session, &spec, ints)) {
+        ps3_link_leave(&g_netplay.ps3link);   /* no room: we own nothing */
+        g_netplay.state = NETPLAY_FAILED;
+        return;
+    }
+    rules.rounds = (uint8_t)ints[1]; rules.time = (uint8_t)ints[2];
+    rules.type   = (uint8_t)ints[3]; rules.secret = (uint8_t)ints[4];
+    char rt[96];
+    netplay_log("hosting a PS3 room for up to %u (%s); waiting for players", slots,
+                netplay_rules_text(&rules, rt, sizeof(rt)));
+}
+
 static inline void netplay_do_host(const netplay_config_t *cfg) {
     if (g_netplay.ps3) {
-        /* A room in the PS3 port's own shape, run the way a PS3 owner runs one
-         * (ps3_link.h, ps3_owner_pump). Its rules are the PS3's defaults, and
-         * a PS3 room has no password of ours to put on it. */
-        uint32_t slots = cfg->max_players < 2 ? 2u
-                       : cfg->max_players > ROOM_MAX_MEMBERS ? ROOM_MAX_MEMBERS : cfg->max_players;
-        if (cfg->room_password[0]) netplay_log("PS3 rooms take no password; this one will be open");
-        netplay_forget_room();
-        uint32_t ints[8];
-        match_rules_t rules = cfg->has_rules ? cfg->rules : match_rules_ps3();
-        ps3_link_host(&g_netplay.ps3link, slots, &rules, cfg->country, ints);
-        if (!rpcn_session_host_ps3(&g_netplay.session, slots, ints, g_netplay.ps3link.blob, PS3_ROOM_BIN_SIZE,
-                                   ps3_link_member_bin(&g_netplay.ps3link), PS3_MEMBER_BIN_SIZE)) {
-            ps3_link_leave(&g_netplay.ps3link);   /* no room: we own nothing */
-            g_netplay.state = NETPLAY_FAILED;
-            return;
-        }
-        rules.rounds = (uint8_t)ints[1]; rules.time = (uint8_t)ints[2];
-        rules.type   = (uint8_t)ints[3]; rules.secret = (uint8_t)ints[4];
-        char rt[96];
-        netplay_log("hosting a PS3 room for up to %u (%s); waiting for players", slots,
-                    netplay_rules_text(&rules, rt, sizeof(rt)));
+        netplay_do_host_ps3(cfg);
         return;
     }
     g_netplay.cfg.frame_delay   = cfg->frame_delay;
@@ -2706,9 +2727,17 @@ static inline void netplay_do_host(const netplay_config_t *cfg) {
     uint32_t me_len   = room_member_encode(&g_netplay.me, me_bin);
     rpcn_int_attrs_t ints;
     if (cfg->has_rules) netplay_rules_ints(&cfg->rules, false, false, cfg->country, &ints);
-    if (!rpcn_session_host(&g_netplay.session, slots,
-                           cfg->room_password[0] ? cfg->room_password : NULL, flags,
-                           room_bin, room_len, me_bin, me_len, cfg->has_rules ? &ints : NULL)) {
+    rpcn_room_spec_t spec = {
+        .max_slot   = slots,
+        .password   = cfg->room_password[0] ? cfg->room_password : NULL,
+        .flag_attr  = flags,
+        .room_bin   = room_bin,
+        .room_len   = room_len,
+        .member_bin = me_bin,
+        .member_len = me_len,
+        .ints       = cfg->has_rules ? &ints : NULL,
+    };
+    if (!rpcn_session_host(&g_netplay.session, &spec)) {
         g_netplay.state = NETPLAY_FAILED;
         return;
     }
@@ -3293,11 +3322,11 @@ static inline void netplay_pump_twitch(void) {
     if (now == before) return;
 
     if (now == RPCN_TWITCH_WAITING) {
-        netplay_log("Twitch: enter code %s at %s", g_netplay.twitch.user_code,
-                    g_netplay.twitch.verification_uri);
+        netplay_log("Twitch: enter code %s at %s", g_netplay.twitch.code.user_code,
+                    g_netplay.twitch.code.verification_uri);
         if (!g_netplay_may_open_browser)
             netplay_log("Twitch: open that address on any machine and approve the code");
-        else if (!netplay_open_url(g_netplay.twitch.verification_uri))
+        else if (!netplay_open_url(g_netplay.twitch.code.verification_uri))
             netplay_log("Twitch: could not open a browser - go to that address yourself");
         return;
     }
@@ -3308,11 +3337,11 @@ static inline void netplay_pump_twitch(void) {
     }
 
     if (now == RPCN_TWITCH_DONE) {
-        snprintf(g_netplay.cfg.npid, sizeof(g_netplay.cfg.npid), "%s", g_netplay.twitch.npid);
+        snprintf(g_netplay.cfg.npid, sizeof(g_netplay.cfg.npid), "%s", g_netplay.twitch.login.npid);
         snprintf(g_netplay.cfg.twitch_token, sizeof(g_netplay.cfg.twitch_token), "%s",
-                 g_netplay.twitch.login_token);
+                 g_netplay.twitch.login.login_token);
         snprintf(g_netplay.cfg.twitch_npid, sizeof(g_netplay.cfg.twitch_npid), "%s",
-                 g_netplay.twitch.npid);
+                 g_netplay.twitch.login.npid);
         /* the server the flow ran against: TWITCH_START stored it */
         snprintf(g_netplay.cfg.twitch_server, sizeof(g_netplay.cfg.twitch_server), "%s",
                  g_netplay.cfg.server);

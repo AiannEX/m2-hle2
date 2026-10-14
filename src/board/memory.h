@@ -886,7 +886,7 @@ static inline void mem_shutdown(memory_bus_t *bus) {
  * backwards and letting each region overwrite the pages it reaches leaves every
  * page with its earliest region: that region's if it covers the whole page,
  * MIXED if it covers only part (the rest belongs to a later region or to none). */
-static MEM_NOINLINE void mem_build_pages(memory_bus_t *bus) {
+static void mem_build_region_pages(memory_bus_t *bus) {
     memset(bus->page, MEM_PAGE_NONE, sizeof bus->page);
     for (int i = bus->region_count - 1; i >= 0; i--) {
         const mem_region_t *r = &bus->regions[i];
@@ -898,8 +898,11 @@ static MEM_NOINLINE void mem_build_pages(memory_bus_t *bus) {
             bus->page[p] = whole ? (uint8_t)(i + 1) : MEM_PAGE_MIXED;
         }
     }
-    /* The direct pages: exactly the pages mem_find_region answers with one
-     * region, and only where that region's read (write) is a plain buffer access. */
+}
+
+/* The direct pages: exactly the pages mem_find_region answers with one
+ * region, and only where that region's read (write) is a plain buffer access. */
+static void mem_build_direct_pages(memory_bus_t *bus) {
     memset(bus->rd_page, 0, sizeof bus->rd_page);
     memset(bus->wr_page, 0, sizeof bus->wr_page);
     for (uint32_t p = 0; p < (1u << 16); p++) {
@@ -911,6 +914,11 @@ static MEM_NOINLINE void mem_build_pages(memory_bus_t *bus) {
         if (!r->read_cb) bus->rd_page[p] = at;
         if (!r->write_cb && !r->readonly && !r->change_gen && !r->dirty_kb) bus->wr_page[p] = at;
     }
+}
+
+static MEM_NOINLINE void mem_build_pages(memory_bus_t *bus) {
+    mem_build_region_pages(bus);
+    mem_build_direct_pages(bus);
     bus->maps_live = 1;
     bus->page_ok = 1;
 }

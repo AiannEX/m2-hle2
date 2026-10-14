@@ -132,15 +132,20 @@ typedef bool (*rudp_send_fn)(void *ctx, uint32_t ip_be, uint16_t port, const voi
 /* A message arrived on channel `vport`. */
 typedef void (*rudp_deliver_fn)(void *ctx, uint16_t vport, const uint8_t *payload, uint32_t len);
 
+/* Where a peer's datagrams go out and its messages come in. */
+typedef struct {
+    rudp_send_fn    send;
+    void           *send_ctx;
+    rudp_deliver_fn deliver;
+    void           *deliver_ctx;
+} rudp_io_t;
+
 typedef struct {
     uint32_t ip;                /* network order */
     uint16_t port;
     rudp_chan_t ch[RUDP_CHANNELS];
 
-    rudp_send_fn    send;
-    void           *send_ctx;
-    rudp_deliver_fn deliver;
-    void           *deliver_ctx;
+    rudp_io_t io;
 } rudp_peer_t;
 
 /* ---- Helpers ------------------------------------------------------------- */
@@ -173,15 +178,11 @@ static inline rudp_chan_t *rudp_chan(rudp_peer_t *p, uint16_t vport) {
  * differs between peers and runs will do, e.g. a clock).
  */
 static inline void rudp_peer_init(rudp_peer_t *p, uint32_t ip, uint16_t port, uint64_t seed,
-                                  rudp_send_fn send, void *send_ctx,
-                                  rudp_deliver_fn deliver, void *deliver_ctx) {
+                                  rudp_io_t io) {
     memset(p, 0, sizeof(*p));
     p->ip = ip;
     p->port = port;
-    p->send = send;
-    p->send_ctx = send_ctx;
-    p->deliver = deliver;
-    p->deliver_ctx = deliver_ctx;
+    p->io = io;
     for (uint32_t i = 0; i < RUDP_CHANNELS; i++) {
         rudp_chan_t *c = &p->ch[i];
         c->vport     = (uint16_t)(i + 1);
@@ -195,7 +196,7 @@ static inline void rudp_peer_init(rudp_peer_t *p, uint32_t ip, uint16_t port, ui
 
 /* One sub-packet in its own datagram: P2P header, mux header, RUDP bytes. */
 static inline void rudp_emit(rudp_peer_t *p, const rudp_chan_t *c, const uint8_t *rudp, uint32_t len) {
-    if (!p->send || !p->ip || !p->port) return;
+    if (!p->io.send || !p->ip || !p->port) return;
     uint8_t buf[6 + 4 + 32 + RUDP_MAX_PAYLOAD];
     if (len > sizeof(buf) - 10) return;
     buf[0] = RUDP_GAME_VPORT; buf[1] = 0;       /* dst vport, LE */
@@ -205,7 +206,7 @@ static inline void rudp_emit(rudp_peer_t *p, const rudp_chan_t *c, const uint8_t
     rudp_be16(buf + 6, (uint16_t)(0x8000u | sub));   /* mux type 2 */
     rudp_be16(buf + 8, c->vport);
     memcpy(buf + 10, rudp, len);
-    p->send(p->send_ctx, p->ip, p->port, buf, 10u + len);
+    p->io.send(p->io.send_ctx, p->ip, p->port, buf, 10u + len);
 }
 
 static inline uint32_t rudp_put_syn_body(const rudp_chan_t *c, uint8_t *b) {
@@ -387,7 +388,7 @@ static inline void rudp_on_data(rudp_peer_t *p, rudp_chan_t *c, uint16_t seq, co
         /* Unordered and unreliable: librudp hands these over in arrival order
          * and does not look for duplicates. */
         c->rx_segments++;
-        if (len && p->deliver) p->deliver(p->deliver_ctx, c->vport, pl, len);
+        if (len && p->io.deliver) p->io.deliver(p->io.deliver_ctx, c->vport, pl, len);
         return;
     }
     int16_t d = rudp_diff(seq, c->rcv_nxt);
@@ -404,7 +405,7 @@ static inline void rudp_on_data(rudp_peer_t *p, rudp_chan_t *c, uint16_t seq, co
     c->rx_unacked++;
     if (!fresh) { c->duplicates++; return; }
     c->rx_segments++;
-    if (len && p->deliver) p->deliver(p->deliver_ctx, c->vport, pl, len);
+    if (len && p->io.deliver) p->io.deliver(p->io.deliver_ctx, c->vport, pl, len);
 }
 
 /* A sub-packet's RUDP header, as rudp_parse_header reads it. `o` is where the

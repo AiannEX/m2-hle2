@@ -1474,6 +1474,44 @@ static void mcp_cmd_wait_frames(const char *req, char *resp, int cap) {
              g_emu_frames, advanced, advanced >= count ? "true" : "false", elapsed);
 }
 
+/* run_frames' refusals: no board to run, or one already running. Writes the
+ * error reply and answers true if there is one. */
+static bool mcp_run_frames_refused(char *resp, int cap) {
+    if (!g_mcp.emu || !g_mcp.emu->thread_alive) {
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"emu not started\"}"); return true;
+    }
+    if (emu_is_running(g_mcp.emu)) {
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"must be stopped to run_frames\"}"); return true;
+    }
+    return false;
+}
+
+/* Wait for the emu thread to stop itself, or stop it at the timeout and wait
+ * for that. Answers true if it timed out. */
+static bool mcp_run_frames_wait(int64_t t0, int64_t limit) {
+    bool timed_out = false;
+    while (emu_is_running(g_mcp.emu)) {
+        if (emu_now_us() - t0 >= limit) { timed_out = true; break; }
+        emu_nap_us(250);
+    }
+    if (timed_out) {
+        emu_stop(g_mcp.emu);
+        while (emu_is_running(g_mcp.emu) && g_mcp.emu->thread_alive) emu_nap_us(250);
+    }
+    return timed_out;
+}
+
+/* Why the run ended, first match wins. */
+static const char *mcp_run_frames_reason(unsigned advanced, uint32_t count, bool timed_out) {
+    int halted = g_mcp.cpu && g_mcp.cpu->halted;
+    return advanced >= count ? "frames"
+         : timed_out         ? "timeout"
+         : halted            ? "halted"
+         : g_wp.hit          ? "watchpoint"
+         : g_bp.hit_addr     ? "breakpoint"
+         : "stopped";
+}
+
 /* Run exactly N game frames from a stopped board, then stop, in one request.
  *
  * emu_run + wait_frames + emu_stop overshoots by however many frames go by
@@ -1489,35 +1527,16 @@ static void mcp_cmd_run_frames(const char *req, char *resp, int cap) {
     mcp_json_get_u32(req, "timeout_ms", &timeout_ms);
     if (count < 1) count = 1;
     if (timeout_ms > 300000) timeout_ms = 300000;
-    if (!g_mcp.emu || !g_mcp.emu->thread_alive) {
-        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"emu not started\"}"); return;
-    }
-    if (emu_is_running(g_mcp.emu)) {
-        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"must be stopped to run_frames\"}"); return;
-    }
+    if (mcp_run_frames_refused(resp, cap)) return;
 
     unsigned start = g_emu_frames;
     int64_t  t0    = emu_now_us();
     int64_t  limit = (int64_t)timeout_ms * 1000;
     g_bp.hit_addr = 0;   /* so a stop below can say whether a breakpoint made it */
     emu_run_frames(g_mcp.emu, count);
-    bool timed_out = false;
-    while (emu_is_running(g_mcp.emu)) {
-        if (emu_now_us() - t0 >= limit) { timed_out = true; break; }
-        emu_nap_us(250);
-    }
-    if (timed_out) {
-        emu_stop(g_mcp.emu);
-        while (emu_is_running(g_mcp.emu) && g_mcp.emu->thread_alive) emu_nap_us(250);
-    }
+    bool timed_out = mcp_run_frames_wait(t0, limit);
     unsigned advanced = g_emu_frames - start;
-    int halted = g_mcp.cpu && g_mcp.cpu->halted;
-    const char *reason = advanced >= count ? "frames"
-                       : timed_out         ? "timeout"
-                       : halted            ? "halted"
-                       : g_wp.hit          ? "watchpoint"
-                       : g_bp.hit_addr     ? "breakpoint"
-                       : "stopped";
+    const char *reason = mcp_run_frames_reason(advanced, count, timed_out);
     snprintf(resp, (size_t)cap,
              "{\"ok\":true,\"frames\":%u,\"advanced\":%u,\"reached\":%s,"
              "\"reason\":\"%s\",\"elapsed_ms\":%u}",
@@ -1724,6 +1743,41 @@ typedef struct {
 
 #define MCP_DL_UNIT_PER_MARK (sizeof g_sharc.rot_cache / sizeof(float))
 
+/* probes: "hexaddr[:size],..." -- a size of 1 or 2 is kept, anything else
+ * reads 4 bytes. */
+static void mcp_dl_parse_probes(mcp_dl_req_t *q, char *probes) {
+    for (char *tok = strtok(probes, ","); tok && q->np < DL_MAX_PROBES; tok = strtok(NULL, ",")) {
+        char *colon = strchr(tok, ':');
+        q->paddr[q->np] = (uint32_t)strtoul(tok, NULL, 16);
+        uint32_t sz = colon ? (uint32_t)strtoul(colon + 1, NULL, 10) : 4;
+        q->psize[q->np++] = (uint8_t)(sz == 1 || sz == 2 ? sz : 4);
+    }
+}
+
+/* blocks: "hexaddr:hexlen,..." -- whole ranges copied at every mark into
+ * <path>.blocks.bin, capmarks x (sum of lengths) bytes. */
+static void mcp_dl_parse_blocks(mcp_dl_req_t *q, char *blockspec) {
+    for (char *tok = strtok(blockspec, ","); tok && q->nb < DL_MAX_BLOCKS; tok = strtok(NULL, ",")) {
+        char *colon = strchr(tok, ':');
+        if (!colon) continue;
+        uint32_t len = (uint32_t)strtoul(colon + 1, NULL, 16);
+        if (!len || q->bbytes + len > DL_BLOCK_BYTES) continue;
+        q->baddr[q->nb] = (uint32_t)strtoul(tok, NULL, 16); q->blen[q->nb++] = len; q->bbytes += len;
+    }
+}
+
+/* The tap's address window, kept inside the tap's own. */
+static void mcp_dl_clamp_window(mcp_dl_req_t *q) {
+    if (q->lo < DL_TAP_LO) q->lo = DL_TAP_LO;
+    if (q->hi > DL_TAP_HI || q->hi <= q->lo) q->hi = DL_TAP_HI;
+}
+
+/* At least one frame and at most a minute of them; at most 64M words. */
+static void mcp_dl_clamp_size(mcp_dl_req_t *q) {
+    if (q->frames == 0 || q->frames > 3600) q->frames = q->frames ? 3600 : 1;
+    if (q->max_words > 64u * 1024u * 1024u) q->max_words = 64u * 1024u * 1024u;
+}
+
 /* The request's options, clamped. False when it names no path. */
 static bool mcp_dl_parse(const char *req, mcp_dl_req_t *q) {
     char probes[2048] = {0}, blockspec[512] = {0};
@@ -1741,32 +1795,15 @@ static bool mcp_dl_parse(const char *req, mcp_dl_req_t *q) {
     mcp_json_get_u32(req, "run", &q->want_run);
     mcp_json_get_u32(req, "lo", &q->lo);
     mcp_json_get_u32(req, "hi", &q->hi);
-    if (q->lo < DL_TAP_LO) q->lo = DL_TAP_LO;
-    if (q->hi > DL_TAP_HI || q->hi <= q->lo) q->hi = DL_TAP_HI;
+    mcp_dl_clamp_window(q);
     mcp_json_get_u32(req, "frames", &q->frames);
     mcp_json_get_u32(req, "max_words", &q->max_words);
     mcp_json_get_u32(req, "timeout_ms", &q->timeout_ms);
     mcp_json_get_str(req, "probes", probes, sizeof(probes));
     if (!mcp_json_get_str(req, "path", q->path, sizeof(q->path))) return false;
-    if (q->frames == 0 || q->frames > 3600) q->frames = q->frames ? 3600 : 1;
-    if (q->max_words > 64u * 1024u * 1024u) q->max_words = 64u * 1024u * 1024u;
-
-    for (char *tok = strtok(probes, ","); tok && q->np < DL_MAX_PROBES; tok = strtok(NULL, ",")) {
-        char *colon = strchr(tok, ':');
-        q->paddr[q->np] = (uint32_t)strtoul(tok, NULL, 16);
-        uint32_t sz = colon ? (uint32_t)strtoul(colon + 1, NULL, 10) : 4;
-        q->psize[q->np++] = (uint8_t)(sz == 1 || sz == 2 ? sz : 4);
-    }
-
-    /* blocks: "hexaddr:hexlen,..." -- whole ranges copied at every mark into
-     * <path>.blocks.bin, capmarks x (sum of lengths) bytes. */
-    for (char *tok = strtok(blockspec, ","); tok && q->nb < DL_MAX_BLOCKS; tok = strtok(NULL, ",")) {
-        char *colon = strchr(tok, ':');
-        if (!colon) continue;
-        uint32_t len = (uint32_t)strtoul(colon + 1, NULL, 16);
-        if (!len || q->bbytes + len > DL_BLOCK_BYTES) continue;
-        q->baddr[q->nb] = (uint32_t)strtoul(tok, NULL, 16); q->blen[q->nb++] = len; q->bbytes += len;
-    }
+    mcp_dl_clamp_size(q);
+    mcp_dl_parse_probes(q, probes);
+    mcp_dl_parse_blocks(q, blockspec);
     return true;
 }
 

@@ -1221,7 +1221,7 @@ static void headless_av_frame(void) {
                          .depth_stencil = av_capture_depth_att() },
     });
     game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                    ox, oy, gw, gh, 1.0f);
+                    (game_rect_t){ox, oy, gw, gh}, 1.0f);
     overlay_host_draw();
     sg_end_pass();
     av_capture_submit(av_frame, av_sample);
@@ -1375,7 +1375,7 @@ static void av_stream_pass(void) {
                              .depth_stencil = av_capture_depth_att() },
         });
         game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                        ox, oy, gw, gh, 1.0f);
+                        (game_rect_t){ox, oy, gw, gh}, 1.0f);
         overlay_host_draw();
         sg_end_pass();
         av_capture_submit(av_frame, av_sample);
@@ -1413,8 +1413,8 @@ static void window_game_rect(int *ox, int *oy, int *w, int *h) {
      * target has its own aspect, chosen by --av-size. */
     int src_w = s_av_mirror ? av_stream_width()  : post_shader_picture_width();
     int src_h = s_av_mirror ? av_stream_height() : VIDEO_HEIGHT;
-    game_render_letterbox(sapp_width(), avail_h, src_w, src_h, ox, oy, w, h);
-    *oy += menu_h;
+    game_rect_t r = game_render_letterbox(sapp_width(), avail_h, src_w, src_h);
+    *ox = r.x; *oy = r.y + menu_h; *w = r.w; *h = r.h;
 }
 
 /* Programmatic per-model texture extractor (--extract N). Re-runs ~once/
@@ -1424,11 +1424,12 @@ static void extract_model_tick(void) {
     if (g_extract_model >= 0 && g_active_profile && state.romset.main_data) {
         static int _ec = 0;
         if ((_ec++ % 60) == 0) {
-            model_table_t table = profile_model_table(&g_active_profile->quirks);
-            geo3d_extract_model_texture(g_extract_model,
-                state.romset.main_data, state.romset.main_data_size,
-                state.romset.textures,  state.romset.textures_size,
-                state.bus.texram0, state.bus.texram1, &table);
+            const geo3d_models_t md = {
+                .main_data = state.romset.main_data, .main_data_size = state.romset.main_data_size,
+                .materials = state.romset.textures,  .materials_size = state.romset.textures_size,
+                .table     = profile_model_table(&g_active_profile->quirks),
+            };
+            geo3d_extract_model_texture(g_extract_model, &md, state.bus.texram0, state.bus.texram1);
             if (g_extract_seq >= 0) g_extract_seq++;
         }
     }
@@ -1496,7 +1497,7 @@ static void frame(void) {
         int sw, sh;
         post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, w, h, &sw, &sh);
         post_shader_begin_source(sw, sh, &state.pass_action);
-        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, 0, 0, sw, sh, lerp_t);
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){0, 0, sw, sh}, lerp_t);
         post_shader_end_source();
         post_shader_prepare(w, h);
     }
@@ -1518,7 +1519,7 @@ static void frame(void) {
             post_shader_draw(ox, oy, w, h, sapp_width(), sapp_height());
         else
             game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                            ox, oy, w, h, lerp_t);
+                            (game_rect_t){ox, oy, w, h}, lerp_t);
 
         /* The overlay goes UNDER any debug window that is open, which is right:
          * those are for the person at the keyboard and the overlay is for the

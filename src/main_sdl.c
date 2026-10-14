@@ -1094,7 +1094,8 @@ static Uint64 frame_prepare(void) {
 /* Where the picture goes on a fb_w x fb_h screen: letterboxed to fit, or at
  * --display-scale, centred, when that fits. */
 static void screen_rect(int fb_w, int fb_h, int *ox, int *oy, int *w, int *h) {
-    game_render_letterbox(fb_w, fb_h, VIDEO_WIDTH, VIDEO_HEIGHT, ox, oy, w, h);
+    game_rect_t r = game_render_letterbox(fb_w, fb_h, VIDEO_WIDTH, VIDEO_HEIGHT);
+    *ox = r.x; *oy = r.y; *w = r.w; *h = r.h;
     if (opt.display_scale > 0 && VIDEO_WIDTH * opt.display_scale <= fb_w
             && VIDEO_HEIGHT * opt.display_scale <= fb_h) {
         *w  = VIDEO_WIDTH * opt.display_scale;
@@ -1128,7 +1129,7 @@ static void render_frame(void) {
             .attachments = { .colors[0] = g_rt.color_att, .depth_stencil = g_rt.depth_att },
         });
         game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                        0, 0, g_rt.w, g_rt.h, lerp_t);
+                        (game_rect_t){0, 0, g_rt.w, g_rt.h}, lerp_t);
         sg_end_pass();
         if (opt.gl_finish) {
             /* The game pass is the tile layer quads and the 3D fills: its GPU
@@ -1152,7 +1153,7 @@ static void render_frame(void) {
     if (show_game && opt.render_scale > 0)
         game_render_draw_target(g_rt.texture, opt.linear, ox, oy, w, h);
     else if (show_game)
-        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, ox, oy, w, h, lerp_t);
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){ox, oy, w, h}, lerp_t);
     if (opt.osd) {
         osd_update(SDL_GetTicksNS());
         osd_draw(fb_w, fb_h);
