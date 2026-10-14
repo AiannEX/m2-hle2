@@ -73,6 +73,7 @@
 #include "sound.h"
 #include "input.h"
 #include "net/pkt_lockstep.h"
+#include "net/room_watch.h"
 #include "sokol_gl.h"
 #include "ps3ui_app.h"
 #include "ps3ui_gpu.h"
@@ -877,48 +878,12 @@ static void lr_rpcn_toast_sign_in(const netplay_status_t *st) {
     }
 }
 
-/* The room's other members as last seen, and how long we have been in it. */
-enum { LR_LEAVE_FRAMES = 60 };
-static struct {
-    struct { uint16_t id; char npid[20]; int missing; } m[ROOM_MAX_MEMBERS];
-    uint32_t n;
-    uint64_t room;
-    int      frames;
-} lr_seen;
-
-/* A member not seen before is a join, unless we have only just come in. */
-static void lr_rpcn_toast_joins(const netplay_status_t *st, bool fresh) {
+/* A player coming into or leaving the room, as a notification. */
+static void lr_rpcn_toast_member(room_watch_event_t ev, const char *npid, void *ud) {
+    (void)ud;
     char msg[256];
-    for (uint32_t i = 0; i < st->member_count; i++) {
-        const netplay_member_status_t *m = &st->members[i];
-        if (m->is_me || !m->member_id || !m->npid[0]) continue;
-        uint32_t k = 0;
-        while (k < lr_seen.n && lr_seen.m[k].id != m->member_id) k++;
-        if (k < lr_seen.n) { lr_seen.m[k].missing = 0; continue; }
-        if (lr_seen.n >= ROOM_MAX_MEMBERS) continue;
-        lr_seen.m[lr_seen.n].id = m->member_id;
-        snprintf(lr_seen.m[lr_seen.n].npid, sizeof lr_seen.m[lr_seen.n].npid, "%s", m->npid);
-        lr_seen.m[lr_seen.n].missing = 0;
-        lr_seen.n++;
-        if (!fresh) {
-            snprintf(msg, sizeof msg, "%s joined the room", m->npid);
-            lr_notify(msg, 4000);
-        }
-    }
-}
-
-/* A member missing for LR_LEAVE_FRAMES running is a departure. */
-static void lr_rpcn_toast_leaves(const netplay_status_t *st) {
-    char msg[256];
-    for (uint32_t k = 0; k < lr_seen.n;) {
-        bool here = false;
-        for (uint32_t i = 0; i < st->member_count; i++)
-            if (st->members[i].member_id == lr_seen.m[k].id) here = true;
-        if (here || ++lr_seen.m[k].missing < LR_LEAVE_FRAMES) { k++; continue; }
-        snprintf(msg, sizeof msg, "%s left the room", lr_seen.m[k].npid);
-        lr_notify(msg, 4000);
-        lr_seen.m[k] = lr_seen.m[--lr_seen.n];
-    }
+    snprintf(msg, sizeof msg, ev == ROOM_WATCH_JOIN ? "%s joined the room" : "%s left the room", npid);
+    lr_notify(msg, 4000);
 }
 
 /* Signing in and out, and players coming into and leaving the room, as the
@@ -926,31 +891,11 @@ static void lr_rpcn_toast_leaves(const netplay_status_t *st) {
  * so a player who is fighting or sitting in a menu still hears that somebody
  * arrived. Once a retro_run, whether or not the board ran. */
 static void lr_rpcn_toasts(void) {
+    static room_watch_t seen;
     const netplay_status_t *st = &g_ps3ui_app.st;
     if (!g_ps3ui_app.be.get_status) return;
     lr_rpcn_toast_sign_in(st);
-
-    /* The room's other members. Entering a room takes its members as they are
-     * for a second (nobody "joined" a room we walked into); after that, a new member is a
-     * join, and one missing for a second is a departure -- a member row can
-     * drop out for a poll while the room is re-read, and that is not a leave. */
-    netplay_state_t s = st->state;
-    bool in_room = s == NETPLAY_IN_ROOM || s == NETPLAY_SYNCING || s == NETPLAY_PLAYING || s == NETPLAY_WATCHING;
-    if (!in_room || !st->room_id) {
-        lr_seen.n = 0;
-        lr_seen.room = 0;
-        return;
-    }
-    if (st->room_id != lr_seen.room) {
-        lr_seen.n = 0;
-        lr_seen.room = st->room_id;
-        lr_seen.frames = 0;
-    }
-    /* the room's rows can arrive a poll or two after we do */
-    bool fresh = lr_seen.frames < LR_LEAVE_FRAMES;
-    if (fresh) lr_seen.frames++;
-    lr_rpcn_toast_joins(st, fresh);
-    lr_rpcn_toast_leaves(st);
+    room_watch_step(&seen, st, lr_rpcn_toast_member, NULL);
 }
 
 /* M2HLE_RPCN_AUTOJOIN=<owner> (or 1 for any open room): once signed in, join
