@@ -159,6 +159,7 @@ typedef struct {
     int64_t  when;              /* time(NULL) at the match's first frame */
     game_match_info_t fight;    /* as last seen while fighting */
     bool     fight_seen;
+    bool     manual;            /* the player finished it (replay_rec_finish_local) */
     int      winner;            /* 0 1P, 1 2P, -1 none */
     uint32_t result_frame, frames;
     int32_t  settings[FOLLOW_SET_WORDS];
@@ -362,18 +363,30 @@ static inline void replay__json_int(char *out, size_t cap, size_t *n, const char
     if (*n < cap) *n += (size_t)snprintf(out + *n, cap - *n, ",\"%s\":%lld", key, v);
 }
 
-/* The fight's half of replay.json: characters, stage, rounds, result. */
-static inline void replay__json_fight(const replay_meta_t *m, char *out, size_t cap, size_t *n) {
-    const game_match_info_t *f = &m->fight;
+/* Each side's character, rounds won and whether the CPU played it; the CPU's
+ * difficulty. */
+static inline void replay__json_sides(const game_match_info_t *f, char *out, size_t cap, size_t *n) {
     char unknown[24];
-    for (int side = 0; side < 2 && m->fight_seen; side++) {
+    for (int side = 0; side < 2; side++) {
         const char *key = side ? "p2_character" : "p1_character";
         snprintf(unknown, sizeof unknown, "#%d", f->chara[side]);
         replay__json_str(out, cap, n, key, f->chara_name[side] ? f->chara_name[side] : unknown);
         replay__json_int(out, cap, n, side ? "p2_character_id" : "p1_character_id", f->chara[side]);
         replay__json_int(out, cap, n, side ? "p2_rounds" : "p1_rounds", f->rounds[side]);
+        replay__json_int(out, cap, n, side ? "p2_cpu" : "p1_cpu", f->cpu[side]);
     }
+    if (f->difficulty_name) {
+        replay__json_str(out, cap, n, "difficulty", f->difficulty_name);
+        replay__json_int(out, cap, n, "difficulty_id", f->difficulty);
+    }
+}
+
+/* The fight's half of replay.json: characters, stage, rounds, result. */
+static inline void replay__json_fight(const replay_meta_t *m, char *out, size_t cap, size_t *n) {
+    const game_match_info_t *f = &m->fight;
+    char unknown[24];
     if (m->fight_seen) {
+        replay__json_sides(f, out, cap, n);
         snprintf(unknown, sizeof unknown, "#%d", f->stage);
         replay__json_str(out, cap, n, "stage", f->stage_name ? f->stage_name : unknown);
         replay__json_int(out, cap, n, "stage_id", f->stage);
@@ -411,6 +424,7 @@ static inline size_t replay__json(const replay_meta_t *m, int native_n, char *ou
     replay__json_fight(m, out, cap, &n);
     replay__json_int(out, cap, &n, "finished", m->winner >= 0);
     replay__json_str(out, cap, &n, "ended", m->why);
+    replay__json_str(out, cap, &n, "stopped", m->manual ? "manual" : "automatic");
     replay__json_int(out, cap, &n, "frames", m->frames);
     replay__json_int(out, cap, &n, "seconds", (m->frames + 30) / 60);
     replay__json_int(out, cap, &n, "native_rounds", native_n);
@@ -713,6 +727,7 @@ static inline const char *replay_rec_finish_local(void) {
     const char *said = replay__keeps() ? "replay saved"
                      : !R->meta.inputs && R->native.n == 0 ? "not kept: no round has finished yet"
                      : "not kept: too short";
+    R->meta.manual = true;
     replay_rec_finish("finished by the player");
     R->held_off = true;
     return said;
@@ -959,8 +974,10 @@ typedef struct {
     char     p1[32], p2[32], c1[32], c2[32], stage[32], romset[32], profile[32];
     char     winner_name[32], loser_name[32], recorded_by[32], ended[64];
     char     netcode[8];        /* "rpcn", "ggpo"; "" in a replay from before GGPO */
+    char     difficulty[16];    /* the CPU's; "" before Pinboard #875 */
+    char     stopped[12];       /* "manual" (Finish replay) or "automatic"; "" before #875 */
     int      winner;            /* 0 = 1P, 1 = 2P, -1 none */
-    uint32_t r1, r2, frames, seconds, timestamp, finished;
+    uint32_t r1, r2, frames, seconds, timestamp, finished, cpu1, cpu2;
 } replay_label_t;
 
 static inline void replay_label_get(const char *json, replay_label_t *l) {
@@ -978,6 +995,10 @@ static inline void replay_label_get(const char *json, replay_label_t *l) {
     json_get_str(json, "recorded_by", l->recorded_by, sizeof l->recorded_by);
     json_get_str(json, "ended", l->ended, sizeof l->ended);
     json_get_str(json, "netcode", l->netcode, sizeof l->netcode);
+    json_get_str(json, "difficulty", l->difficulty, sizeof l->difficulty);
+    json_get_str(json, "stopped", l->stopped, sizeof l->stopped);
+    json_get_u32(json, "p1_cpu", &l->cpu1);
+    json_get_u32(json, "p2_cpu", &l->cpu2);
     json_get_int(json, "winner", &l->winner);
     json_get_u32(json, "p1_rounds", &l->r1);
     json_get_u32(json, "p2_rounds", &l->r2);
