@@ -1260,21 +1260,20 @@ static void scsp_recouple(scsp_t *s) {
     s->coupled = c;
 }
 
-/* The 68000 is about to touch sz bytes of sound RAM at addr: make whatever the
- * chip owes that depends on the bytes there now. */
-static inline void scsp_ram_touch(scsp_t *s, uint32_t addr, uint32_t sz, int write) {
-    if (!s->owed) return;
-    uint32_t end = addr + sz;
-    if (addr < s->dsp_hi && s->dsp_lo < end) { scsp_sync(s); return; }
-    if (!write) return;                                    /* slots only read */
-    if (s->hot_dirty) {
-        memset(s->own, 0, sizeof s->own);
-        for (int i = 0; i < 32; i++)
-            if (s->slot_lo[i] < s->slot_hi[i])
-                for (uint32_t g = s->slot_lo[i] >> 8; g <= (s->slot_hi[i] - 1) >> 8 && g < 0x80000u / 256; g++)
-                    s->own[g] |= 1u << i;
-        s->hot_dirty = 0;
-    }
+/* Which slots read each 256-byte granule of sound RAM, made again from the
+ * slots' ranges after one of them moved. */
+static void scsp_own_rebuild(scsp_t *s) {
+    memset(s->own, 0, sizeof s->own);
+    for (int i = 0; i < 32; i++)
+        if (s->slot_lo[i] < s->slot_hi[i])
+            for (uint32_t g = s->slot_lo[i] >> 8; g <= (s->slot_hi[i] - 1) >> 8 && g < 0x80000u / 256; g++)
+                s->own[g] |= 1u << i;
+    s->hot_dirty = 0;
+}
+
+/* A write to [addr, end): run on every slot that owes samples and reads
+ * there, so they read the old bytes. */
+static inline void scsp_ram_touch_slots(scsp_t *s, uint32_t addr, uint32_t end) {
     uint32_t g0 = addr >> 8, g1 = (end - 1) >> 8;
     if (g1 >= 0x80000u / 256) { g1 = 0x80000u / 256 - 1; if (g0 > g1) return; }
     for (uint32_t m = s->own[g0] | s->own[g1]; m; m &= m - 1) {
@@ -1284,6 +1283,17 @@ static inline void scsp_ram_touch(scsp_t *s, uint32_t addr, uint32_t sz, int wri
             s->catches++;
         }
     }
+}
+
+/* The 68000 is about to touch sz bytes of sound RAM at addr: make whatever the
+ * chip owes that depends on the bytes there now. */
+static inline void scsp_ram_touch(scsp_t *s, uint32_t addr, uint32_t sz, int write) {
+    if (!s->owed) return;
+    uint32_t end = addr + sz;
+    if (addr < s->dsp_hi && s->dsp_lo < end) { scsp_sync(s); return; }
+    if (!write) return;                                    /* slots only read */
+    if (s->hot_dirty) scsp_own_rebuild(s);
+    scsp_ram_touch_slots(s, addr, end);
 }
 
 /* Whether a register write changes what the chip makes (and so has to find it
