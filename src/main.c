@@ -15,6 +15,7 @@
  * the winsock include order and <winsock2.h> has to precede it. See the note at
  * the top of that header. */
 #include "net/netplay.h"
+#include "net/room_watch.h"
 
 #include "sokol_app.h"
 #include "sokol_gfx.h"
@@ -419,6 +420,25 @@ static void netplay_cli_log_twitch(const netplay_status_t *st) {
         LOG_INFO("netplay: Twitch signed in as %s", st->twitch_npid);
     else if (st->twitch_state == RPCN_TWITCH_FAILED)
         LOG_INFO("netplay: Twitch failed: %s", st->twitch_error);
+}
+
+/* Somebody came into the room we are in: a toast over the bottom of the game
+ * box (overlay_host_announce), in the window and on the A/V stream alike. */
+static void netplay_room_toast(room_watch_event_t ev, const char *npid, void *ud) {
+    (void)ud;
+    if (ev != ROOM_WATCH_JOIN) return;
+    char note[96];
+    snprintf(note, sizeof note, "%s came into the room.", npid);
+    LOG_INFO("netplay: %s joined the room", npid);
+    overlay_host_announce(OVERLAY_ANNOUNCE_TITLE, note);
+}
+
+/* Called every frame from both loops, whatever started the session. */
+static void netplay_room_announce(void) {
+    static room_watch_t seen;
+    netplay_status_t st;
+    netplay_get_status(&st);
+    room_watch_step(&seen, &st, netplay_room_toast, NULL);
 }
 
 /*
@@ -1293,6 +1313,7 @@ static int headless_main(void) {
     while (!tray_exit_requested() && !mcp_quit_requested()) {
         emu_update_snapshots(&state.emu);
         netplay_cli_pump();
+        netplay_room_announce();
         tray_headless_pump();
         tray_headless_tick(g_emu_frames);
         if (av_on) {
@@ -1457,6 +1478,7 @@ static void frame(void) {
     float lerp_t = state.emu_started ? game_frame_lerp() : 1.0f;
 
     netplay_cli_pump();
+    netplay_room_announce();
 
     /* Capture mode draws the game and nothing else: no menu bar, no debug
      * windows, nothing for a recording to pick up. */
@@ -1489,6 +1511,13 @@ static void frame(void) {
      * was told it would be, so the window and the stream show the identical
      * composition rather than two letterboxes of the same picture. */
     if (win_overlay) { ox = win_ox; oy = win_oy; w = win_gw; h = win_gh; }
+    /* With no plugin, an announcement still goes up, over the window's own
+     * game box. */
+    else if (!s_av_mirror && overlay_host_announcing()) {
+        int menu_h = s_menu_bar_visible ? (int)(igGetFrameHeight() * sapp_dpi_scale()) : 0;
+        overlay_host_paint(sapp_width(), sapp_height(), ox, oy, w, h, menu_h, g_emu_frames);
+        win_overlay = true;
+    }
     /* The filter reads the game from a target of its own and covers only the
      * game's rectangle. Not while the window mirrors the A/V stream: that
      * target is the stream's composition, overlay and all. */

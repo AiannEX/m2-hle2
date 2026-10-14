@@ -950,6 +950,21 @@ static void mcp_cmd_overlay_swap(const char *req, char *resp, int cap) {
     snprintf(resp, (size_t)cap, "{\"ok\":true,\"queued\":true}");
 }
 
+/* announce: a green toast over the bottom of the game box for a few seconds,
+ * after any already waiting (ui/overlay_host.h, "ANNOUNCEMENTS") -- the one a
+ * player coming into the room raises by itself.
+ *
+ *   {"cmd":"announce","note":"test1 came into the room."}
+ *
+ * optional: "title" (WELCOME). get_status's overlay.announce follows it. */
+static void mcp_cmd_announce(const char *req, char *resp, int cap) {
+    char title[64] = "", note[256] = "";
+    json_get_str_unescaped(req, "title", title, (int)sizeof title);
+    json_get_str_unescaped(req, "note",  note,  (int)sizeof note);
+    overlay_host_announce(title, note);
+    snprintf(resp, (size_t)cap, "{\"ok\":true,\"queued\":true}");
+}
+
 /* snd_watch: arm or read the streaming watchdog (board/sound.h).
  *
  *   {"cmd":"snd_watch","on":1}   arm it, clearing the counters
@@ -2903,6 +2918,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
     else if (strcmp(cmd, "snd_watch")                == 0) mcp_cmd_snd_watch(req, resp, cap);
     else if (strcmp(cmd, "quit")                     == 0) mcp_cmd_quit(resp, cap);
     else if (strcmp(cmd, "overlay_swap")             == 0) mcp_cmd_overlay_swap(req, resp, cap);
+    else if (strcmp(cmd, "announce")                 == 0) mcp_cmd_announce(req, resp, cap);
     else if (strcmp(cmd, "reset_sound")              == 0) mcp_cmd_reset_sound(req, resp, cap);
     else if (strcmp(cmd, "dump_midi_log")            == 0) mcp_cmd_dump_midi_log(resp, cap);
     else if (strcmp(cmd, "sound_codes")              == 0) mcp_cmd_sound_codes(req, resp, cap);
