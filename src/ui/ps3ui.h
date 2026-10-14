@@ -706,6 +706,29 @@ static inline int ps3ui_layer_src(const ps3ui_layer_t *l, float f)
     return si;
 }
 
+/* A video layer at frame f, already placed (m) and faded (op): the sprite its
+ * source names fills the video's box, or the hook draws one with no source. */
+static inline void ps3ui_play_video(const ps3ui_play_t *p, ps3ui_canvas_t *cv, const ps3ui_layer_t *l,
+                                    float f, ps3ui_mat_t m, float op, int b)
+{
+    if (l->nsrc == 0) {
+        if (p->hook)
+            p->hook(p->user, cv, l->name, m, op, l->w, l->h);
+        return;
+    }
+    int spr = p->scene->srcs[l->item + ps3ui_layer_src(l, f)];
+    if (p->filter && !p->filter(p->user, l->name, &spr))
+        return;
+    const ps3ui_image_t *im = ps3ui_sprite(spr);
+    if (!im || !im->px)
+        return;
+    /* The sprite fills the video's box. */
+    ps3ui_mat_t fit = m;
+    if (im->w != l->w || im->h != l->h)
+        fit = ps3ui_mat_mul(m, ps3ui_mat_scale((float)l->w / (float)im->w, (float)l->h / (float)im->h));
+    ps3ui_draw_image(cv, im, fit, op, b, NULL);
+}
+
 static inline void ps3ui_play_layer(const ps3ui_play_t *p, ps3ui_canvas_t *cv, const ps3ui_layer_t *l,
                                     float f, ps3ui_mat_t parent, float opacity, int blend)
 {
@@ -721,24 +744,8 @@ static inline void ps3ui_play_layer(const ps3ui_play_t *p, ps3ui_canvas_t *cv, c
         ps3ui_play_comp(p, cv, l->item, (f - l->start) * l->tscale + l->offset, m, op, b);
         return;
     }
-    if (l->type != PS3UI_LAYER_VIDEO)
-        return;
-    if (l->nsrc == 0) {
-        if (p->hook)
-            p->hook(p->user, cv, l->name, m, op, l->w, l->h);
-        return;
-    }
-    int spr = s->srcs[l->item + ps3ui_layer_src(l, f)];
-    if (p->filter && !p->filter(p->user, l->name, &spr))
-        return;
-    const ps3ui_image_t *im = ps3ui_sprite(spr);
-    if (!im || !im->px)
-        return;
-    /* The sprite fills the video's box. */
-    ps3ui_mat_t fit = m;
-    if (im->w != l->w || im->h != l->h)
-        fit = ps3ui_mat_mul(m, ps3ui_mat_scale((float)l->w / (float)im->w, (float)l->h / (float)im->h));
-    ps3ui_draw_image(cv, im, fit, op, b, NULL);
+    if (l->type == PS3UI_LAYER_VIDEO)
+        ps3ui_play_video(p, cv, l, f, m, op, b);
 }
 
 static void ps3ui_play_comp(const ps3ui_play_t *p, ps3ui_canvas_t *cv, int comp, float f,
