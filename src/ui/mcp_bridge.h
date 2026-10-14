@@ -1474,6 +1474,44 @@ static void mcp_cmd_wait_frames(const char *req, char *resp, int cap) {
              g_emu_frames, advanced, advanced >= count ? "true" : "false", elapsed);
 }
 
+/* run_frames' refusals: no board to run, or one already running. Writes the
+ * error reply and answers true if there is one. */
+static bool mcp_run_frames_refused(char *resp, int cap) {
+    if (!g_mcp.emu || !g_mcp.emu->thread_alive) {
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"emu not started\"}"); return true;
+    }
+    if (emu_is_running(g_mcp.emu)) {
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"must be stopped to run_frames\"}"); return true;
+    }
+    return false;
+}
+
+/* Wait for the emu thread to stop itself, or stop it at the timeout and wait
+ * for that. Answers true if it timed out. */
+static bool mcp_run_frames_wait(int64_t t0, int64_t limit) {
+    bool timed_out = false;
+    while (emu_is_running(g_mcp.emu)) {
+        if (emu_now_us() - t0 >= limit) { timed_out = true; break; }
+        emu_nap_us(250);
+    }
+    if (timed_out) {
+        emu_stop(g_mcp.emu);
+        while (emu_is_running(g_mcp.emu) && g_mcp.emu->thread_alive) emu_nap_us(250);
+    }
+    return timed_out;
+}
+
+/* Why the run ended, first match wins. */
+static const char *mcp_run_frames_reason(unsigned advanced, uint32_t count, bool timed_out) {
+    int halted = g_mcp.cpu && g_mcp.cpu->halted;
+    return advanced >= count ? "frames"
+         : timed_out         ? "timeout"
+         : halted            ? "halted"
+         : g_wp.hit          ? "watchpoint"
+         : g_bp.hit_addr     ? "breakpoint"
+         : "stopped";
+}
+
 /* Run exactly N game frames from a stopped board, then stop, in one request.
  *
  * emu_run + wait_frames + emu_stop overshoots by however many frames go by
@@ -1489,35 +1527,16 @@ static void mcp_cmd_run_frames(const char *req, char *resp, int cap) {
     mcp_json_get_u32(req, "timeout_ms", &timeout_ms);
     if (count < 1) count = 1;
     if (timeout_ms > 300000) timeout_ms = 300000;
-    if (!g_mcp.emu || !g_mcp.emu->thread_alive) {
-        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"emu not started\"}"); return;
-    }
-    if (emu_is_running(g_mcp.emu)) {
-        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"must be stopped to run_frames\"}"); return;
-    }
+    if (mcp_run_frames_refused(resp, cap)) return;
 
     unsigned start = g_emu_frames;
     int64_t  t0    = emu_now_us();
     int64_t  limit = (int64_t)timeout_ms * 1000;
     g_bp.hit_addr = 0;   /* so a stop below can say whether a breakpoint made it */
     emu_run_frames(g_mcp.emu, count);
-    bool timed_out = false;
-    while (emu_is_running(g_mcp.emu)) {
-        if (emu_now_us() - t0 >= limit) { timed_out = true; break; }
-        emu_nap_us(250);
-    }
-    if (timed_out) {
-        emu_stop(g_mcp.emu);
-        while (emu_is_running(g_mcp.emu) && g_mcp.emu->thread_alive) emu_nap_us(250);
-    }
+    bool timed_out = mcp_run_frames_wait(t0, limit);
     unsigned advanced = g_emu_frames - start;
-    int halted = g_mcp.cpu && g_mcp.cpu->halted;
-    const char *reason = advanced >= count ? "frames"
-                       : timed_out         ? "timeout"
-                       : halted            ? "halted"
-                       : g_wp.hit          ? "watchpoint"
-                       : g_bp.hit_addr     ? "breakpoint"
-                       : "stopped";
+    const char *reason = mcp_run_frames_reason(advanced, count, timed_out);
     snprintf(resp, (size_t)cap,
              "{\"ok\":true,\"frames\":%u,\"advanced\":%u,\"reached\":%s,"
              "\"reason\":\"%s\",\"elapsed_ms\":%u}",
