@@ -1068,7 +1068,7 @@ songs (88 s or the MIDI's end), 62,854 of 65,004 notes have a key-on within 12 m
 - **The other 0.5% are channels without the right program change**, so a synth
   plays them on program 0:
   - Song 0x17 channel 14: 76 notes, +200 c. The driver keeps three fixed
-    effect tracks, loaded at boot from the table at 0x608010, on MIDI channels
+    effect tracks, loaded at boot from the table at 0x608080 (global pointer 4), on MIDI channels
     13-15 with instruments 80, 81 and 82. M2MidiDec writes a program change only
     for a song's own track-init records, so these channels have none. The
     channel's notes fit programs 80-82 exactly.
@@ -1091,6 +1091,13 @@ songs (88 s or the MIDI's end), 62,854 of 65,004 notes have a key-on within 12 m
     sounds) keys one voice at -1200 c, root 65, and nothing at 0 c but the
     drum pair every bar has, so it plays instrument 81, and M2MidiDec should
     emit program 81 on channel 14 rather than list these as a known mismatch.
+    The fix belongs in M2MidiDec, not in our post-pass: its `DecodeMidiData`
+    (`M2MidiDec.c`) writes the song-start events, and its `DoCommandA0` case
+    0x07 already turns the same 16-byte records into a program change and
+    volume 7, but only for global pointer 3 (`TRK_INIT_ID`, a song's `A0 07`).
+    It never reads pointer 4; `DecodeMidiData` should run those records once
+    before a song's first segment. Until it does, `grade-midi.py fix` is where
+    this project would add them.
   - A few notes on song 0x10 channel 12 and song 0x17 channel 2: 32 of 393 and
     26 of 777, with an explicit program 0.
 
