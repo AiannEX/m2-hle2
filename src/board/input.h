@@ -170,12 +170,23 @@ static inline void input_action_up(int act) {
 
 /* ---- Combos ---------------------------------------------------------------- */
 
+/* The n characters at s as a combo button (any case): its index among up,
+ * down, left, right, b1-b4, start, coin, or -1. */
+static inline int input_combo_name(const char *s, size_t n) {
+    static const char *const names[] = { "up", "down", "left", "right", "b1", "b2", "b3", "b4", "start", "coin" };
+    for (int i = 0; i < (int)(sizeof names / sizeof names[0]); i++) {
+        if (strlen(names[i]) != n) continue;
+        size_t c = 0;
+        while (c < n && (s[c] | 0x20) == names[i][c]) c++;
+        if (c == n) return i;
+    }
+    return -1;
+}
+
 /* Parse a combo: '+'-separated b1 b2 b3 b4 up down left right start coin,
  * optionally after "p2:" for player 2 -- "b1+b2", "p2:b1+b2+b3". Returns the
  * action mask, or 0 if the text is not one. */
 static inline uint32_t input_combo_parse(const char *s) {
-    static const char *const names[] = { "up", "down", "left", "right", "b1", "b2", "b3", "b4", "start", "coin" };
-    const int per_player = GAME_INPUT_P2_UP - GAME_INPUT_P1_UP;
     int base = GAME_INPUT_P1_UP;
     if ((s[0] == 'p' || s[0] == 'P') && (s[1] == '1' || s[1] == '2') && s[2] == ':') {
         if (s[1] == '2') base = GAME_INPUT_P2_UP;
@@ -183,16 +194,8 @@ static inline uint32_t input_combo_parse(const char *s) {
     }
     uint32_t acts = 0;
     while (*s) {
-        size_t n = 0;
-        while (s[n] && s[n] != '+') n++;
-        int found = -1;
-        for (int i = 0; i < per_player; i++) {
-            size_t len = 0;
-            while (names[i][len]) len++;
-            bool eq = len == n;
-            for (size_t c = 0; eq && c < n; c++) eq = (s[c] | 0x20) == names[i][c];
-            if (eq) { found = i; break; }
-        }
+        size_t n = strcspn(s, "+");
+        int found = input_combo_name(s, n);
         if (found < 0) return 0;
         acts |= 1u << (base + found);
         s += n;
