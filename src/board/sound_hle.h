@@ -1828,6 +1828,34 @@ static inline uint64_t shle_next_due(void) {
     return d;
 }
 
+/* EntryPoint's clear of sound RAM, as far as it has got by `now`. */
+static void shle_clear_step(scsp_t *s, uint64_t now) {
+    if (!g_shle.restart_at || now <= g_shle.clear_at || g_shle.cleared >= SOUND_RAM_SIZE) return;
+    uint64_t to = (now - g_shle.clear_at) / SHLE_CLEAR_BYTE;
+    if (to > SOUND_RAM_SIZE) to = SOUND_RAM_SIZE;
+    if (to <= g_shle.cleared) return;
+    scsp_ram_touch(s, g_shle.cleared, (uint32_t)to - g_shle.cleared, 1);
+    memset(g_sound.ram + g_shle.cleared, 0, (uint32_t)to - g_shle.cleared);
+    g_shle.cleared = (uint32_t)to;
+}
+
+/* The main loop's stream refills over the 32 slots, and their share of it. */
+static void shle_refill_pass(void) {
+    g_shle.chunks = 0;
+    for (unsigned k = 0; k < 32; k++) shle_stream_step(k);
+    /* this pass's share of the main loop in refills, into a running average */
+    uint64_t f = ((uint64_t)g_shle.chunks * SHLE_CHUNK_CYCLES << 16) / (SHLE_PASS_SAMPLES * SOUND_CYCLES_PER_SAMPLE);
+    if (f > 0x10000u) f = 0x10000u;
+    g_shle.refill_frac = (uint32_t)((g_shle.refill_frac * 15u + f) / 16u);
+}
+
+/* The main loop's pass over the slots, every SHLE_PASS_SAMPLES samples. */
+static void shle_pass(scsp_t *s, uint64_t now) {
+    g_shle.pass_left = SHLE_PASS_SAMPLES;
+    shle_clear_step(s, now);
+    if (g_shle.booted && now >= g_shle.stall_until) shle_refill_pass();
+}
+
 /* sound_run for the HLE: n samples of board time. The chip makes them as it
  * does under the 68000 (scsp_tick, scsp_sync). */
 static void shle_run(uint32_t n) {
@@ -1842,26 +1870,7 @@ static void shle_run(uint32_t n) {
             shle_events(now);
             next = shle_next_due();
         }
-        if (--g_shle.pass_left == 0) {                  /* the main loop's pass over the slots */
-            g_shle.pass_left = SHLE_PASS_SAMPLES;
-            if (g_shle.restart_at && now > g_shle.clear_at && g_shle.cleared < SOUND_RAM_SIZE) {   /* EntryPoint's clear */
-                uint64_t to = (now - g_shle.clear_at) / SHLE_CLEAR_BYTE;
-                if (to > SOUND_RAM_SIZE) to = SOUND_RAM_SIZE;
-                if (to > g_shle.cleared) {
-                    scsp_ram_touch(s, g_shle.cleared, (uint32_t)to - g_shle.cleared, 1);
-                    memset(g_sound.ram + g_shle.cleared, 0, (uint32_t)to - g_shle.cleared);
-                    g_shle.cleared = (uint32_t)to;
-                }
-            }
-            if (g_shle.booted && now >= g_shle.stall_until) {
-                g_shle.chunks = 0;
-                for (unsigned k = 0; k < 32; k++) shle_stream_step(k);
-                /* this pass's share of the main loop in refills, into a running average */
-                uint64_t f = ((uint64_t)g_shle.chunks * SHLE_CHUNK_CYCLES << 16) / (SHLE_PASS_SAMPLES * SOUND_CYCLES_PER_SAMPLE);
-                if (f > 0x10000u) f = 0x10000u;
-                g_shle.refill_frac = (uint32_t)((g_shle.refill_frac * 15u + f) / 16u);
-            }
-        }
+        if (--g_shle.pass_left == 0) shle_pass(s, now);
         scsp_tick(s);
     }
     scsp_sync(s);
