@@ -1,8 +1,62 @@
-# How much of m2-hle2 is spaghetti? (Pinboard #321)
+# How much of m2-hle2 is spaghetti? (Pinboard #321, #756)
 
-A measurement of master at `66f4d4e` (2026-10-01). Nothing in `src/` was changed by it. The untangling since then is under [Progress](#progress), measured again with a corrected tool. `python3 tools/spaghetti.py` repeats it (it needs `pip install lizard`).
+A measurement of master at `48cb645` (2026-10-13), with `python3 tools/spaghetti.py` (it needs `pip install lizard`). Nothing in `src/` was changed by it. The first measurement, at `66f4d4e` (2026-10-01), is kept below under [Where it started](#where-it-started), and what was done between the two under [Progress](#progress) and [Untangled so far](#untangled-so-far).
 
 ## The number
+
+**Under 1% of the emulator's function code, in 6 functions.** 6 of 3,541 hand-written functions hold 383 of 48,872 lines of code (0.8%), and each of them has more than 20 independent paths through it, which is about where a function stops fitting in one head. At `66f4d4e` it was 114 functions and 25.7% of the code. One function is over 50 paths.
+
+| Branchiness (modified CCN) | Functions | Lines | Share of code | At `66f4d4e` |
+|---|---:|---:|---:|---:|
+| over 15 | 91 | 3,519 | 7.2% | 33.7% |
+| **over 20** | **6** | **383** | **0.8%** | **25.7%** |
+| over 30 | 3 | 229 | 0.5% | 15.7% |
+| over 50 | 1 | 127 | 0.3% | 6.7% |
+
+The code has grown by a quarter since then (38,873 lines in functions to 48,872: savestates, rewind, GGPO, replays, the one-way follow, Gems, Sega Rally's TGP), and the new code came in small. Agent sessions run `lizard -w -C 15 -L 80` on the files they change before they build, and split a function as soon as it warns. That is why so little grew back: what is over 20 now was written before that check, or grew a case at a time since.
+
+## How it was measured
+
+- **Branchiness** is lizard's modified cyclomatic complexity: one path, plus one per `if`, loop, `&&`, `||` and `?:`, with a whole `switch` counted once. Counting the switch once means a flat table of cases is not marked down for its length.
+- **Lines** are lines of code inside functions, without blanks or comments. `src/` is 99,000 lines in all, but about half of that is comments, tables and declarations.
+- **Left out:** the three generated files (`scsp_dsp_known.h`, `ps3ui_layout.h`, `ps3ui_fonts.h`). The instruction interpreters and command dispatchers are counted separately: `i960_step_core`, `m68k_step_core`, `sharc_exec` and their decode tables, `mcp_dispatch`, and the two command-line parsers. They are 12 functions and 6.5% of the code (7.8% at `66f4d4e`). They are long because the i960, the 68000, the COP's 136 commands and the command line are long, and splitting them would add jumps, not take any away. With them counted in, the headline is 7.3% (33.2% at `66f4d4e`).
+- `tools/` (JavaScript and Python graders), `tests/` and `vendor/` (Gems' C with it) are not scored.
+- **A file-scope `_Static_assert` blinds lizard to the rest of its file.** lizard takes it for the head of a function, and from there on finds no function at all. #325 put one in `geo3d.h` at line 814, and from then on 20 of its 57 functions went unmeasured, `geo3d_mesh_layers` (100 paths) among them, which made master look better than it was. `tools/spaghetti.py` hands lizard a copy of `src/` with every `_Static_assert` blanked out and its line count kept, so line numbers still match the source. An assert has no branches, so nothing else moves. A plain `lizard src/` still has the blind spot.
+- The other counts below (globals, parameters, duplicates, `goto`s) were taken the same way at `66f4d4e` and at `48cb645`, so the two compare. The duplicate share at `66f4d4e` comes out at 4.51%, the 4.5% #321 reported, and the globals at 268 against its 270.
+
+## What is left over 20
+
+| Paths | Lines | Function | Why |
+|---:|---:|---|---|
+| 62 | 127 | `savestate__load_zip` (`savestate.h:596`) | Checks the file (INFO, profile, LAYOUT, ROM), reads every part into scratch, then commits, with an `if (!err)` chain between the steps so a bad file leaves the board as it was. Its comments already mark the steps; each could be a function that returns the error. |
+| 32 | 76 | `gems_verify` (`gems.h:415`) | Runs a Gems trap as C on a copy of the board and then as i960 code, diffs seven memories and the registers, and logs what differs. The diff and the log would come apart cleanly. |
+| 31 | 26 | `gems_apply` (`gems.h:530`) | Short, but each of the five COP callbacks is its own `?:`. A switchboard, not a knot. |
+| 30 | 44 | `lobby_event` (`main_sdl.c:784`) | The handheld lobby's map of buttons and keys to actions, one case each. Left as it is on purpose (#372): splitting it would spread one table over several functions. |
+| 27 | 59 | `savestate__entries` (`savestate.h:415`) | The list of every part a state holds, with the condition on each. |
+| 21 | 51 | `ps3ui_draw_result` (`ps3ui_app.h:1881`) | The PS3 result window; the Play again / Exit rows (#8) took it over 20. |
+
+At exactly 20, on the edge: `cop_write` (`cop.h`), `scsp_recouple` (`scsp.h`) and `retro_run` (`main_libretro.c`). By directory, the share of code in functions over 20 is 4.9% in `core/` (all of it `savestate.h` and `gems.h`), 0.9% in the four front ends, 0.3% in `ui/`, and none in `board/`, `net/` or `profiles/`.
+
+## What is not spaghetti
+
+"Spaghetti" first meant control flow that jumps around: `goto`s, modules reaching into each other. On that meaning m2-hle2 was clean at `66f4d4e` and still is:
+
+- **Layering holds.** `src/board` includes nothing from `ui/` or `net/`, only `core/`'s log, watchpoint, build switches and backup RAM. `src/net` includes neither `board/` nor `ui/` (from `core/`, only the JSON reader and the mutex). The upward includes are `core/emu_thread.h` → `net/netplay.h`, the lockstep gate in the run loop, and since #575 `core/emu_ggpo.h` → `net/ggpo_lobby.h` and `net/ggpo_port/ggpo_port.h`, GGPO's session in the run loop.
+- **Little copy-paste.** lizard's duplicate finder puts 2.9% of the hand-written code in repeated blocks, down from 4.5%: the splits gave repeated steps one home.
+- **22 `goto`s**, every one a forward jump to a cleanup, exit or shared-tail label. None jumps backwards. (#321's 46 counted the word in comments too, and most of the real ones went with the functions they were in.)
+
+## What got worse
+
+Two smells the path count does not see, and the splitting made one of them worse:
+
+- **Globals.** There are 350 `g_` variables, up from 268, and 39 are read from five or more files, up from 22. `g_active_profile` is read in 24 files, across every layer (18 at `66f4d4e`). Most of the growth is the new features' state: GGPO, the replay recorder, the follow feed, the Gems switches, and the run loop's latches that savestates and rollback have to reach. A header-only C emulator with one board is built this way on purpose (it is how MAME's drivers looked for years), but it means a function's inputs are not all in its parameter list.
+- **Long parameter lists.** 45 functions take 8 or more parameters, up from 32. A function split into steps hands its locals to the steps, and where they were not gathered into a struct first, the steps took them one by one. `geo3d_emit_tri_uv` still takes 25; `geo3d_dump_face_tex` (15), `geo3d_cface_fill` (13), `game_render_draw_captured_models` (13, down from 22), `s24_draw_line` (12) and `rpcn_create_room` (12) come next. The geo3d ones could take `geo3d_models_t` / `geo3d_paint_t`, as #332 and #335 did for the decoder.
+
+## Where it started
+
+The measurement of `66f4d4e` (2026-10-01), as #321 took it. Its numbers are lizard's before the `_Static_assert` fix, so a little better than the code was; the Progress table has the corrected count (`f1c5ee7`). Line numbers are as they were then.
+
+### The number then
 
 **About a quarter of the emulator's function code, in about 5% of its functions.** 114 of 2,136 hand-written functions hold 10,001 of 38,873 lines of code (25.7%), and each of them has more than 20 independent paths through it, which is about where a function stops fitting in one head. The real knots, over 50 paths, are 15 functions and 6.7% of the code.
 
@@ -15,23 +69,7 @@ A measurement of master at `66f4d4e` (2026-10-01). Nothing in `src/` was changed
 
 The median function has 3 paths. The rest of the code is small, flat functions.
 
-## How it was measured
-
-- **Branchiness** is lizard's modified cyclomatic complexity: one path, plus one per `if`, loop, `&&`, `||` and `?:`, with a whole `switch` counted once. Counting the switch once means a flat table of cases is not marked down for its length.
-- **Lines** are lines of code inside functions, without blanks or comments. `src/` is 82,000 lines in all, but about half of that is comments, tables and declarations.
-- **Left out:** the three generated files (`scsp_dsp_known.h`, `ps3ui_layout.h`, `ps3ui_fonts.h`). The instruction interpreters and command dispatchers are counted separately: `i960_step_core`, `m68k_step_core`, `sharc_exec` and their decode tables, `mcp_dispatch`, and the two command-line parsers. They are 12 functions and 7.8% of the code. They are long because the i960, the 68000, the COP's 136 commands and the command line are long, and splitting them would add jumps, not take any away. With them counted in, the headline is 33.2%.
-- `tools/` (JavaScript and Python graders) and `tests/` are not scored.
-- **A file-scope `_Static_assert` blinds lizard to the rest of its file.** lizard takes it for the head of a function, and from there on finds no function at all. #325 put one in `geo3d.h` at line 814, and from then on 20 of its 57 functions went unmeasured, `geo3d_mesh_layers` (100 paths) among them, which made master look better than it was. `tools/spaghetti.py` now hands lizard a copy of `src/` with every `_Static_assert` blanked out and its line count kept, so line numbers still match the source. An assert has no branches, so nothing else moves. Seven other files carry one too (`i960_exec.h`, `tile_renderer.h`, `lockstep.h`, `netplay.h`, `sfight.h`, `overlay_plugin.h`, `video_window.h`); lizard finds the same functions in those with or without the fix.
-
-## What is *not* spaghetti
-
-"Spaghetti" first meant control flow that jumps around: `goto`s, modules reaching into each other. On that meaning m2-hle2 is clean:
-
-- **Layering holds.** `src/board` includes nothing from `ui/` or `net/`, only `core/`'s log, watchpoint, build switches and backup RAM. `src/net` includes neither `board/` nor `ui/`. The one upward include is `core/emu_thread.h` → `net/netplay.h`, the lockstep gate in the run loop.
-- **Little copy-paste.** lizard's duplicate finder puts 4.5% of the hand-written code in repeated blocks. The biggest sources are the debugger's i960 self-test tables, the 68000's addressing modes and `geo3d.h`. Only a few blocks repeat across the four front ends (`main*.c`). On the raw tree it reports 31.6%, but that is the generated PS3 layout tables matching themselves.
-- **46 `goto`s**, every one a forward jump to a cleanup, exit or shared-tail label. None jumps backwards.
-
-## Where the tangles are
+### Where the tangles were
 
 By directory, the share of code in functions over 20 paths (dispatchers excluded):
 
@@ -59,44 +97,31 @@ The worst hand-written functions, and what makes each one hard to follow:
 | 54 | 158 | `netplay_publish_status` (`netplay.h:1850`) | A status string built from every state. |
 | 53 | 97 | `emu_slice_body` (`emu_thread.h:540`) | The run loop. Every board-time rule in CLAUDE.md lands here. |
 
-Two other smells do not show up in the path count:
+Two other smells did not show up in the path count (see [What got worse](#what-got-worse) for them now):
 
 - **Globals.** There are 270 `g_` variables. Most are used by one or two files, but 22 are read from five or more. `g_active_profile` is read in 18 files, across every layer. A header-only C emulator with one board is built this way on purpose (it is how MAME's drivers looked for years), but it means a function's inputs are not all in its parameter list.
 - **Long parameter lists.** 32 functions take 8 or more parameters, and the geo3d decode and draw family takes 15 to 25 (`geo3d_emit_tri_uv` takes 25). A struct would carry the ROM pointers and sizes.
 
-## Is 25% bad?
+### Was 25% bad?
 
 It is ordinary for an emulator, and the parts that matter most are better than the average. The two cores that every bug is first blamed on are the other way round from what "spaghetti" suggests. `i960_exec.h` is one long switch with about 7 lines per case, and the COP handlers are ports, cited handler by handler against the firmware. The branchy code is mostly the newest work: netplay, the PS3 lobby, the front ends. That is UI and protocol state, and it grew a feature at a time. If any of it were worth untangling, the first candidates would be `geo3d_decode_model` (a struct for its 15 parameters, one copy instead of two) and `main_sdl.c`'s `main` (split setup from the loop). Both are pure refactors that `grade-models.mjs` and `ab-builds.mjs` can prove changed nothing.
 
 ## Progress
 
-Each column is `python3 tools/spaghetti.py` with the `_Static_assert` fix, so `f1c5ee7` here is not the 66f4d4e table above: it has `geo3d_mesh_layers` and the rest of `geo3d.h` back in, and #325's draw work in.
+Each column is `python3 tools/spaghetti.py` with the `_Static_assert` fix, so `f1c5ee7` here is not the `66f4d4e` table above: it has `geo3d_mesh_layers` and the rest of `geo3d.h` back in, and #325's draw work in. #332 to #338 split the worst ten a PR at a time; #341 and #372 then took every function over 20, a file at a time, on the `idea-332-despaghetti` branch that PR #181 merged on 2026-10-03.
 
-| | master `f1c5ee7` | #332 `461cc2c` | #334 `7f39255` | #335 `05d3d6a` | #336 `90c6ee9` | #338 |
-|---|---:|---:|---:|---:|---:|---:|
-| over 20 paths (the headline) | 25.7% (114 functions) | 25.6% (113) | 24.6% (113) | 23.8% (114) | 22.3% (112) | **20.8%** (108) |
-| over 30 | 15.5% (51) | 15.4% (51) | 14.4% (50) | 13.2% (49) | 11.6% (46) | 10.1% (42) |
-| over 50 | 6.7% (15) | 6.7% (15) | 5.6% (14) | 4.3% (12) | 2.8% (9) | 1.6% (6) |
-| `main*.c` over 20 | 32.3% | 32.3% | 22.8% | 22.8% | 22.8% | 19.3% |
-| `board/` over 20 | 23.2% | 22.6% | 22.6% | 19.5% | 18.2% | 18.2% |
-| `ui/` over 20 | | | | 28.2% | 25.0% | 25.0% |
-| `net/` over 20 | | | | | 25.5% | 21.0% |
-| `core/` over 20 | | | | | 20.6% | 15.5% |
+| | master `f1c5ee7` | #332 `461cc2c` | #334 `7f39255` | #335 `05d3d6a` | #336 `90c6ee9` | #338 `19066ad` | #341 `2728c7b` | #372 `1edd518` | PR #181 `c51bf9a` | master `48cb645` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| over 20 paths (the headline) | 25.7% (114 functions) | 25.6% (113) | 24.6% (113) | 23.8% (114) | 22.3% (112) | 20.8% (108) | 11.8% (60) | 0.6% (4) | 0.1% (1) | **0.8%** (6) |
+| over 30 | 15.5% (51) | 15.4% (51) | 14.4% (50) | 13.2% (49) | 11.6% (46) | 10.1% (42) | 5.6% (22) | 0.2% (1) | 0 | 0.5% (3) |
+| over 50 | 6.7% (15) | 6.7% (15) | 5.6% (14) | 4.3% (12) | 2.8% (9) | 1.6% (6) | 0.3% (1) | 0 | 0 | 0.3% (1) |
+| `main*.c` over 20 | 32.3% | 32.3% | 22.8% | 22.8% | 22.8% | 19.3% | 12.0% | 1.1% | 1.1% | 0.9% |
+| `board/` over 20 | 23.2% | 22.6% | 22.6% | 19.5% | 18.2% | 18.2% | 11.8% | 0 | 0 | 0 |
+| `ui/` over 20 | | | | 28.2% | 25.0% | 25.0% | 17.3% | 0 | 0 | 0.3% |
+| `net/` over 20 | | | | | 25.5% | 21.0% | 6.5% | 2.7% | 0 | 0 |
+| `core/` over 20 | | | | | 20.6% | 15.5% | 0 | 0 | 0 | 4.9% |
 
-The worst ten now, for the next candidates. Nothing is over 71 paths; the top two branch as their sources do, the PS3 phase machine (`ps3_owner_pump`, ROOM-MATCH.md) and GLSL's grammar (`rs_hoist_one`). `emu_slice_body` is the run loop, where every board-time rule in CLAUDE.md lands, so a split there needs `det_digest` to hold the board identical:
-
-| Paths | Lines | Function |
-|---:|---:|---|
-| 71 | 142 | `ps3_owner_pump` (`ps3_link.h:1227`) |
-| 63 | 59 | `rs_hoist_one` (`retro_shader.h:700`) |
-| 58 | 111 | `lobby_draw` (`pad_lobby.h:329`) |
-| 53 | 114 | `geo3d_decode_model` (`geo3d.h:1750`) |
-| 53 | 97 | `emu_slice_body` (`emu_thread.h:540`) |
-| 53 | 103 | `ps3ui_follow` (`ps3ui_app.h:1042`) |
-| 47 | 117 | `mcp_cmd_netplay_status` (`mcp_bridge.h:2104`) |
-| 45 | 114 | `lobby_update` (`pad_lobby.h:133`) |
-| 44 | 112 | `sharc_coli_calc_flag` (`sharc_coli.h:231`) |
-| 43 | 80 | `ps3_on_message` (`ps3_link.h:785`) |
+PR #181 left one function over 20, `lobby_event`, and it is still there. Five came in with new work since: `savestate__load_zip` and `savestate__entries` (savestates, #426), `gems_verify` and `gems_apply` (Gems, #454), and `ps3ui_draw_result` (the go-again prompt, #8). The next candidates are the top two. `savestate__load_zip` can be proved by `det_digest --save-at` / `--load`, which holds a state exact, plus a file of each kind it refuses; `gems_verify` by `--gems-verify` over attract giving the same counts before and after.
 
 ## Untangled so far
 
@@ -117,3 +142,4 @@ The worst ten now, for the next candidates. Nothing is over 71 paths; the top tw
 - **`sky_eye_parse_link` and `emu_slice_finish` (Pinboard #372).** The SKY EYE link parse is the game and stage, the board's own camera, and the explorer's (`sky_eye_link_game_stage`, `_eye`, `_explorer`): 20 paths to 3, the largest the explorer's camera (8). Every error string is the same. The run loop's slice finish counts the frame (`emu_slice_count_frame`), asks whether it stops (`emu_slice_stop_wanted`) and stops, saying why (`emu_slice_stop`): 20 to 5, the largest the stop (7). The frame still comes before the stop. Checked by drivers of 300,000 cases each against the code before, with no mismatch, every line reached under gcov, and eight mutations, each caught. `det_digest` over 4,000 frames of STF with coins, start and a fight is byte-identical to the build before.
 - **`main_web.c`'s `frame` and `web_netplay_status` (Pinboard #372).** The web build's frame callback keeps the order of every pass and hands what it drew between them in a `web_picture_t`: menus recorded, the callback counted, the game or the object viewer presented, the picture filter's source, the offscreen draw, and the picture kept for the next frame (`web_keep_picture`, the largest piece at 9). 40 paths to 14. The netplay status JSON is written a section at a time (`web_status_sign_in`, `_room`, `_member`, `_play`, `_listing`, `_log`) into a `web_json_t` whose writer notes an overflow, as the old `snprintf` chain did: 36 to 4. Checked with drivers: 600,000 frames with no mismatch, and 200,000 status replies with no mismatch, plus 100,000 into a buffer too small for most of them, where the bytes written are the same and the only difference is a few more calls to the read-only lookups after the overflow. gcov reached all 106 and 106 lines, and nine mutations were caught. The web tree builds without a warning in `main_web.c`; it was not run in a browser.
 - **`main_sdl.c`'s `verify_gpu_tiles` (Pinboard #372).** The handheld's GPU tile check is the layers test, the shown-picture test, the pen-to-colour step and the report (`verify_tiles_layers_bad`, `_shown_bad`, `_pens_to_colours`, `_report`): 31 paths to 5, the largest the layers test (13). Checked with a driver of 3,000 frames (2,500 of them reporting a fault) against the code before, with no mismatch; gcov reached all 48 lines, and four mutations were caught. There is no SDL3 in the dev container, so the handheld was not built: `main_sdl.c` passes `-fsyntax-only -Wall -Wextra` against SDL3's headers. `lobby_event` (30) is left as it is: it is the lobby's map of buttons and keys to actions, one case each, and splitting it would only spread one table over several functions.
+- **Everything else over 20 (Pinboard #341, #372).** After #338 the rest went the same way, a commit per file or subsystem: the run loop (`emu_slice_body` 53 paths to 17, `emu_thread_run_loop`; #387 then kept the slice loop's state in locals), the PS3 link (one function per owner phase and per message: `ps3_owner_pump` 71 to 5), `rs_hoist_one` (63 to 6) and the GLSL scans, the RPCN client and session, RUDP, RPCS3 signaling and TLS, netplay's connect, datagram dispatch, stage mirror, owner and member pumps and frame begin and end, the bridge's `netplay_status`, `read_many`, `sky_eye` and netplay settings, the handheld's `lobby_update` and `lobby_draw`, the desktop's menu bar, init and headless main, the libretro core's toasts, autojoin, draw and option reads, the PS3 menus' painters and `ps3ui_follow` (53 to 6), `game_render`, the debug windows, the tile renderer, `sharc_coli` (`calc_flag`, `area_coli`, `area_table_gen`), the SCSP and the sound driver in C, `mem_init`, the A/V stream, audio out and `json_min`. Each commit is titled "... in named steps (Pinboard #341)" or "(#372)" and says how it was checked: the board's with `det_digest` and the graders, the rest with side-by-side drivers, Xvfb pictures and the local RPCN server. The entries above are the larger of them.
