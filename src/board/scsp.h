@@ -1202,39 +1202,50 @@ static inline int scsp_ctz32(uint32_t v) {
 #endif
 }
 
+/* The sound RAM the DSP's delay line reads and writes, [lo, hi); none while
+ * it is stopped. */
+static void scsp_dsp_range(const scsp_t *s, uint32_t *lo, uint32_t *hi) {
+    const scsp_dsp_t *d = &s->dsp;
+    *lo = *hi = 0;
+    if (d->stopped) return;
+    uint32_t span = 0;
+    for (int st = 1; st < d->last_step; st += 2) {         /* only odd steps touch it (MAME) */
+        const uint16_t *p = d->mpro + st * 4;
+        if (!((p[2] >> 13) & 3)) continue;                 /* no MRD, no MWT */
+        if (p[2] >> 15 & 1) span = 0x10000;                /* TABLE: MADRS + ADRS, not the ring */
+        else if (span < d->rbl) span = d->rbl;
+    }
+    *lo = d->rbp << 13;
+    uint64_t e = (uint64_t)*lo + 2u * span;
+    *hi = e < s->ram_size ? (uint32_t)e : s->ram_size;
+    if (*lo > *hi) *lo = *hi;
+}
+
+/* Work out slot i's sound RAM range again, and whether it couples the chip:
+ * FM, the noise source, or a read of the DSP's delay line at [lo, hi). */
+static int scsp_slot_recouple(scsp_t *s, int i, uint32_t lo, uint32_t hi) {
+    scsp_slot_t *sl = &s->slot[i];
+    uint32_t a, b;
+    scsp_slot_range(s, sl, &a, &b);
+    if (a != s->slot_lo[i] || b != s->slot_hi[i]) {
+        s->slot_lo[i] = a; s->slot_hi[i] = b;
+        s->hot_dirty = 1;
+    }
+    if (!sl->active) return 0;
+    if (SCSP_SSCTL(sl) == 1 || SCSP_MDL(sl) || SCSP_MDXSL(sl) || SCSP_MDYSL(sl)) return 1;
+    return s->slot_lo[i] < hi && lo < s->slot_hi[i];       /* reads the delay line */
+}
+
 /* Work out again, after a register write, whether the slots can run apart
  * and which sound RAM somebody inside the chip reads. */
 static void scsp_recouple(scsp_t *s) {
-    uint32_t lo = 0, hi = 0;
-    scsp_dsp_t *d = &s->dsp;
-    if (!d->stopped) {
-        uint32_t span = 0;
-        for (int st = 1; st < d->last_step; st += 2) {     /* only odd steps touch it (MAME) */
-            const uint16_t *p = d->mpro + st * 4;
-            if (!((p[2] >> 13) & 3)) continue;             /* no MRD, no MWT */
-            if (p[2] >> 15 & 1) span = 0x10000;            /* TABLE: MADRS + ADRS, not the ring */
-            else if (span < d->rbl) span = d->rbl;
-        }
-        lo = d->rbp << 13;
-        uint64_t e = (uint64_t)lo + 2u * span;
-        hi = e < s->ram_size ? (uint32_t)e : s->ram_size;
-        if (lo > hi) lo = hi;
-    }
+    uint32_t lo, hi;
+    scsp_dsp_range(s, &lo, &hi);
     if (lo != s->dsp_lo || hi != s->dsp_hi) s->dsp_moved = 1;
     s->dsp_lo = lo; s->dsp_hi = hi;
     uint8_t c = 0;
-    for (int i = 0; i < 32; i++) {
-        scsp_slot_t *sl = &s->slot[i];
-        uint32_t a, b;
-        scsp_slot_range(s, sl, &a, &b);
-        if (a != s->slot_lo[i] || b != s->slot_hi[i]) {
-            s->slot_lo[i] = a; s->slot_hi[i] = b;
-            s->hot_dirty = 1;
-        }
-        if (!sl->active) continue;
-        if (SCSP_SSCTL(sl) == 1 || SCSP_MDL(sl) || SCSP_MDXSL(sl) || SCSP_MDYSL(sl)) c = 1;
-        if (s->slot_lo[i] < hi && lo < s->slot_hi[i]) c = 1;   /* reads the delay line */
-    }
+    for (int i = 0; i < 32; i++)
+        if (scsp_slot_recouple(s, i, lo, hi)) c = 1;
     s->coupled = c;
 }
 
