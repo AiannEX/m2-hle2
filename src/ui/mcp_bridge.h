@@ -1724,6 +1724,41 @@ typedef struct {
 
 #define MCP_DL_UNIT_PER_MARK (sizeof g_sharc.rot_cache / sizeof(float))
 
+/* probes: "hexaddr[:size],..." -- a size of 1 or 2 is kept, anything else
+ * reads 4 bytes. */
+static void mcp_dl_parse_probes(mcp_dl_req_t *q, char *probes) {
+    for (char *tok = strtok(probes, ","); tok && q->np < DL_MAX_PROBES; tok = strtok(NULL, ",")) {
+        char *colon = strchr(tok, ':');
+        q->paddr[q->np] = (uint32_t)strtoul(tok, NULL, 16);
+        uint32_t sz = colon ? (uint32_t)strtoul(colon + 1, NULL, 10) : 4;
+        q->psize[q->np++] = (uint8_t)(sz == 1 || sz == 2 ? sz : 4);
+    }
+}
+
+/* blocks: "hexaddr:hexlen,..." -- whole ranges copied at every mark into
+ * <path>.blocks.bin, capmarks x (sum of lengths) bytes. */
+static void mcp_dl_parse_blocks(mcp_dl_req_t *q, char *blockspec) {
+    for (char *tok = strtok(blockspec, ","); tok && q->nb < DL_MAX_BLOCKS; tok = strtok(NULL, ",")) {
+        char *colon = strchr(tok, ':');
+        if (!colon) continue;
+        uint32_t len = (uint32_t)strtoul(colon + 1, NULL, 16);
+        if (!len || q->bbytes + len > DL_BLOCK_BYTES) continue;
+        q->baddr[q->nb] = (uint32_t)strtoul(tok, NULL, 16); q->blen[q->nb++] = len; q->bbytes += len;
+    }
+}
+
+/* The tap's address window, kept inside the tap's own. */
+static void mcp_dl_clamp_window(mcp_dl_req_t *q) {
+    if (q->lo < DL_TAP_LO) q->lo = DL_TAP_LO;
+    if (q->hi > DL_TAP_HI || q->hi <= q->lo) q->hi = DL_TAP_HI;
+}
+
+/* At least one frame and at most a minute of them; at most 64M words. */
+static void mcp_dl_clamp_size(mcp_dl_req_t *q) {
+    if (q->frames == 0 || q->frames > 3600) q->frames = q->frames ? 3600 : 1;
+    if (q->max_words > 64u * 1024u * 1024u) q->max_words = 64u * 1024u * 1024u;
+}
+
 /* The request's options, clamped. False when it names no path. */
 static bool mcp_dl_parse(const char *req, mcp_dl_req_t *q) {
     char probes[2048] = {0}, blockspec[512] = {0};
@@ -1741,32 +1776,15 @@ static bool mcp_dl_parse(const char *req, mcp_dl_req_t *q) {
     mcp_json_get_u32(req, "run", &q->want_run);
     mcp_json_get_u32(req, "lo", &q->lo);
     mcp_json_get_u32(req, "hi", &q->hi);
-    if (q->lo < DL_TAP_LO) q->lo = DL_TAP_LO;
-    if (q->hi > DL_TAP_HI || q->hi <= q->lo) q->hi = DL_TAP_HI;
+    mcp_dl_clamp_window(q);
     mcp_json_get_u32(req, "frames", &q->frames);
     mcp_json_get_u32(req, "max_words", &q->max_words);
     mcp_json_get_u32(req, "timeout_ms", &q->timeout_ms);
     mcp_json_get_str(req, "probes", probes, sizeof(probes));
     if (!mcp_json_get_str(req, "path", q->path, sizeof(q->path))) return false;
-    if (q->frames == 0 || q->frames > 3600) q->frames = q->frames ? 3600 : 1;
-    if (q->max_words > 64u * 1024u * 1024u) q->max_words = 64u * 1024u * 1024u;
-
-    for (char *tok = strtok(probes, ","); tok && q->np < DL_MAX_PROBES; tok = strtok(NULL, ",")) {
-        char *colon = strchr(tok, ':');
-        q->paddr[q->np] = (uint32_t)strtoul(tok, NULL, 16);
-        uint32_t sz = colon ? (uint32_t)strtoul(colon + 1, NULL, 10) : 4;
-        q->psize[q->np++] = (uint8_t)(sz == 1 || sz == 2 ? sz : 4);
-    }
-
-    /* blocks: "hexaddr:hexlen,..." -- whole ranges copied at every mark into
-     * <path>.blocks.bin, capmarks x (sum of lengths) bytes. */
-    for (char *tok = strtok(blockspec, ","); tok && q->nb < DL_MAX_BLOCKS; tok = strtok(NULL, ",")) {
-        char *colon = strchr(tok, ':');
-        if (!colon) continue;
-        uint32_t len = (uint32_t)strtoul(colon + 1, NULL, 16);
-        if (!len || q->bbytes + len > DL_BLOCK_BYTES) continue;
-        q->baddr[q->nb] = (uint32_t)strtoul(tok, NULL, 16); q->blen[q->nb++] = len; q->bbytes += len;
-    }
+    mcp_dl_clamp_size(q);
+    mcp_dl_parse_probes(q, probes);
+    mcp_dl_parse_blocks(q, blockspec);
     return true;
 }
 
