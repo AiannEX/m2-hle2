@@ -444,32 +444,34 @@ static inline void rpcn_session_set_peer_addr(rpcn_session_t *s, rpcn_peer_t *p,
  * from the host's address. The LAN peer used to drop every one of them as a
  * stray, and both sat at the barrier until someone left (issue #108). A peer
  * already heard from is never moved. */
-static inline bool rpcn_session_hear(rpcn_session_t *s, rpcn_peer_t *p, uint32_t ip, uint16_t port,
-                                     bool punch) {
-    if (!p) return false;
-    uint64_t now = net_now_ms();
-    if (p->heard) {
-        if (p->ip == ip && p->port == port) { p->last_heard_ms = now; return true; }
-        /* A member already heard from moves only once the old address has gone
-         * quiet, and then by the rules of first contact: a punch from anywhere,
-         * a game packet from the same address on another port. Their NAT made a
-         * new mapping (a router that timed the old one out, a phone or laptop
-         * that changed networks); they still send to us, and nothing they sent
-         * reached the match before this, so the stall timer ended it. */
-        if (now - p->last_heard_ms < RPCN_PEER_QUIET_MS) return false;
-        if (ip != p->ip && !punch) return false;
-        char was[32];
-        net_addr_text(was, sizeof(was), p->ip, p->port);
-        p->ip   = ip;
-        p->port = port;
-        p->alt_ip = 0;
-        p->alt_port = 0;
-        p->last_heard_ms = now;
-        p->last_punch_ms = 0;   /* answer at once: their side may be looking for us too */
-        rpcn_session_note(s, "%s went quiet at %s and is now heard from %s; following them",
-                          rpcn_peer_name(p), was, rpcn_peer_addr_text(p));
-        return true;
-    }
+/* A member already heard from. They move only once the old address has gone
+ * quiet, and then by the rules of first contact: a punch from anywhere, a game
+ * packet from the same address on another port. Their NAT made a new mapping (a
+ * router that timed the old one out, a phone or laptop that changed networks);
+ * they still send to us, and nothing they sent reached the match before this, so
+ * the stall timer ended it. */
+static inline bool rpcn_session_rehear(rpcn_session_t *s, rpcn_peer_t *p, uint32_t ip, uint16_t port,
+                                       bool punch, uint64_t now) {
+    if (p->ip == ip && p->port == port) { p->last_heard_ms = now; return true; }
+    if (now - p->last_heard_ms < RPCN_PEER_QUIET_MS) return false;
+    if (ip != p->ip && !punch) return false;
+    char was[32];
+    net_addr_text(was, sizeof(was), p->ip, p->port);
+    p->ip   = ip;
+    p->port = port;
+    p->alt_ip = 0;
+    p->alt_port = 0;
+    p->last_heard_ms = now;
+    p->last_punch_ms = 0;   /* answer at once: their side may be looking for us too */
+    rpcn_session_note(s, "%s went quiet at %s and is now heard from %s; following them",
+                      rpcn_peer_name(p), was, rpcn_peer_addr_text(p));
+    return true;
+}
+
+/* The first datagram from a member: a game packet only from the address we were
+ * told (or the second one we know), a punch from anywhere. */
+static inline bool rpcn_session_first_contact(rpcn_session_t *s, rpcn_peer_t *p, uint32_t ip,
+                                              uint16_t port, bool punch, uint64_t now) {
     bool elsewhere = p->ip && p->ip != ip && !(p->alt_ip && p->alt_ip == ip);
     if (elsewhere && !punch) return false;
     char told[32];
@@ -489,6 +491,14 @@ static inline bool rpcn_session_hear(rpcn_session_t *s, rpcn_peer_t *p, uint32_t
                                    : "link established with %s at %s",
                           rpcn_peer_name(p), rpcn_peer_addr_text(p));
     return true;
+}
+
+static inline bool rpcn_session_hear(rpcn_session_t *s, rpcn_peer_t *p, uint32_t ip, uint16_t port,
+                                     bool punch) {
+    if (!p) return false;
+    uint64_t now = net_now_ms();
+    if (p->heard) return rpcn_session_rehear(s, p, ip, port, punch, now);
+    return rpcn_session_first_contact(s, p, ip, port, punch, now);
 }
 
 /* ---- The member list ----------------------------------------------------- */
