@@ -441,6 +441,20 @@ static void netplay_room_announce(void) {
     room_watch_step(&seen, &st, netplay_room_toast, NULL);
 }
 
+/* The GGPO lobby has no room: its opponent comes in with the match, once per
+ * match id. */
+static void netplay_ggpo_announce(void) {
+    static char said[24];
+    ggl_status_t st = ggl_status();
+    if (st.stage != GGL_MATCH || !st.match[0]) { said[0] = '\0'; return; }
+    if (strcmp(st.match, said) == 0) return;
+    snprintf(said, sizeof said, "%s", st.match);
+    char note[96];
+    snprintf(note, sizeof note, "%s came into the match.", st.opponent[0] ? st.opponent : "A player");
+    LOG_INFO("ggpo: %s joined the match", st.opponent);
+    overlay_host_announce(OVERLAY_ANNOUNCE_TITLE, note);
+}
+
 /*
  * Drives the --net-* flags. Called every frame from both the windowed and the
  * headless loop; posts exactly the commands the netplay window's buttons post,
@@ -1314,6 +1328,7 @@ static int headless_main(void) {
         emu_update_snapshots(&state.emu);
         netplay_cli_pump();
         netplay_room_announce();
+        netplay_ggpo_announce();
         tray_headless_pump();
         tray_headless_tick(g_emu_frames);
         if (av_on) {
@@ -1479,6 +1494,7 @@ static void frame(void) {
 
     netplay_cli_pump();
     netplay_room_announce();
+    netplay_ggpo_announce();
 
     /* Capture mode draws the game and nothing else: no menu bar, no debug
      * windows, nothing for a recording to pick up. */

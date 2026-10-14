@@ -580,7 +580,8 @@ the details. JSON-escape the path: `"C:\\fly\\flyoverlay.dll"`.
 
 **`announce(note, title = "WELCOME")`** — the same toast in green over the bottom of the game
 box for 4 s, after any already waiting; the one the emulator raises by itself when somebody
-comes into the room it is in ("WELCOME  test1 came into the room."). It needs no plugin and does
+comes into the room it is in ("WELCOME  test1 came into the room.") or a GGPO lobby match
+starts ("WELCOME  flychallenger came into the match."). It needs no plugin and does
 not move the board. One not up within 20 s (nothing composing frames: headless with no A/V
 client) is dropped. `get_status`'s `overlay.announce` has `up`, `queued`, `shown` and `note`.
 
