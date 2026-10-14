@@ -522,6 +522,7 @@ a.tool.github { color: var(--text); }
 .pause-btn .play-icon, .pause-btn[aria-pressed="true"] .pause-icon { display: none; }
 .pause-btn[aria-pressed="true"] .play-icon { display: inline; }
 .bar:has(.pause-btn[aria-pressed="true"]) { opacity: 1; }
+.replay-finish-btn .rec-stop { color: #E5484D; }
 .paused-label {
   position: fixed;
   top: 50%;

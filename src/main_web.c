@@ -1220,10 +1220,19 @@ EMSCRIPTEN_KEEPALIVE int web_replay_seek(unsigned frame) {
 
 EMSCRIPTEN_KEEPALIVE void web_replay_fast(int on) { g_replay_play.fast = on != 0; }
 
+/* The bar's Finish replay (Pinboard #861): save the local game recorded so
+ * far, now (replay_rec_finish_local). Says what became of it ("" when nothing
+ * was being recorded); a saved one waits in web_replay_ready_* as ever. */
+EMSCRIPTEN_KEEPALIVE const char *web_replay_finish(void) {
+    const char *said = replay_rec_finish_local();
+    return said ? said : "";
+}
+
 EMSCRIPTEN_KEEPALIVE const char *web_replay_error(void) { return g_web_replay_err; }
 
 /* replay_play_status's object, plus "unplayable" (why the open one cannot
- * play here), "recording" and "saved" (matches recorded since the page opened). */
+ * play here), "recording", "local" (it is the player's own game, which
+ * web_replay_finish can end) and "saved" (matches recorded since the page opened). */
 EMSCRIPTEN_KEEPALIVE const char *web_replay_status(void) {
     static char buf[1200];
     char play[800], why[200], rec_err[200];
@@ -1233,9 +1242,10 @@ EMSCRIPTEN_KEEPALIVE const char *web_replay_status(void) {
     size_t n = strlen(play);
     if (n) play[n - 1] = '\0';   /* reopen the object */
     snprintf(buf, sizeof buf, "%s,\"unplayable\":\"%s\",\"record\":%d,\"format\":%d,\"recording\":%d,"
-             "\"saved\":%u,\"rec_error\":\"%s\"}", play, why, g_replay_rec.want ? 1 : 0,
+             "\"local\":%d,\"saved\":%u,\"rec_error\":\"%s\"}", play, why, g_replay_rec.want ? 1 : 0,
              g_replay_rec.format == REPLAY_SAVE_INPUTS ? 1 : 0,
-             replay_recording() ? 1 : 0, (unsigned)g_replay_rec.saved, rec_err);
+             replay_recording() ? 1 : 0, replay_rec_local() ? 1 : 0,
+             (unsigned)g_replay_rec.saved, rec_err);
     return buf;
 }
 
