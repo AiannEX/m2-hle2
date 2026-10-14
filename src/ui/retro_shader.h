@@ -425,6 +425,39 @@ static inline bool rs_scale_type(const char *v, rs_scale_type_t *out) {
     return false;
 }
 
+/* One `#pragma parameter` line's name and description, read from `line` in place.
+ * Returns where the numbers start, or NULL when a description has no closing quote. */
+static inline char *rs_param_head(char *line, char name[RS_NAME], char desc[96]) {
+    char *c = rs_trim(line);
+    int k = 0;
+    while (*c && !isspace((unsigned char)*c) && k < RS_NAME - 1) name[k++] = *c++;
+    name[k] = '\0';
+    c = rs_trim(c);
+    if (*c == '"') {
+        c++;
+        char *q = strchr(c, '"');
+        if (!q) return NULL;
+        size_t dl = (size_t)(q - c);
+        if (dl >= 96) dl = 96 - 1;
+        memcpy(desc, c, dl); desc[dl] = '\0';
+        c = q + 1;
+    }
+    return c;
+}
+
+/* Adds a parameter unless its name is already there or the list is full. */
+static inline void rs_param_add(rs_preset_t *p, const char *name, const char *desc,
+                                const float v[4], int got) {
+    for (int i = 0; i < p->n_params; i++) if (!strcmp(p->param[i].name, name)) return;
+    if (p->n_params >= RS_MAX_PARAMS) return;
+    rs_param_t *pr = &p->param[p->n_params++];
+    snprintf(pr->name, sizeof pr->name, "%s", name);
+    snprintf(pr->desc, sizeof pr->desc, "%s", desc[0] ? desc : name);
+    pr->initial = pr->value = v[0];
+    pr->min = v[1]; pr->max = v[2];
+    pr->step = got >= 4 && v[3] > 0.0f ? v[3] : (v[2] - v[1]) / 100.0f;
+}
+
 /* `#pragma parameter NAME "Description" initial min max [step]`, from every pass.
  * A name seen in an earlier pass is not added again. */
 static inline void rs_scan_params(rs_preset_t *p, const char *src) {
@@ -437,32 +470,12 @@ static inline void rs_scan_params(rs_preset_t *p, const char *src) {
         if (n >= sizeof line) n = sizeof line - 1;
         memcpy(line, s, n); line[n] = '\0';
         char name[RS_NAME] = "", desc[96] = "";
-        char *c = rs_trim(line);
-        int k = 0;
-        while (*c && !isspace((unsigned char)*c) && k < RS_NAME - 1) name[k++] = *c++;
-        name[k] = '\0';
-        c = rs_trim(c);
-        if (*c == '"') {
-            c++;
-            char *q = strchr(c, '"');
-            if (!q) continue;
-            size_t dl = (size_t)(q - c);
-            if (dl >= sizeof desc) dl = sizeof desc - 1;
-            memcpy(desc, c, dl); desc[dl] = '\0';
-            c = q + 1;
-        }
+        char *c = rs_param_head(line, name, desc);
+        if (!c) continue;
         float v[4] = { 0, 0, 1, 0 };
         int got = sscanf(c, "%f %f %f %f", &v[0], &v[1], &v[2], &v[3]);
         if (!name[0] || got < 3) continue;
-        bool dup = false;
-        for (int i = 0; i < p->n_params; i++) if (!strcmp(p->param[i].name, name)) dup = true;
-        if (dup || p->n_params >= RS_MAX_PARAMS) continue;
-        rs_param_t *pr = &p->param[p->n_params++];
-        snprintf(pr->name, sizeof pr->name, "%s", name);
-        snprintf(pr->desc, sizeof pr->desc, "%s", desc[0] ? desc : name);
-        pr->initial = pr->value = v[0];
-        pr->min = v[1]; pr->max = v[2];
-        pr->step = got >= 4 && v[3] > 0.0f ? v[3] : (v[2] - v[1]) / 100.0f;
+        rs_param_add(p, name, desc, v, got);
     }
 }
 
