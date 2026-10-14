@@ -1695,6 +1695,17 @@ static inline void netplay_settings_backup(void) {
     netplay_log("the sign-in was copied to %s before being forgotten", path);
 }
 
+/* A numeric line of the settings file; false when `key` is not one. */
+static inline bool netplay_settings_number(netplay_config_t *cfg, const char *key, const char *val) {
+    if      (!strcmp(key, "port"))         cfg->port = (uint16_t)atoi(val);
+    else if (!strcmp(key, "frame_delay"))  cfg->frame_delay = (uint32_t)atoi(val);
+    else if (!strcmp(key, "max_players"))  cfg->max_players = (uint32_t)atoi(val);
+    else if (!strcmp(key, "browse_yamp"))  cfg->browse_yamp = atoi(val) != 0;
+    else if (!strcmp(key, "twitch_port"))  cfg->twitch_port = (uint16_t)atoi(val);
+    else return false;
+    return true;
+}
+
 static inline void netplay_settings_parse_line(netplay_config_t *cfg, char *line) {
     if (line[0] == '#') return;
     char *eq = strchr(line, '=');
@@ -1704,19 +1715,19 @@ static inline void netplay_settings_parse_line(netplay_config_t *cfg, char *line
     size_t n = strlen(val);
     while (n && (val[n - 1] == '\n' || val[n - 1] == '\r')) val[--n] = '\0';
 
-    if      (!strcmp(key, "server"))       snprintf(cfg->server, sizeof(cfg->server), "%s", val);
-    else if (!strcmp(key, "port"))         cfg->port = (uint16_t)atoi(val);
-    else if (!strcmp(key, "npid"))         snprintf(cfg->npid, sizeof(cfg->npid), "%s", val);
-    else if (!strcmp(key, "fingerprint"))  snprintf(cfg->fingerprint, sizeof(cfg->fingerprint), "%s", val);
-    else if (!strcmp(key, "frame_delay"))  cfg->frame_delay = (uint32_t)atoi(val);
-    else if (!strcmp(key, "max_players"))  cfg->max_players = (uint32_t)atoi(val);
-    else if (!strcmp(key, "browse_yamp"))  cfg->browse_yamp = atoi(val) != 0;
-    else if (!strcmp(key, "password"))     snprintf(cfg->password, sizeof(cfg->password), "%s", val);
-    else if (!strcmp(key, "token"))        snprintf(cfg->token, sizeof(cfg->token), "%s", val);
-    else if (!strcmp(key, "twitch_token")) snprintf(cfg->twitch_token, sizeof(cfg->twitch_token), "%s", val);
-    else if (!strcmp(key, "twitch_npid"))  snprintf(cfg->twitch_npid, sizeof(cfg->twitch_npid), "%s", val);
-    else if (!strcmp(key, "twitch_server")) snprintf(cfg->twitch_server, sizeof(cfg->twitch_server), "%s", val);
-    else if (!strcmp(key, "twitch_port"))  cfg->twitch_port = (uint16_t)atoi(val);
+    if (netplay_settings_number(cfg, key, val)) return;
+#define NETPLAY_CFG_STR(f) { #f, offsetof(netplay_config_t, f), sizeof ((netplay_config_t *)0)->f }
+    static const struct { const char *key; size_t off, cap; } str[] = {
+        NETPLAY_CFG_STR(server),   NETPLAY_CFG_STR(npid),         NETPLAY_CFG_STR(fingerprint),
+        NETPLAY_CFG_STR(password), NETPLAY_CFG_STR(token),        NETPLAY_CFG_STR(twitch_token),
+        NETPLAY_CFG_STR(twitch_npid), NETPLAY_CFG_STR(twitch_server),
+    };
+#undef NETPLAY_CFG_STR
+    for (size_t k = 0; k < sizeof str / sizeof str[0]; k++)
+        if (!strcmp(key, str[k].key)) {
+            snprintf((char *)cfg + str[k].off, str[k].cap, "%s", val);
+            return;
+        }
 }
 
 /* What a file from before `twitch_npid` / `twitch_server` meant: a token
