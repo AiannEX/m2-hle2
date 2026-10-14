@@ -1372,6 +1372,41 @@ static void shle_sound_cmd(uint32_t p) {
 /* what a step of the sequencer leaves it to do */
 enum { SHLE_SEQ_NEXT, SHLE_SEQ_WAIT, SHLE_SEQ_END, SHLE_SEQ_STOP, SHLE_SEQ_STUCK };
 
+/* an event's last data byte with its top bit set means the next event follows
+ * at once, with no delta time between */
+static void shle_seq_chain(uint32_t s, uint8_t b) {
+    if (b & 0x80) shle_wb(s, shle_rb(s) | 1);
+}
+
+/* An (polyphonic aftertouch), which the driver also reads as its own marks:
+ * key 0 with a 2 after it sets the track's bit 6, and key 1, on a track that
+ * is fading, is a level (0x1421 when the track has bit 4) and sends nothing */
+static uint32_t shle_seq_poly(uint32_t s, uint8_t st, uint32_t a3) {
+    uint8_t b1 = shle_mb(a3++);
+    if (b1 == 0) {
+        if ((shle_mb(a3) & 0x7F) == 2) shle_wb(s, shle_rb(s) | 0x40);
+    } else if (b1 == 1 && shle_rb(s + 0xC)) {
+        uint8_t b2 = shle_mb(a3++);
+        if (shle_rb(s) & 0x10) SG8(0x1421, b2 & 0x7F);
+        shle_seq_chain(s, b2);
+        return a3;
+    }
+    uint8_t b2 = shle_mb(a3++);
+    shle_seq_chain(s, b2);
+    shle_enqueue3(st, b1, b2 & 0x7F);
+    return a3;
+}
+
+/* Fx: a sysex is skipped, a meta event too unless it is the end of the
+ * track (FF 2F), which ends the segment, as does any other Fx */
+static uint32_t shle_seq_system(uint8_t st, uint32_t a3, bool *end) {
+    if (st == 0xF7) return a3 + 1u + shle_mb(a3);
+    if (st == 0xF0) { while (shle_mb(a3++) != 0xF7) {} return a3; }
+    if (st == 0xFF && shle_mb(a3++) != 0x2F) return a3 + 1u + shle_mb(a3);
+    *end = true;
+    return a3;
+}
+
 /* one MIDI event of the segment at *pa3, sent on; true at the segment's end */
 static bool shle_seq_parse(uint32_t s, uint32_t *pa3) {
     uint32_t a3 = *pa3;
@@ -1384,40 +1419,20 @@ static bool shle_seq_parse(uint32_t s, uint32_t *pa3) {
     switch (st >> 4) {
     case 0x8:
         b1 = shle_mb(a3++);
-        if (b1 & 0x80) shle_wb(s, shle_rb(s) | 1);
+        shle_seq_chain(s, b1);
         shle_enqueue3(st, b1 & 0x7F, 0x7F);
         break;
-    case 0xA:
-        b1 = shle_mb(a3++);
-        if (b1 == 0) {
-            if ((shle_mb(a3) & 0x7F) == 2) shle_wb(s, shle_rb(s) | 0x40);
-        } else if (b1 == 1 && shle_rb(s + 0xC)) {
-            b2 = shle_mb(a3++);
-            if (shle_rb(s) & 0x10) SG8(0x1421, b2 & 0x7F);
-            if (b2 & 0x80) shle_wb(s, shle_rb(s) | 1);
-            break;
-        }
-        b2 = shle_mb(a3++);
-        if (b2 & 0x80) shle_wb(s, shle_rb(s) | 1);
-        shle_enqueue3(st, b1, b2 & 0x7F);
-        break;
+    case 0xA: a3 = shle_seq_poly(s, st, a3); break;
     case 0xC: case 0xD:
         b1 = shle_mb(a3++);
-        if (b1 & 0x80) shle_wb(s, shle_rb(s) | 1);
+        shle_seq_chain(s, b1);
         shle_enqueue3(st, b1 & 0x7F, 0);
         break;
-    case 0xF:
-        if (st == 0xF7) { a3 += 1u + shle_mb(a3); break; }
-        if (st == 0xF0) { while (shle_mb(a3++) != 0xF7) {} break; }
-        if (st == 0xFF) {
-            if (shle_mb(a3++) != 0x2F) { a3 += 1u + shle_mb(a3); break; }
-        }
-        end = true;
-        break;
+    case 0xF: a3 = shle_seq_system(st, a3, &end); break;
     default:                                    /* 9x, Bx, Ex (and 0x-7x, which never come) */
         b1 = shle_mb(a3++);
         b2 = shle_mb(a3++);
-        if (b2 & 0x80) shle_wb(s, shle_rb(s) | 1);
+        shle_seq_chain(s, b2);
         shle_enqueue3(st, b1, b2 & 0x7F);
         break;
     }
