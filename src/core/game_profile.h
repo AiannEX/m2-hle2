@@ -190,9 +190,12 @@ typedef void (*game_install_fn)(const struct romset *rs,
 /* Who fights whom, and where, as a replay labels it (core/replay.h). Read off
  * the board by the profile; -1 / NULL where it does not know. */
 typedef struct {
-    bool        fighting;        /* a two-player versus fight is on the board */
+    bool        fighting;        /* a fight is on the board: versus, or a player against the CPU */
     int         chara[2];        /* each side's character */
     const char *chara_name[2];
+    bool        cpu[2];          /* the side the CPU plays */
+    int         difficulty;      /* the CPU's, as the board plays it */
+    const char *difficulty_name;
     int         stage;
     const char *stage_name;
     int         rounds[2];       /* rounds each side has won */

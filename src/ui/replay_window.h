@@ -102,6 +102,8 @@ static inline void replay_ui_menu(emu_thread_ctx_t *ctx, ImGuiFileDialog *fd) {
         if (igMenuItem("Copy the folder's path")) igSetClipboardText(dir);
     }
     if (replay_recording())     igTextDisabled("recording %s vs %s", g_replay_rec.meta.p1, g_replay_rec.meta.p2);
+    else if (g_replay_rec.want) igTextDisabled("starts with the next game or online match");
+    if (replay_rec_local())     igTextDisabled("saved when the game ends, or now:");
     /* A local game records until it goes back to attract, which free play
      * and continues can put off for ever (Pinboard #861). */
     if (replay_rec_local() && igMenuItem("Finish the replay")) {
@@ -128,17 +130,31 @@ static inline void replay_ui_dialog(emu_thread_ctx_t *ctx, ImGuiFileDialog *fd) 
     IGFD_CloseDialog(fd);
 }
 
+/* A game on this board: the characters the players picked, not the CPU's;
+ * its difficulty, and whether Finish replay saved it (Pinboard #875). */
+static inline void replay_ui_label_local(const replay_label_t *l) {
+    bool one = l->c1[0] && !l->cpu1, two = l->c2[0] && !l->cpu2;
+    if (one && two)  igText("%s (1P)  vs  %s (2P)", l->c1, l->c2);
+    else if (one)    igText("%s (1P)", l->c1);
+    else if (two)    igText("%s (2P)", l->c2);
+    else             igText("No fight recorded");
+    if (l->difficulty[0]) igText("Difficulty: %s", l->difficulty);
+    if (l->stopped[0])    igText("Saved %s", strcmp(l->stopped, "manual") == 0 ? "manually" : "automatically");
+}
+
 /* The label: who, with whom, where, when, and (unless hidden) how it ended. */
 static inline void replay_ui_label(const replay_label_t *l) {
     time_t t = (time_t)l->timestamp;
     struct tm *tm = localtime(&t);
     char when[64] = "";
     if (tm) strftime(when, sizeof when, "%Y-%m-%d %H:%M", tm);
-    igText("%s (%s)  vs  %s (%s)", l->p1, l->c1[0] ? l->c1 : "?", l->p2, l->c2[0] ? l->c2 : "?");
-    igText("Stage: %s", l->stage[0] ? l->stage : "?");
+    if (strcmp(l->netcode, "local") == 0) replay_ui_label_local(l);
+    else igText("%s (%s)  vs  %s (%s)", l->p1, l->c1[0] ? l->c1 : "?", l->p2, l->c2[0] ? l->c2 : "?");
+    if (l->stage[0]) igText("Stage: %s", l->stage);
     igText("Played %s, %u:%02u long", when, l->seconds / 60, l->seconds % 60);
-    igTextDisabled("recorded by %s%s; %s, %s", l->recorded_by,
-                   strcmp(l->netcode, "ggpo") == 0 ? " over GGPO" : "", l->romset, l->profile);
+    if (strcmp(l->netcode, "local") == 0) igTextDisabled("played here; %s, %s", l->romset, l->profile);
+    else igTextDisabled("recorded by %s%s; %s, %s", l->recorded_by,
+                        strcmp(l->netcode, "ggpo") == 0 ? " over GGPO" : "", l->romset, l->profile);
     igCheckbox("Hide the result", &g_replay_ui.hide_result);
     if (g_replay_ui.hide_result) return;
     if (l->winner == 0 || l->winner == 1)

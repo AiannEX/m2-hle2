@@ -89,9 +89,24 @@ const replayClock = (frames) => {
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 };
 
+/* A game on this board: the characters the players picked, not the CPU's
+ * (Pinboard #875). An online match: who played whom, with what. */
 function replayHeadline(j) {
-  const c1 = j.p1_character || '?', c2 = j.p2_character || '?';
-  return (j.p1 || '?') + ' (' + c1 + ')  vs  ' + (j.p2 || '?') + ' (' + c2 + ')';
+  if (j.netcode === 'local') {
+    const picked = [1, 2].filter((s) => j['p' + s + '_character'] && !j['p' + s + '_cpu'])
+      .map((s) => j['p' + s + '_character'] + ' (' + s + 'P)');
+    return picked.length ? picked.join('  vs  ') : 'No fight recorded';
+  }
+  const who = (p, c) => (p || '?') + (c ? ' (' + c + ')' : '');
+  return who(j.p1, j.p1_character) + '  vs  ' + who(j.p2, j.p2_character);
+}
+
+/* A game's difficulty and whether it was saved by itself or by Finish replay. */
+function replayHow(j) {
+  const how = [];
+  if (j.difficulty) how.push('Difficulty: ' + j.difficulty);
+  if (j.stopped) how.push(j.stopped === 'manual' ? 'Saved manually' : 'Saved automatically');
+  return how.join(' · ');
 }
 
 function replayResult(j) {
@@ -136,9 +151,11 @@ function replayShowLabel() {
   const j = JSON.parse(info);
   $r('replay-file-name').textContent = replay.name;
   $r('replay-who').textContent = replayHeadline(j);
-  $r('replay-stage').textContent = 'Stage: ' + (j.stage || '?');
+  $r('replay-stage').textContent = j.stage ? 'Stage: ' + j.stage : '';
+  $r('replay-how').textContent = replayHow(j);
   $r('replay-when').textContent = 'Played ' + replayWhen(j) + ', ' + replayClock(j.frames || 0) + ' long';
-  $r('replay-by').textContent = 'recorded by ' + (j.recorded_by || '?') + (j.netcode === 'ggpo' ? ' over GGPO' : '')
+  $r('replay-by').textContent = (j.netcode === 'local' ? 'played here'
+    : 'recorded by ' + (j.recorded_by || '?') + (j.netcode === 'ggpo' ? ' over GGPO' : ''))
     + '; ' + j.romset + ', ' + j.profile;
   $r('replay-result').textContent = replayResult(j);
   $r('replay-label').hidden = false;
@@ -258,8 +275,10 @@ async function replayRow(rec) {
   head.textContent = j ? replayHeadline(j) : rec.name;
   const sub = document.createElement('div');
   sub.className = 'fine left';
-  sub.textContent = j ? (j.stage || '?') + ' · ' + replayWhen(j) + ' · ' + replayClock(j.frames || 0)
-                      : new Date(rec.saved).toLocaleString();
+  sub.textContent = j && j.netcode === 'local' ? replayHow(j) || replayWhen(j)
+    : j ? (j.stage || '?') + ' · ' + replayWhen(j) + ' · ' + replayClock(j.frames || 0)
+    : new Date(rec.saved).toLocaleString();
+  if (j) li.title = replayWhen(j) + ', ' + replayClock(j.frames || 0) + ' long';
   const row = document.createElement('p');
   row.className = 'np-row';
   row.append(

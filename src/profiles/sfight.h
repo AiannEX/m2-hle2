@@ -294,6 +294,12 @@ static int sfight_hook_versus_result(i960_cpu_t *cpu, memory_bus_t *bus) {
  * fighter's character is its rob's byte +0x1B0 (rob 1P 0x510D00, 2P 0x514100;
  * tools/lib/board.mjs ROB_CHAR), the stage is stage_num, the rounds won are
  * byte_50004F / byte_500051 and the rounds to win byte_500052.
+ *
+ * A one-player game (Pinboard #875): gameprogram is 0 with 1P in, 1 with 2P
+ * in, and the side in has bit 2 of its flag word (0x500248 / 0x50024C) up; the
+ * other side is the CPU. Its fight is on once stage_num leaves 15 (select).
+ * The CPU's difficulty is ENEMY RANK (settings +2, 0..3), or the AI table
+ * g_enemy_rank plays instead when one is set (sfight_hook_enemy_rank_table).
  */
 static const char *const s_sfight_chara_names[16] = {
     "Sonic", "Tails", "Amy", "Metal Sonic", "Fang", "Bark", "Knuckles", "Espio",
@@ -305,8 +311,17 @@ static const char *const s_sfight_stage_names[15] = {
     "Final Eggman Boss", NULL, NULL, "South Island", "South Island",
 };
 
+static void sfight_match_difficulty(memory_bus_t *bus, game_match_info_t *out);   /* below the settings block */
+
 static void sfight_match_info(memory_bus_t *bus, game_match_info_t *out) {
-    out->fighting = (mem_read8(bus, 0x00500068) & 2u) && mem_read8(bus, 0x0050004C) == 2u;
+    uint8_t gp = mem_read8(bus, 0x0050004C);
+    bool versus = (mem_read8(bus, 0x00500068) & 2u) && gp == 2u;
+    bool solo   = gp < 2u && (mem_read8(bus, gp ? 0x0050024Cu : 0x00500248u) & 4u)
+               && mem_read8(bus, 0x00500064) != 15u;
+    out->fighting = versus || solo;
+    out->cpu[0] = solo && gp == 1u;
+    out->cpu[1] = solo && gp == 0u;
+    sfight_match_difficulty(bus, out);
     for (int side = 0; side < 2; side++) {
         int c = mem_read8(bus, (side ? 0x00514100u : 0x00510D00u) + 0x1B0u);
         out->chara[side]      = c;
@@ -676,6 +691,16 @@ static int sfight_hook_xplay_vic_dsp(i960_cpu_t *cpu, memory_bus_t *bus) {
 #define SFIGHT_SETTINGS_CRC_LEN  0x20u        /* what make_crc covers           */
 #define SFIGHT_BARRIER_DEFAULT   0x0050A424u  /* barrier_default_num (.long)    */
 #define SFIGHT_ROUND_TIME        0x00500090u  /* time, seconds (.byte)          */
+
+/* The CPU's difficulty for a replay's label (sfight_match_info). */
+static void sfight_match_difficulty(memory_bus_t *bus, game_match_info_t *out) {
+    uint32_t base = mem_read32(bus, SFIGHT_SETTINGS_PTR);
+    uint32_t blk  = (base == 0x00599000u || base == 0x01D00000u) ? base + 0x3340u : SFIGHT_SETTINGS_WORK;
+    int r = g_enemy_rank;
+    if (r < 0 || r >= ENEMY_RANKS || g_hle_netplay_board) r = mem_read8(bus, blk + 2u) & 3;
+    out->difficulty      = r;
+    out->difficulty_name = g_enemy_rank_names[r];
+}
 
 /* The eight bytes the PS3 menus hand NetGameMode_Set, in that order. Indices
  * are menu rows; out of range falls back to index 0, as the PS3 does. */

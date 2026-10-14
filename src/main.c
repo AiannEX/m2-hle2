@@ -444,6 +444,7 @@ static void netplay_room_announce(void) {
 /* The GGPO lobby has no room: its opponent comes in with the match, once per
  * match id. */
 static void netplay_ggpo_announce(void) {
+#ifdef M2HLE_GGPO
     static char said[24];
     ggl_status_t st = ggl_status();
     if (st.stage != GGL_MATCH || !st.match[0]) { said[0] = '\0'; return; }
@@ -453,6 +454,7 @@ static void netplay_ggpo_announce(void) {
     snprintf(note, sizeof note, "%s came into the match.", st.opponent[0] ? st.opponent : "A player");
     LOG_INFO("ggpo: %s joined the match", st.opponent);
     overlay_host_announce(OVERLAY_ANNOUNCE_TITLE, note);
+#endif
 }
 
 /*
