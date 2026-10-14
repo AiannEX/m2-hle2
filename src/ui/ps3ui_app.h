@@ -1877,6 +1877,71 @@ static void ps3ui_draw_vs(ps3ui_canvas_t *cv, ps3ui_app_t *a)
     ps3ui_draw_vs_lobby(cv, &v);    /* background, bar and hints included */
 }
 
+/* One side of the result: WINNER / LOSER over its head, its name below. */
+static void ps3ui_draw_result_side(ps3ui_canvas_t *cv, const ps3ui_app_t *a, ps3ui_slots_t *s, int i, int fighter)
+{
+    static const char *const head[2] = { "p_end1p_head_ct", "p_end2p_head_ct" };
+    static const char *const txt[2] = { "p_end1p_txt_lt", "p_end2p_txt_lt" };
+    float x, y;
+    float al = ps3ui_slot_alpha(s, head[i]);
+    if (a->result_side >= 0 && ps3ui_slot_xy(s, head[i], 0.5f, 0, &x, &y)) {
+        bool won = a->result_side == i;
+        const char *w = won ? "WINNER" : "LOSER";
+        ps3ui_text_style_t t = ps3ui_style_title(40.0f);
+        float tw = ps3ui_text_width(&t, w);
+        ps3ui_text(cv, &t, x - tw * 0.5f, y + 47.0f + 3.0f, w, al);    /* white, 3 lower */
+        t.rgb = won ? 0x792323 : 0x0A4A84;
+        ps3ui_text(cv, &t, x - tw * 0.5f, y + 47.0f, w, al);
+    }
+    const char *name = NULL;
+    if (a->ext)
+        name = a->ext_name[i];
+    else if (fighter >= 0)
+        name = a->st.members[fighter].npid;
+    if (name && ps3ui_slot_xy(s, txt[i], 0, 0, &x, &y)) {
+        ps3ui_text_style_t n = ps3ui_style_name();
+        ps3ui_text(cv, &n, x + 84.0f, y + 42.0f, name, ps3ui_slot_alpha(s, txt[i]));
+    }
+}
+
+/* The seconds left to answer, in the timer window. */
+static void ps3ui_draw_result_timer(ps3ui_canvas_t *cv, const ps3ui_app_t *a, ps3ui_slots_t *ts)
+{
+    float x, y;
+    if (!ps3ui_slot_xy(ts, "p_timer_c", 0.5f, 0.5f, &x, &y))
+        return;
+    char buf[8];
+    int left = (int)((600.0f - a->result_t) / 60.0f);
+    snprintf(buf, sizeof buf, "%02d", left < 0 ? 0 : left);
+    ps3ui_text_style_t t = ps3ui_style_title(40.0f);
+    ps3ui_text(cv, &t, x - ps3ui_text_width(&t, buf) * 0.5f, y + 20.0f, buf, ps3ui_slot_alpha(ts, "p_timer_c"));
+}
+
+/* The choices: "Return to setup screen", or Play again / Exit with the cursor. */
+static void ps3ui_draw_result_menu(ps3ui_canvas_t *cv, const ps3ui_app_t *a, ps3ui_slots_t *s)
+{
+    float lx, ly, rx, ry;
+    if (!ps3ui_slot_xy(s, "p_txt_01_lt", 0, 0, &lx, &ly) || !ps3ui_slot_xy(s, "p_txt_02_rb", 1, 1, &rx, &ry))
+        return;
+    ps3ui_text_style_t st = ps3ui_style_text(37.0f);
+    float ex, ey;
+    float alpha = ps3ui_slot_alpha(s, "p_txt_01_lt");
+    /* The row under the window's rule (p_txt_ok, the info window's OK
+     * box): Exit goes there, as the pause list puts Exit Game one row
+     * further down, over the rule. A second row at the 54 pitch sat on
+     * the rule itself. */
+    float ox, oy = ly + 108.0f;
+    int again = a->scr == PS3UI_SCR_AGAIN;
+    if (again)
+        ps3ui_slot_xy(s, "p_txt_ok_01_lt", 0, 0, &ox, &oy);
+    float cy = again && a->cursor == 1 ? oy : ly;
+    if (ps3ui_slot_xy(s, "p_win_edg_lt", 0, 0, &ex, &ey) && a->main.state == PS3UI_WIN_IDLE)
+        ps3ui_draw_cursor(cv, &ps3ui_n_cmn_base, "cursor_cmn01_46", ex, cy - 4.0f, a->cursor_t);
+    ps3ui_text_centre(cv, &st, (lx + rx) * 0.5f, ly, again ? "Play again" : "Return to setup screen", alpha);
+    if (again)
+        ps3ui_text_centre(cv, &st, (lx + rx) * 0.5f, oy, "Exit", alpha);
+}
+
 /* The result (vs_end_menu_PS3): WINNER / LOSER over each side, the names. */
 static void ps3ui_draw_result(ps3ui_canvas_t *cv, ps3ui_app_t *a)
 {
@@ -1885,53 +1950,10 @@ static void ps3ui_draw_result(ps3ui_canvas_t *cv, ps3ui_app_t *a)
     ps3ui_win_draw(cv, &a->timer, 0, 0, &ts);
     int f[2];
     ps3ui_fighters(&a->st, f);
-    static const char *const head[2] = { "p_end1p_head_ct", "p_end2p_head_ct" };
-    static const char *const txt[2] = { "p_end1p_txt_lt", "p_end2p_txt_lt" };
-    for (int i = 0; i < 2; i++) {
-        float x, y;
-        float al = ps3ui_slot_alpha(&s, head[i]);
-        if (a->result_side >= 0 && ps3ui_slot_xy(&s, head[i], 0.5f, 0, &x, &y)) {
-            const char *w = a->result_side == i ? "WINNER" : "LOSER";
-            ps3ui_text_style_t t = ps3ui_style_title(40.0f);
-            float tw = ps3ui_text_width(&t, w);
-            ps3ui_text(cv, &t, x - tw * 0.5f, y + 47.0f + 3.0f, w, al);    /* white, 3 lower */
-            t.rgb = a->result_side == i ? 0x792323 : 0x0A4A84;
-            ps3ui_text(cv, &t, x - tw * 0.5f, y + 47.0f, w, al);
-        }
-        const char *name = a->ext ? a->ext_name[i] : f[i] >= 0 ? a->st.members[f[i]].npid : NULL;
-        if (name && ps3ui_slot_xy(&s, txt[i], 0, 0, &x, &y)) {
-            ps3ui_text_style_t n = ps3ui_style_name();
-            ps3ui_text(cv, &n, x + 84.0f, y + 42.0f, name, ps3ui_slot_alpha(&s, txt[i]));
-        }
-    }
-    float x, y;
-    if (ps3ui_slot_xy(&ts, "p_timer_c", 0.5f, 0.5f, &x, &y)) {
-        char buf[8];
-        int left = (int)((600.0f - a->result_t) / 60.0f);
-        snprintf(buf, sizeof buf, "%02d", left < 0 ? 0 : left);
-        ps3ui_text_style_t t = ps3ui_style_title(40.0f);
-        ps3ui_text(cv, &t, x - ps3ui_text_width(&t, buf) * 0.5f, y + 20.0f, buf, ps3ui_slot_alpha(&ts, "p_timer_c"));
-    }
-    float lx, ly, rx, ry;
-    if (ps3ui_slot_xy(&s, "p_txt_01_lt", 0, 0, &lx, &ly) && ps3ui_slot_xy(&s, "p_txt_02_rb", 1, 1, &rx, &ry)) {
-        ps3ui_text_style_t st = ps3ui_style_text(37.0f);
-        float ex, ey;
-        float alpha = ps3ui_slot_alpha(&s, "p_txt_01_lt");
-        /* The row under the window's rule (p_txt_ok, the info window's OK
-         * box): Exit goes there, as the pause list puts Exit Game one row
-         * further down, over the rule. A second row at the 54 pitch sat on
-         * the rule itself. */
-        float ox, oy = ly + 108.0f;
-        int again = a->scr == PS3UI_SCR_AGAIN;
-        if (again)
-            ps3ui_slot_xy(&s, "p_txt_ok_01_lt", 0, 0, &ox, &oy);
-        float cy = again && a->cursor == 1 ? oy : ly;
-        if (ps3ui_slot_xy(&s, "p_win_edg_lt", 0, 0, &ex, &ey) && a->main.state == PS3UI_WIN_IDLE)
-            ps3ui_draw_cursor(cv, &ps3ui_n_cmn_base, "cursor_cmn01_46", ex, cy - 4.0f, a->cursor_t);
-        ps3ui_text_centre(cv, &st, (lx + rx) * 0.5f, ly, again ? "Play again" : "Return to setup screen", alpha);
-        if (again)
-            ps3ui_text_centre(cv, &st, (lx + rx) * 0.5f, oy, "Exit", alpha);
-    }
+    for (int i = 0; i < 2; i++)
+        ps3ui_draw_result_side(cv, a, &s, i, f[i]);
+    ps3ui_draw_result_timer(cv, a, &ts);
+    ps3ui_draw_result_menu(cv, a, &s);
 }
 
 /* Our on-screen keyboard, in the same window language: a large common window,

@@ -1,19 +1,19 @@
-# How much of m2-hle2 is spaghetti? (Pinboard #321, #756)
+# How much of m2-hle2 is spaghetti? (Pinboard #321, #756, #757)
 
-A measurement of master at `48cb645` (2026-10-13), with `python3 tools/spaghetti.py` (it needs `pip install lizard`). Nothing in `src/` was changed by it. The first measurement, at `66f4d4e` (2026-10-01), is kept below under [Where it started](#where-it-started), and what was done between the two under [Progress](#progress) and [Untangled so far](#untangled-so-far).
+A measurement of master at `48cb645` (2026-10-13) with #757's splits on top (`a835045`), with `python3 tools/spaghetti.py` (it needs `pip install lizard`). Master alone is the last column of the [Progress](#progress) table. The first measurement, at `66f4d4e` (2026-10-01), is kept below under [Where it started](#where-it-started), and what was done between the two under [Progress](#progress) and [Untangled so far](#untangled-so-far).
 
 ## The number
 
-**Under 1% of the emulator's function code, in 6 functions.** 6 of 3,541 hand-written functions hold 383 of 48,872 lines of code (0.8%), and each of them has more than 20 independent paths through it, which is about where a function stops fitting in one head. At `66f4d4e` it was 114 functions and 25.7% of the code. One function is over 50 paths.
+**One function, 0.1% of the emulator's function code.** 1 of 3,561 hand-written functions holds 44 of 48,921 lines of code, and has more than 20 independent paths through it, which is about where a function stops fitting in one head. At `66f4d4e` it was 114 functions and 25.7% of the code; on master at `48cb645`, before #757, 6 functions and 0.8%. None is over 30 paths.
 
 | Branchiness (modified CCN) | Functions | Lines | Share of code | At `66f4d4e` |
 |---|---:|---:|---:|---:|
-| over 15 | 91 | 3,519 | 7.2% | 33.7% |
-| **over 20** | **6** | **383** | **0.8%** | **25.7%** |
-| over 30 | 3 | 229 | 0.5% | 15.7% |
-| over 50 | 1 | 127 | 0.3% | 6.7% |
+| over 15 | 86 | 3,180 | 6.5% | 33.7% |
+| **over 20** | **1** | **44** | **0.1%** | **25.7%** |
+| over 30 | 0 | 0 | 0 | 15.7% |
+| over 50 | 0 | 0 | 0 | 6.7% |
 
-The code has grown by a quarter since then (38,873 lines in functions to 48,872: savestates, rewind, GGPO, replays, the one-way follow, Gems, Sega Rally's TGP), and the new code came in small. Agent sessions run `lizard -w -C 15 -L 80` on the files they change before they build, and split a function as soon as it warns. That is why so little grew back: what is over 20 now was written before that check, or grew a case at a time since.
+The code has grown by a quarter since then (38,873 lines in functions to 48,921: savestates, rewind, GGPO, replays, the one-way follow, Gems, Sega Rally's TGP), and the new code came in small. Agent sessions run `lizard -w -C 15 -L 80` on the files they change before they build, and split a function as soon as it warns. That is why so little grew back: what is over 20 now was written before that check, or grew a case at a time since.
 
 ## How it was measured
 
@@ -28,14 +28,9 @@ The code has grown by a quarter since then (38,873 lines in functions to 48,872:
 
 | Paths | Lines | Function | Why |
 |---:|---:|---|---|
-| 62 | 127 | `savestate__load_zip` (`savestate.h:596`) | Checks the file (INFO, profile, LAYOUT, ROM), reads every part into scratch, then commits, with an `if (!err)` chain between the steps so a bad file leaves the board as it was. Its comments already mark the steps; each could be a function that returns the error. |
-| 32 | 76 | `gems_verify` (`gems.h:415`) | Runs a Gems trap as C on a copy of the board and then as i960 code, diffs seven memories and the registers, and logs what differs. The diff and the log would come apart cleanly. |
-| 31 | 26 | `gems_apply` (`gems.h:530`) | Short, but each of the five COP callbacks is its own `?:`. A switchboard, not a knot. |
 | 30 | 44 | `lobby_event` (`main_sdl.c:784`) | The handheld lobby's map of buttons and keys to actions, one case each. Left as it is on purpose (#372): splitting it would spread one table over several functions. |
-| 27 | 59 | `savestate__entries` (`savestate.h:415`) | The list of every part a state holds, with the condition on each. |
-| 21 | 51 | `ps3ui_draw_result` (`ps3ui_app.h:1881`) | The PS3 result window; the Play again / Exit rows (#8) took it over 20. |
 
-At exactly 20, on the edge: `cop_write` (`cop.h`), `scsp_recouple` (`scsp.h`) and `retro_run` (`main_libretro.c`). By directory, the share of code in functions over 20 is 4.9% in `core/` (all of it `savestate.h` and `gems.h`), 0.9% in the four front ends, 0.3% in `ui/`, and none in `board/`, `net/` or `profiles/`.
+The five that came in since PR #181 (`savestate__load_zip` 62, `gems_verify` 32, `gems_apply` 31, `savestate__entries` 27, `ps3ui_draw_result` 21) were split by #757; see [Untangled so far](#untangled-so-far). At exactly 20, on the edge: `cop_write` (`cop.h`), `scsp_recouple` (`scsp.h`) and `retro_run` (`main_libretro.c`). By directory, the share of code in functions over 20 is 0.9% in the four front ends (`lobby_event`) and none anywhere else.
 
 ## What is not spaghetti
 
@@ -110,18 +105,18 @@ It is ordinary for an emulator, and the parts that matter most are better than t
 
 Each column is `python3 tools/spaghetti.py` with the `_Static_assert` fix, so `f1c5ee7` here is not the `66f4d4e` table above: it has `geo3d_mesh_layers` and the rest of `geo3d.h` back in, and #325's draw work in. #332 to #338 split the worst ten a PR at a time; #341 and #372 then took every function over 20, a file at a time, on the `idea-332-despaghetti` branch that PR #181 merged on 2026-10-03.
 
-| | master `f1c5ee7` | #332 `461cc2c` | #334 `7f39255` | #335 `05d3d6a` | #336 `90c6ee9` | #338 `19066ad` | #341 `2728c7b` | #372 `1edd518` | PR #181 `c51bf9a` | master `48cb645` |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| over 20 paths (the headline) | 25.7% (114 functions) | 25.6% (113) | 24.6% (113) | 23.8% (114) | 22.3% (112) | 20.8% (108) | 11.8% (60) | 0.6% (4) | 0.1% (1) | **0.8%** (6) |
-| over 30 | 15.5% (51) | 15.4% (51) | 14.4% (50) | 13.2% (49) | 11.6% (46) | 10.1% (42) | 5.6% (22) | 0.2% (1) | 0 | 0.5% (3) |
-| over 50 | 6.7% (15) | 6.7% (15) | 5.6% (14) | 4.3% (12) | 2.8% (9) | 1.6% (6) | 0.3% (1) | 0 | 0 | 0.3% (1) |
-| `main*.c` over 20 | 32.3% | 32.3% | 22.8% | 22.8% | 22.8% | 19.3% | 12.0% | 1.1% | 1.1% | 0.9% |
-| `board/` over 20 | 23.2% | 22.6% | 22.6% | 19.5% | 18.2% | 18.2% | 11.8% | 0 | 0 | 0 |
-| `ui/` over 20 | | | | 28.2% | 25.0% | 25.0% | 17.3% | 0 | 0 | 0.3% |
-| `net/` over 20 | | | | | 25.5% | 21.0% | 6.5% | 2.7% | 0 | 0 |
-| `core/` over 20 | | | | | 20.6% | 15.5% | 0 | 0 | 0 | 4.9% |
+| | master `f1c5ee7` | #332 `461cc2c` | #334 `7f39255` | #335 `05d3d6a` | #336 `90c6ee9` | #338 `19066ad` | #341 `2728c7b` | #372 `1edd518` | PR #181 `c51bf9a` | master `48cb645` | #757 `a835045` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| over 20 paths (the headline) | 25.7% (114 functions) | 25.6% (113) | 24.6% (113) | 23.8% (114) | 22.3% (112) | 20.8% (108) | 11.8% (60) | 0.6% (4) | 0.1% (1) | **0.8%** (6) | **0.1%** (1) |
+| over 30 | 15.5% (51) | 15.4% (51) | 14.4% (50) | 13.2% (49) | 11.6% (46) | 10.1% (42) | 5.6% (22) | 0.2% (1) | 0 | 0.5% (3) | 0 |
+| over 50 | 6.7% (15) | 6.7% (15) | 5.6% (14) | 4.3% (12) | 2.8% (9) | 1.6% (6) | 0.3% (1) | 0 | 0 | 0.3% (1) | 0 |
+| `main*.c` over 20 | 32.3% | 32.3% | 22.8% | 22.8% | 22.8% | 19.3% | 12.0% | 1.1% | 1.1% | 0.9% | 0.9% |
+| `board/` over 20 | 23.2% | 22.6% | 22.6% | 19.5% | 18.2% | 18.2% | 11.8% | 0 | 0 | 0 | 0 |
+| `ui/` over 20 | | | | 28.2% | 25.0% | 25.0% | 17.3% | 0 | 0 | 0.3% | 0 |
+| `net/` over 20 | | | | | 25.5% | 21.0% | 6.5% | 2.7% | 0 | 0 | 0 |
+| `core/` over 20 | | | | | 20.6% | 15.5% | 0 | 0 | 0 | 4.9% | 0 |
 
-PR #181 left one function over 20, `lobby_event`, and it is still there. Five came in with new work since: `savestate__load_zip` and `savestate__entries` (savestates, #426), `gems_verify` and `gems_apply` (Gems, #454), and `ps3ui_draw_result` (the go-again prompt, #8). The next candidates are the top two. `savestate__load_zip` can be proved by `det_digest --save-at` / `--load`, which holds a state exact, plus a file of each kind it refuses; `gems_verify` by `--gems-verify` over attract giving the same counts before and after.
+PR #181 left one function over 20, `lobby_event`, and it is still there. Five came in with new work after it: `savestate__load_zip` and `savestate__entries` (savestates, #426), `gems_verify` and `gems_apply` (Gems, #454), and `ps3ui_draw_result` (the go-again prompt, #8). #757 split all five, each held to the code before by an A/B (below).
 
 ## Untangled so far
 
@@ -143,3 +138,7 @@ PR #181 left one function over 20, `lobby_event`, and it is still there. Five ca
 - **`main_web.c`'s `frame` and `web_netplay_status` (Pinboard #372).** The web build's frame callback keeps the order of every pass and hands what it drew between them in a `web_picture_t`: menus recorded, the callback counted, the game or the object viewer presented, the picture filter's source, the offscreen draw, and the picture kept for the next frame (`web_keep_picture`, the largest piece at 9). 40 paths to 14. The netplay status JSON is written a section at a time (`web_status_sign_in`, `_room`, `_member`, `_play`, `_listing`, `_log`) into a `web_json_t` whose writer notes an overflow, as the old `snprintf` chain did: 36 to 4. Checked with drivers: 600,000 frames with no mismatch, and 200,000 status replies with no mismatch, plus 100,000 into a buffer too small for most of them, where the bytes written are the same and the only difference is a few more calls to the read-only lookups after the overflow. gcov reached all 106 and 106 lines, and nine mutations were caught. The web tree builds without a warning in `main_web.c`; it was not run in a browser.
 - **`main_sdl.c`'s `verify_gpu_tiles` (Pinboard #372).** The handheld's GPU tile check is the layers test, the shown-picture test, the pen-to-colour step and the report (`verify_tiles_layers_bad`, `_shown_bad`, `_pens_to_colours`, `_report`): 31 paths to 5, the largest the layers test (13). Checked with a driver of 3,000 frames (2,500 of them reporting a fault) against the code before, with no mismatch; gcov reached all 48 lines, and four mutations were caught. There is no SDL3 in the dev container, so the handheld was not built: `main_sdl.c` passes `-fsyntax-only -Wall -Wextra` against SDL3's headers. `lobby_event` (30) is left as it is: it is the lobby's map of buttons and keys to actions, one case each, and splitting it would only spread one table over several functions.
 - **Everything else over 20 (Pinboard #341, #372).** After #338 the rest went the same way, a commit per file or subsystem: the run loop (`emu_slice_body` 53 paths to 17, `emu_thread_run_loop`; #387 then kept the slice loop's state in locals), the PS3 link (one function per owner phase and per message: `ps3_owner_pump` 71 to 5), `rs_hoist_one` (63 to 6) and the GLSL scans, the RPCN client and session, RUDP, RPCS3 signaling and TLS, netplay's connect, datagram dispatch, stage mirror, owner and member pumps and frame begin and end, the bridge's `netplay_status`, `read_many`, `sky_eye` and netplay settings, the handheld's `lobby_update` and `lobby_draw`, the desktop's menu bar, init and headless main, the libretro core's toasts, autojoin, draw and option reads, the PS3 menus' painters and `ps3ui_follow` (53 to 6), `game_render`, the debug windows, the tile renderer, `sharc_coli` (`calc_flag`, `area_coli`, `area_table_gen`), the SCSP and the sound driver in C, `mem_init`, the A/V stream, audio out and `json_min`. Each commit is titled "... in named steps (Pinboard #341)" or "(#372)" and says how it was checked: the board's with `det_digest` and the graders, the rest with side-by-side drivers, Xvfb pictures and the local RPCN server. The entries above are the larger of them.
+- **The five since PR #181 (Pinboard #757).** Each was checked against master's build (A) by the same harness built from the new source (B):
+  - `savestate__load_zip` (62 paths to 7) is the header check (`savestate__check`, 14: INFO, profile, LAYOUT, version, ROM, with the same refusals in the same order), a scratch set (`savestate_scratch_t`, `_alloc`, `_read` from a table of entries, `_commit`, `_free`) and the load that runs them. `savestate__entries` (27 to 9) lists the parts through `savestate__add_ids`, `_cop`, `_board`, `_sound` and `_extra`, in the old order. *A/B:* `det_digest --frames 900 --save-at 500`: identical rows, all 46 zip entries byte-identical, each build loading the other's file matches the saving run's tail, and twelve broken files (no INFO, another profile, a bad LAYOUT, an old version, another program, data or sound ROM, a missing or short part, no CPU, no LAYOUT, no ROM, not a zip) are refused with the same message.
+  - `gems_verify` (32 to 11) is the stride test (`gems_verify_this_call`), the i960 run to where the C resumed (`gems_verify_i960_to`), the compare of the seven memories and the registers (`gems_compare`, 8) and the log (`gems_verify_log`). `gems_apply` (31 to 13) is the COP callbacks (`gems_cop_hooks`, also what a netplay session turns off), the trap sites (`gems_publish_sites`) and the set check (`gems_for_set`). `det_digest` now takes `--gems-i960`, `--gems-cop` and `--gems-verify`, which is how it was held: seven runs of 3,000 frames (none, each option, i960 with verify, the Console profile with verify, COP with `M2HLE_GEMS_VERIFY_ALL=1`, both) give identical rows, stderr and Gems log lines. None of those differs, so a fault put into `gems_run` in both builds (not committed; on with an environment variable) spoils every fifth C result four ways: registers alone, one word in each of the seven memories plus the display-list pointer, a float-close word, and an IP the i960 never reaches. Two runs of 1,500 frames, `--gems-i960 --gems-verify` and `M2HLE_GEMS_VERIFY_ALL=1` on the Console profile with `--gems-cop` too, give identical rows, stderr and Gems log lines: 520 and 461 lines, with 81 and 72 mismatch reports, 4 unreached each, and the per-trap counts of exact, float-close, registers-only, differ and lost.
+  - `ps3ui_draw_result` (21 to 2) draws each side (`ps3ui_draw_result_side`, 9), the timer and the menu (`_menu`, 10) in the old order. *A/B:* `ps3ui_render app` and `shell`: all 36 pictures byte-identical, the go-again ones (`11_result`, `13_again`, `13b_again_exit`, `15_again_not_vs`, `s13`, `s14`) among them.
