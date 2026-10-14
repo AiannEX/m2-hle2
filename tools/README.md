@@ -1051,6 +1051,39 @@ Two differences are left:
   convert. Song 0x10 has the largest spectral difference left, −4.2 dB at
   8-16 kHz, and its channel 15 is one of these.
 
+**Absolute pitch** (2026-10-14, `pitch`, Pinboard #837). The checks above only ask
+whether a key keeps the same pitch on the board. `pitch` asks whether it is the
+pitch the SF2 gives it. M2MidiDec writes every sample at 44.1 kHz with root key
+60 and no tuning generators. Each zone's overriding root key (96 minus byte 3 of
+a melody record, or the drum record's transpose) is therefore the whole pitch: a
+note sounds at 100·(note − root) cents, plus the bend. On the board, a key-on's
+pitch is 1200·OCT + 1200·log2(1 + FNS/1024) cents from 44.1 kHz. Over all 25
+songs (88 s or the MIDI's end), 62,854 of 65,004 notes have a key-on within 12 ms:
+
+- 99.43% are within 1 cent, which is the FNS step. 99.50% are within 5 cents.
+- Each program's median is 0 to −0.3 c, so M2MidiDec drops no fine tuning.
+- **Pitch-bend range is 2 semitones.** The MIDIs carry no RPN 0, so a synth uses
+  GM's default of 2. Fitting the bent notes gives 1.87-2.05, and the leftover
+  error (up to 5 c, e.g. song 0x0F) is the driver's bend step.
+- **The other 0.5% are channels without the right program change**, so a synth
+  plays them on program 0:
+  - Song 0x17 channel 14: 76 notes, +200 c. The driver keeps three fixed
+    effect tracks, loaded at boot from the table at 0x608010, on MIDI channels
+    13-15 with instruments 80, 81 and 82. M2MidiDec writes a program change only
+    for a song's own track-init records, so these channels have none. The
+    channel's notes fit programs 80-82 exactly.
+  - Song 0x10 channels 14 and 15: 113 and 30 notes, +800 and +2400 c. They fit
+    the drum kit (program 11) exactly instead, so something in that song changes
+    their instrument, and M2MidiDec does not write that change either.
+  - A few notes on song 0x10 channel 12 and song 0x17 channel 2: 32 of 393 and
+    26 of 777, with an explicit program 0.
+
+  Two of the level outliers above (0x17/14 and 0x10/15) are these same
+  channels. The MIDI files are wrong there, not the board.
+- About 1,300 more notes have a key-on at their pitch, but 12-100 ms away, mostly
+  drums on channel 16. That is the timing difference already described, not
+  pitch.
+
 **MAME as the third point.** A fresh 90 s attract capture (claude_mame
 `1d6dbfafe53`, the Linux build), replayed through the board, grades as before:
 72.7% of notes within 30 ms, envelope 0.987. Over song 0x10 before the first
@@ -1456,7 +1489,7 @@ this MAME's SHARC recompiler fails the COP self-test.
 | `mame/match-replay.lua`, `mame/osage-select.lua` | the autoboot scripts behind `match-replay.mjs --mame` and `grade-osage.mjs --mame` (above) |
 | `mame/snd-capture.lua`, `mame/snd_capture.py`, `mame/snd_compare.py` | the sound board's capture and comparison (see "The sound board") |
 | `grade-sound-hle.py` | the sound driver in C (`--sound-hle`) against the driver on the 68000, over `snd_replay` inputs: notes matched by what they play, timing, holds, audio per window, lasting driver-state differences (see "The driver in C against the 68000") |
-| `grade-midi.py` | the board's music against ValleyBell's M2MidiDec: per-song `snd_replay` inputs, the MIDIs corrected to the board's tempo and channels, then notes, pitch, lengths, levels and spectra (see "Music against M2MidiDec") |
+| `grade-midi.py` | the board's music against ValleyBell's M2MidiDec: per-song `snd_replay` inputs, the MIDIs corrected to the board's tempo and channels, then notes, pitch (and absolute pitch against the SF2's root keys), lengths, levels and spectra (see "Music against M2MidiDec") |
 | `tests/cop_replay.c` | replays a coprocessor capture through `sharc_exec()`, command by command with the arguments the firmware read, and checks every word it answers: `cop_replay <prefix> [examples-per-op] [only-op-hex]`. `$COPRO_ROM` names the COP data ROM; `OSAGE=<file>` dumps every `Fn_osage` call and `DRAWS=<file>` the draws as CSV, and `RESYNC` / `STATE_EXACT` tune the matrix-state check (`STATE_EXACT`: any differing bit is a bad state, not only 1e-3) |
 | `tests/snd_replay.c` | MAME's MIDI stream through `board/sound.h`: `snd_replay <mame-prefix> <out-prefix> [seconds]`, `$ROMDIR` for the zips. Run it from two builds and `cmp` the five outputs to prove a sound-board change bit-exact (`tools/snd_stimuli.py` writes four more inputs; see "Holding a sound-board change to the same bits") |
 | `tests/scsp_fuzz.c`, `tests/m68k_fuzz.c` | the SCSP under random register traffic, and the whole sound board running random code: each writes one file to `cmp` between two builds or two compilers. `scsp_fuzz <out> [scenarios] [samples]`, `m68k_fuzz <out> [scenarios] [samples] [run]` (`$ROMDIR`) |
