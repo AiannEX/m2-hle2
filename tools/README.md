@@ -1086,6 +1086,11 @@ songs (88 s or the MIDI's end), 62,854 of 65,004 notes have a key-on within 12 m
     `89 0D 51 F1` and `89 0E 52 F1`: flag, channel, instrument (+2,
     `shle_program`), volume (+3). M2MidiDec should start every song with
     programs 80, 81 and 82 and volume 0xF1 on channels 13-15, not program 11.
+    The board settles it: replayed to 57 s, each of the first key-53 notes on
+    channel 14 (47.7, 49.4 and 51.0 s, where nothing else on the channel
+    sounds) keys one voice at -1200 c, root 65, and nothing at 0 c but the
+    drum pair every bar has, so it plays instrument 81, and M2MidiDec should
+    emit program 81 on channel 14 rather than list these as a known mismatch.
   - A few notes on song 0x10 channel 12 and song 0x17 channel 2: 32 of 393 and
     26 of 777, with an explicit program 0.
 
