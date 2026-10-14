@@ -162,11 +162,12 @@ static inline int ps3ui_path_winding(const ps3ui_path_t *p, float sx, float sy)
     return w;
 }
 
-/* Coverage of the path into mask (w*h floats, 0..1, max-combined). */
-static inline void ps3ui_path_cover(const ps3ui_path_t *p, float *mask, int w, int h)
+/* The pixels a path's points reach, [x0, x1) x [y0, y1). */
+typedef struct { int x0, y0, x1, y1; } ps3ui_span_t;
+
+/* The pixels a path (of at least one point) spans, clipped to a w x h mask. */
+static inline ps3ui_span_t ps3ui_path_span(const ps3ui_path_t *p, int w, int h)
 {
-    if (p->n == 0)
-        return;
     float minx = p->x[0], maxx = p->x[0], miny = p->y[0], maxy = p->y[0];
     for (int i = 1; i < p->n; i++) {
         if (p->x[i] < minx) minx = p->x[i];
@@ -174,19 +175,34 @@ static inline void ps3ui_path_cover(const ps3ui_path_t *p, float *mask, int w, i
         if (p->y[i] < miny) miny = p->y[i];
         if (p->y[i] > maxy) maxy = p->y[i];
     }
-    int x0 = (int)floorf(minx), x1 = (int)ceilf(maxx), y0 = (int)floorf(miny), y1 = (int)ceilf(maxy);
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 > w) x1 = w;
-    if (y1 > h) y1 = h;
-    for (int y = y0; y < y1; y++)
-        for (int x = x0; x < x1; x++) {
-            int hit = 0;
-            for (int sy = 0; sy < 4; sy++)
-                for (int sx = 0; sx < 4; sx++)
-                    hit += ps3ui_path_winding(p, (float)x + 0.125f + 0.25f * (float)sx,
-                                              (float)y + 0.125f + 0.25f * (float)sy) != 0;
-            float c = (float)hit / 16.0f;
+    ps3ui_span_t r = { (int)floorf(minx), (int)floorf(miny), (int)ceilf(maxx), (int)ceilf(maxy) };
+    if (r.x0 < 0) r.x0 = 0;
+    if (r.y0 < 0) r.y0 = 0;
+    if (r.x1 > w) r.x1 = w;
+    if (r.y1 > h) r.y1 = h;
+    return r;
+}
+
+/* How many of pixel (x, y)'s 4x4 subsamples lie inside the path, 0..16. */
+static inline int ps3ui_path_hits(const ps3ui_path_t *p, int x, int y)
+{
+    int hit = 0;
+    for (int sy = 0; sy < 4; sy++)
+        for (int sx = 0; sx < 4; sx++)
+            hit += ps3ui_path_winding(p, (float)x + 0.125f + 0.25f * (float)sx,
+                                      (float)y + 0.125f + 0.25f * (float)sy) != 0;
+    return hit;
+}
+
+/* Coverage of the path into mask (w*h floats, 0..1, max-combined). */
+static inline void ps3ui_path_cover(const ps3ui_path_t *p, float *mask, int w, int h)
+{
+    if (p->n == 0)
+        return;
+    ps3ui_span_t r = ps3ui_path_span(p, w, h);
+    for (int y = r.y0; y < r.y1; y++)
+        for (int x = r.x0; x < r.x1; x++) {
+            float c = (float)ps3ui_path_hits(p, x, y) / 16.0f;
             if (c > mask[y * w + x])
                 mask[y * w + x] = c;
         }
