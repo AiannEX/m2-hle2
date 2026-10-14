@@ -47,7 +47,9 @@
  * A local game is recorded too, when the player asks for replays: from the
  * moment the profile says a game is on (game_profile_t.in_play) to its return
  * to attract, every match and the CPU's rounds included. It ends no sooner
- * for a result, so one file holds the whole session.
+ * for a result, so one file holds the whole session, unless the player
+ * finishes it first (replay_rec_finish_local, Pinboard #861): a game that
+ * never goes back to attract (free play, continues) never ends by itself.
  *
  * The zip is made beside the board (a writer thread; the web build has none and
  * makes it at once) and saved as <p1>-vs-<p2>-<local date>-<time>.m2replay, in
@@ -175,6 +177,7 @@ typedef struct {
     volatile int want;          /* the player's switch */
     volatile int format;        /* REPLAY_SAVE_* */
     bool     local;             /* a local game, not an online match */
+    bool     held_off;          /* the player finished this local game's replay: none until it ends */
     char     dir[512];          /* where native builds save ("" = the user dir's replays) */
     bool     on, due;
     uint8_t *feed;
@@ -637,6 +640,7 @@ static inline void replay__begin(emu_thread_ctx_t *ctx, bool local) {
     R->tail = 0;
     R->id++;
     R->local = local;
+    R->held_off = false;
     replay__natives_cut(&R->native, 0);
     replay__meta_begin(&R->meta, local);
     if (!inputs) {
@@ -657,6 +661,13 @@ static inline void replay__begin(emu_thread_ctx_t *ctx, bool local) {
     LOG_INFO("replay: recording %s vs %s", R->meta.p1, R->meta.p2);
 }
 
+/* Would the replay being recorded be kept, were it to end now? */
+static inline bool replay__keeps(void) {
+    const replay_rec_t *R = &g_replay_rec;
+    bool empty = !R->meta.inputs && R->native.n == 0;
+    return !(R->meta.winner < 0 && R->frame < REPLAY_MIN_FRAMES) && !empty;
+}
+
 /* End the replay: keep it (written beside the board) unless it is a fragment. */
 static inline void replay_rec_finish(const char *why) {
     replay_rec_t *R = &g_replay_rec;
@@ -665,8 +676,8 @@ static inline void replay_rec_finish(const char *why) {
     replay__rec(FOLLOW_END, R->slice, why, (uint32_t)strlen(why));
     R->meta.frames = R->frame;
     snprintf(R->meta.why, sizeof R->meta.why, "%s", why);
-    bool empty = !R->meta.inputs && R->native.n == 0;
-    if ((R->meta.winner < 0 && R->frame < REPLAY_MIN_FRAMES) || empty) {
+    if (!replay__keeps()) {
+        bool empty = !R->meta.inputs && R->native.n == 0;
         LOG_INFO("replay: dropped (%s after %u frames, %s)", why, R->frame,
                  empty ? "no round in the game's formats" : "no result");
         replay__natives_cut(&R->native, 0);
@@ -686,6 +697,25 @@ static inline void replay_rec_finish(const char *why) {
     R->feed = NULL;  R->len = R->cap = 0;
     R->snap = NULL;  R->snap_cap = R->snap_len = 0;   /* the next one measures again */
     replay__write_start();
+}
+
+/* Is a local game being recorded, so the player can finish it now? */
+static inline bool replay_rec_local(void) { return g_replay_rec.on && g_replay_rec.local; }
+
+/* The player's "Finish replay" (Pinboard #861): save the local game recorded
+ * so far, as its return to attract would. The game plays on unrecorded; the
+ * next one it starts is recorded again. Says what became of it: NULL when
+ * none was being recorded. Under REPLAY_MIN_FRAMES, or with no round kept in
+ * the game's formats, it is dropped, as ever. */
+static inline const char *replay_rec_finish_local(void) {
+    replay_rec_t *R = &g_replay_rec;
+    if (!replay_rec_local()) return NULL;
+    const char *said = replay__keeps() ? "replay saved"
+                     : !R->meta.inputs && R->native.n == 0 ? "not kept: no round has finished yet"
+                     : "not kept: too short";
+    replay_rec_finish("finished by the player");
+    R->held_off = true;
+    return said;
 }
 
 /* Something the feed cannot carry changed the board (follow_lead_break). */
@@ -772,6 +802,10 @@ static inline void replay__native_latch(void) {
 static inline bool replay__local_slice(emu_thread_ctx_t *ctx) {
     replay_rec_t *R = &g_replay_rec;
     if (!R->on) {
+        if (R->held_off) {   /* finished by the player: wait for this game to end */
+            if (!replay__local_game(ctx)) R->held_off = false;
+            return false;
+        }
         if (R->want && !R->due && replay__local_game(ctx)) replay__begin(ctx, true);
         return R->on;
     }

@@ -102,6 +102,14 @@ static inline void replay_ui_menu(emu_thread_ctx_t *ctx, ImGuiFileDialog *fd) {
         if (igMenuItem("Copy the folder's path")) igSetClipboardText(dir);
     }
     if (replay_recording())     igTextDisabled("recording %s vs %s", g_replay_rec.meta.p1, g_replay_rec.meta.p2);
+    /* A local game records until it goes back to attract, which free play
+     * and continues can put off for ever (Pinboard #861). */
+    if (replay_rec_local() && igMenuItem("Finish the replay")) {
+        replay_ui_lock(ctx);
+        const char *said = replay_rec_finish_local();
+        replay_ui_unlock(ctx);
+        if (said) LOG_INFO("replay: %s", said);
+    }
     if (g_replay_rec.error[0])  igTextDisabled("%s", g_replay_rec.error);
     igEndMenu();
 }

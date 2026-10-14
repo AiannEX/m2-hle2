@@ -2784,7 +2784,9 @@ static void mcp_cmd_follow_lead(const char *req, char *resp, int cap) {
  * opens a replay file and answers its label in "info"; "play":1 plays it from
  * the start, "stop":1 gives the board back; "seek":FRAME, "fast":0|1.
  * "native":N puts round N of the open replay into the board in the game's own
- * replay formats (replay_native_install, Pinboard #602). No arguments only reads.
+ * replay formats (replay_native_install, Pinboard #602). "finish":1 saves the
+ * local game being recorded now, as the page's Finish replay does (Pinboard
+ * #861; "finished" says what became of it). No arguments only reads.
  */
 /* The replay command's settings: "dir", "record", "fast", "format", "view". */
 static const char *mcp_replay_settings(const char *req) {
@@ -2807,6 +2809,14 @@ static const char *mcp_replay_settings(const char *req) {
     return NULL;
 }
 
+static char g_mcp_replay_finished[64];   /* the last "finish":1's outcome */
+
+static const char *mcp_replay_finish(void) {
+    const char *said = replay_rec_finish_local();
+    snprintf(g_mcp_replay_finished, sizeof g_mcp_replay_finished, "%s", said ? said : "");
+    return said ? NULL : "no local game is being recorded";
+}
+
 static const char *mcp_replay_do(const char *req) {
     emu_thread_ctx_t *ctx = g_mcp.emu;
     const char *err = mcp_replay_settings(req);
@@ -2818,6 +2828,7 @@ static const char *mcp_replay_do(const char *req) {
     if (mcp_json_get_u32(req, "play", &v) && v) return ctx ? replay_play_start(ctx) : "no board";
     if (mcp_json_get_u32(req, "seek", &v)) return ctx ? replay_play_seek(ctx, v) : "no board";
     if (mcp_json_get_u32(req, "native", &v)) return ctx ? replay_native_install(ctx, (int)v) : "no board";
+    if (mcp_json_get_u32(req, "finish", &v) && v) return mcp_replay_finish();
     return NULL;
 }
 
@@ -2831,11 +2842,13 @@ static void mcp_cmd_replay(const char *req, char *resp, int cap) {
     json_escape(rerr, sizeof rerr, g_replay_rec.error);
     json_escape(unplayable, sizeof unplayable, g_replay_play.unplayable);
     snprintf(resp, (size_t)cap,
-             "{\"ok\":%s%s%s%s,\"record\":%d,\"format\":\"%s\",\"recording\":%d,\"saved\":%u,\"last\":\"%s\","
+             "{\"ok\":%s%s%s%s,\"record\":%d,\"format\":\"%s\",\"recording\":%d,\"local\":%d,"
+             "\"finished\":\"%s\",\"saved\":%u,\"last\":\"%s\","
              "\"record_error\":\"%s\",\"playback\":%s,\"unplayable\":\"%s\",\"info\":%s}",
              err ? "false" : "true", err ? ",\"error\":\"" : "", err ? err : "", err ? "\"" : "",
              g_replay_rec.want ? 1 : 0, g_replay_rec.format == REPLAY_SAVE_INPUTS ? "inputs" : "native",
-             replay_recording() ? 1 : 0, g_replay_rec.saved, last, rerr,
+             replay_recording() ? 1 : 0, replay_rec_local() ? 1 : 0, g_mcp_replay_finished,
+             g_replay_rec.saved, last, rerr,
              play, unplayable, g_replay_play.json[0] ? g_replay_play.json : "null");
     if (locked) emu_mutex_unlock(&g_mcp.emu->mutex);
 }

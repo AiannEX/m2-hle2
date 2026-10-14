@@ -167,10 +167,28 @@ function replayRefreshRecord(st) {
   $r('replay-rec-error').textContent = st.rec_error || '';
 }
 
+/* The bar's Finish replay, beside Pause (Pinboard #861): only while the
+ * player's own game is being recorded. That records until the game goes back to
+ * attract, which free play and continues can put off for ever. */
+function replayFinishRender(st) {
+  const btn = $r('btn-replay-finish');
+  if (btn && replay.M._web_replay_finish) btn.hidden = !st.local;
+}
+
+function replayFinish() {
+  const said = replay.M.UTF8ToString(replay.M._web_replay_finish());
+  if (!said) return;
+  m2hleTools.add('replay: ' + said);
+  replaySay(said);
+  replayTakeReady();
+  replayRefresh();
+}
+
 function replayRefresh() {
   if (!replay.M || !replay.M._web_replay_status) return;
   const st = replayStatus();
   replayRefreshRecord(st);
+  replayFinishRender(st);
   $r('replay-result').hidden = $r('replay-hide').checked;
   const open = st.loaded && !$r('replay-label').hidden;
   $r('replay-ask').hidden = !open || st.on || !!st.unplayable;
@@ -276,6 +294,10 @@ function replayPick(e) {
 }
 
 function replayWire() {
+  $r('btn-replay-finish').addEventListener('click', () => {
+    replayFinish();
+    if (typeof leaveBar === 'function') leaveBar();   /* m2hle-page.js: the canvas gets the keys back */
+  });
   $r('replay-record').addEventListener('change', (e) => {
     replay.M._web_replay_set_record(e.target.checked ? 1 : 0);
     try { localStorage.setItem('m2hle.replayRecord', e.target.checked ? '1' : '0'); } catch (x) { /* private mode */ }
@@ -342,7 +364,9 @@ const m2hleReplay = {
     replayList();
     replay.timer = setInterval(() => {
       replayTakeReady();
-      if (!$r('pane-replay').hidden || replayStatus().on) replayRefresh();
+      const st = replayStatus();
+      if (!$r('pane-replay').hidden || st.on) replayRefresh();
+      else replayFinishRender(st);
     }, REPLAY_POLL_MS);
     replayRefresh();
   },
