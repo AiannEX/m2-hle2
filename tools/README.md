@@ -1072,9 +1072,16 @@ songs (88 s or the MIDI's end), 62,854 of 65,004 notes have a key-on within 12 m
     13-15 with instruments 80, 81 and 82. M2MidiDec writes a program change only
     for a song's own track-init records, so these channels have none. The
     channel's notes fit programs 80-82 exactly.
-  - Song 0x10 channels 14 and 15: 113 and 30 notes, +800 and +2400 c. They fit
-    the drum kit (program 11) exactly instead, so something in that song changes
-    their instrument, and M2MidiDec does not write that change either.
+  - Song 0x10 channels 14 and 15: 113 and 30 notes, +800 and +2400 c. These are
+    the same fixed tracks (instruments 81 and 82). Nothing switches them to
+    another instrument: no song or effect in the music table sends a program
+    change on channels 13-16, and song 0x10's `A0 07 0E` library entry has no
+    track there. The notes also fit the drum kit (program 11), but only because
+    its keys 52 and 36 share their root keys (64 and 48) with 81's and 82's.
+    Key 53 differs by an octave between the two kits, and so does key 69, which
+    song 0x17 plays on the same track. So M2MidiDec should not write program 11
+    here. It should start every song with the fixed tracks' program changes
+    (channels 13-15: 80, 81, 82) and their volume.
   - A few notes on song 0x10 channel 12 and song 0x17 channel 2: 32 of 393 and
     26 of 777, with an explicit program 0.
 
