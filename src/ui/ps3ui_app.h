@@ -681,24 +681,28 @@ static int ps3ui_move(ps3ui_app_t *a, int *cur, int n, int wrap)
 
 /* ---- the room, read off the status --------------------------------------------- */
 
-/* The two fighters of the next match: the room's fighters when a match is
- * under way, else the front of the line (1P/2P entries first), as room.h
- * picks them. Returns member indices, -1 for an empty side. */
-static void ps3ui_fighters(const netplay_status_t *st, int out[2])
+/* The room's fighters, when a match is under way: the members on a side. */
+static void ps3ui_fighters_sided(const netplay_status_t *st, int out[2])
 {
-    out[0] = out[1] = -1;
     for (uint32_t i = 0; i < st->member_count; i++) {
         int side = st->members[i].side;
         if (side == 0 || side == 1)
             out[side] = (int)i;
     }
-    if (out[0] >= 0 || out[1] >= 0)
-        return;
-    /* nobody on a side yet: by entry, then by line */
+}
+
+/* Nobody on a side yet: the 1P and 2P entries take theirs. */
+static void ps3ui_fighters_by_entry(const netplay_status_t *st, int out[2])
+{
     for (int want = 1; want <= 2; want++)
         for (uint32_t i = 0; i < st->member_count; i++)
             if (st->members[i].data.entry == want && out[want - 1] < 0)
                 out[want - 1] = (int)i;
+}
+
+/* Then the front of the line, watchers left out, fills what is still empty. */
+static void ps3ui_fighters_by_line(const netplay_status_t *st, int out[2])
+{
     for (int pos = 0; pos < (int)ROOM_MAX_MEMBERS; pos++)
         for (uint32_t i = 0; i < st->member_count; i++) {
             if (st->members[i].line_pos != pos || (int)i == out[0] || (int)i == out[1])
@@ -710,6 +714,19 @@ static void ps3ui_fighters(const netplay_status_t *st, int out[2])
             else if (out[1] < 0)
                 out[1] = (int)i;
         }
+}
+
+/* The two fighters of the next match: the room's fighters when a match is
+ * under way, else the front of the line (1P/2P entries first), as room.h
+ * picks them. Returns member indices, -1 for an empty side. */
+static void ps3ui_fighters(const netplay_status_t *st, int out[2])
+{
+    out[0] = out[1] = -1;
+    ps3ui_fighters_sided(st, out);
+    if (out[0] >= 0 || out[1] >= 0)
+        return;
+    ps3ui_fighters_by_entry(st, out);
+    ps3ui_fighters_by_line(st, out);
 }
 
 /* ---- screens: update ------------------------------------------------------------ */
