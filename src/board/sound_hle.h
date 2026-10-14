@@ -495,78 +495,103 @@ static void shle_stream_hw_loop(uint32_t slot, uint32_t rec, uint32_t lr) {
     shle_wb(rec, shle_rb(rec) & 0x7F);
 }
 
+/* one slot's step, as loc_6041EA holds it in registers */
+typedef struct {
+    unsigned i;
+    uint32_t slot, rec, lr;  /* the SCSP slot, its stream record and its loop record */
+    uint32_t a1, a2, d5;     /* the next chunk's source and ring destination, the bytes left */
+    uint16_t d0;             /* the pacing, with this step's speed added */
+    uint8_t f, d2;           /* the record's flags and its place in the ring */
+} shle_chunk_t;
+
+/* where in the ring the next chunk goes; false while the chip is still
+ * playing the half it would land in */
+static bool shle_stream_dest(shle_chunk_t *c) {
+    if (c->d2 == 0) {                                   /* the lower half: once the chip has left it */
+        if (!shle_ca_upper(c->i)) return false;
+        shle_wl(c->lr, shle_rl(c->lr) - 0x2000);
+        shle_wl(c->lr + 4, shle_rl(c->lr + 4) - 0x2000);
+        c->a2 = shle_rl(c->rec + 0xE);
+    } else if (c->d2 == 0x80) {                         /* the upper half: likewise */
+        if (shle_ca_upper(c->i)) return false;
+        c->a2 = shle_rl(c->rec + 6);
+    } else c->a2 = shle_rl(c->rec + 6);
+    return true;
+}
+
+/* loc_604376: the end of a looped sample */
+static void shle_stream_loop_end(const shle_chunk_t *c) {
+    uint32_t rec = c->rec, lr = c->lr;
+    uint32_t x = (0x200u - c->d5) & 0xFFFF;
+    uint32_t d4 = (shle_rl(rec + 0x12) & 0xFFFFFFu) + x;
+    int32_t d3 = (int32_t)((shle_rl(rec + 0x16) & 0xFFFFFFu) - x);
+    if (d3 < 0) d3 = (int32_t)(shle_rl(rec + 0x16) & 0xFFFFFFu);
+    shle_wb(rec + 1, c->d2 + 0x10);
+    shle_ww(rec + 0x1C, c->d0 & 0x7FFF);
+    shle_wl(rec + 2, d4);
+    shle_wl(rec + 0xA, (uint32_t)d3);
+    shle_copy(c->a2, c->a1, 0x200);                     /* the tail, and the bytes after it, which repeat the loop's start */
+    shle_wl(rec + 6, c->a2 + 0x200);
+    if (!(c->f & 0x02)) return;
+    if ((int32_t)shle_rl(lr) < 0) {
+        shle_wl(lr, shle_rl(lr + 4));
+        shle_ww(lr + 6, shle_rw(lr + 6) + shle_rw(rec + 0x18));
+        shle_wl(rec + 2, shle_rl(rec + 0x12));
+        shle_wl(rec + 6, shle_rl(lr) + shle_rl(rec + 0xE));
+        return;
+    }
+    if ((uint8_t)(shle_rb(rec + 1) - 0x10) & 0x80) { shle_stream_hw_loop(c->slot, rec, lr); return; }
+    if (shle_rb(lr + 0x10) & 1) { shle_stream_hw_loop(c->slot, rec, lr); return; }
+    shle_wb(rec, (shle_rb(rec) | 0x04) & ~0x01u);
+}
+
+/* loc_6045D8: the last chunk */
+static void shle_stream_last(const shle_chunk_t *c) {
+    shle_ww(c->rec + 0x1E, (uint16_t)((c->a2 - shle_rl(c->rec + 0xE)) + c->d5));
+    shle_copy(c->a2, c->a1, 0x200);
+    if (!(c->d2 & 0x80)) {
+        shle_wb(c->rec, shle_rb(c->rec) | 0x08);
+        shle_wb(c->rec + 1, c->d2 + 0x10);
+        return;
+    }
+    shle_stream_done(c->i, c->rec);                     /* loc_6046C2: in the upper half, at once */
+}
+
 static void shle_stream_step(unsigned i) {
-    uint32_t slot = i * 0x20u, rec = SHLE_A6(0x1000) + slot, lr = SHLE_A6(0x1A00) + slot;
-    uint8_t f = shle_rb(rec);
-    if (!(f & 0x80)) return;
-    uint16_t d0 = (uint16_t)(shle_rw(rec + 0x1C) + shle_rw(rec + 0x1A));
-    if (d0 & 0x8000) { shle_ww(rec + 0x1C, d0); return; }    /* not yet: the pacing */
-    uint8_t d2 = shle_rb(rec + 1);
-    uint32_t a2;
-    if (d2 == 0) {                                      /* the lower half: once the chip has left it */
-        if (!shle_ca_upper(i)) return;
-        shle_wl(lr, shle_rl(lr) - 0x2000);
-        shle_wl(lr + 4, shle_rl(lr + 4) - 0x2000);
-        a2 = shle_rl(rec + 0xE);
-    } else if (d2 == 0x80) {                            /* the upper half: likewise */
-        if (shle_ca_upper(i)) return;
-        a2 = shle_rl(rec + 6);
-    } else a2 = shle_rl(rec + 6);
-    uint32_t a1 = shle_rl(rec + 2), d5 = shle_rl(rec + 0xA);
+    shle_chunk_t c = { .i = i, .slot = i * 0x20u };
+    c.rec = SHLE_A6(0x1000) + c.slot;
+    c.lr = SHLE_A6(0x1A00) + c.slot;
+    c.f = shle_rb(c.rec);
+    if (!(c.f & 0x80)) return;
+    c.d0 = (uint16_t)(shle_rw(c.rec + 0x1C) + shle_rw(c.rec + 0x1A));
+    if (c.d0 & 0x8000) { shle_ww(c.rec + 0x1C, c.d0); return; }    /* not yet: the pacing */
+    c.d2 = shle_rb(c.rec + 1);
+    if (!shle_stream_dest(&c)) return;
+    c.a1 = shle_rl(c.rec + 2);
+    c.d5 = shle_rl(c.rec + 0xA);
     g_shle.chunks++;
     g_shle.chunks_total++;
-    if (d5 > 0x200) {                                   /* a whole chunk */
-        shle_wl(rec + 0xA, d5 - 0x200);
-        shle_wb(rec + 1, d2 + 0x10);
-        shle_ww(rec + 0x1C, d0 & 0x7FFF);
-        shle_copy(a2, a1, 0x200);
-        shle_wl(rec + 2, a1 + 0x200);
-        shle_wl(rec + 6, a2 + 0x200);
+    if (c.d5 > 0x200) {                                 /* a whole chunk */
+        shle_wl(c.rec + 0xA, c.d5 - 0x200);
+        shle_wb(c.rec + 1, c.d2 + 0x10);
+        shle_ww(c.rec + 0x1C, c.d0 & 0x7FFF);
+        shle_copy(c.a2, c.a1, 0x200);
+        shle_wl(c.rec + 2, c.a1 + 0x200);
+        shle_wl(c.rec + 6, c.a2 + 0x200);
         return;
     }
-    if (f & 0x01) {                                     /* loc_604376: the end of a looped sample */
-        uint32_t x = (0x200u - d5) & 0xFFFF;
-        uint32_t d4 = (shle_rl(rec + 0x12) & 0xFFFFFFu) + x;
-        int32_t d3 = (int32_t)((shle_rl(rec + 0x16) & 0xFFFFFFu) - x);
-        if (d3 < 0) d3 = (int32_t)(shle_rl(rec + 0x16) & 0xFFFFFFu);
-        shle_wb(rec + 1, d2 + 0x10);
-        shle_ww(rec + 0x1C, d0 & 0x7FFF);
-        shle_wl(rec + 2, d4);
-        shle_wl(rec + 0xA, (uint32_t)d3);
-        shle_copy(a2, a1, 0x200);                       /* the tail, and the bytes after it, which repeat the loop's start */
-        shle_wl(rec + 6, a2 + 0x200);
-        if (!(f & 0x02)) return;
-        if ((int32_t)shle_rl(lr) < 0) {
-            shle_wl(lr, shle_rl(lr + 4));
-            shle_ww(lr + 6, shle_rw(lr + 6) + shle_rw(rec + 0x18));
-            shle_wl(rec + 2, shle_rl(rec + 0x12));
-            shle_wl(rec + 6, shle_rl(lr) + shle_rl(rec + 0xE));
-            return;
-        }
-        if ((uint8_t)(shle_rb(rec + 1) - 0x10) & 0x80) { shle_stream_hw_loop(slot, rec, lr); return; }
-        if (shle_rb(lr + 0x10) & 1) { shle_stream_hw_loop(slot, rec, lr); return; }
-        shle_wb(rec, (shle_rb(rec) | 0x04) & ~0x01u);
-        return;
-    }
-    if (f & 0x04) {                                     /* loc_604522: waiting to hand a loop to the chip */
+    if (c.f & 0x01) { shle_stream_loop_end(&c); return; }
+    if (c.f & 0x04) {                                   /* loc_604522: waiting to hand a loop to the chip */
         if (shle_ca_upper(i)) return;
-        shle_stream_hw_loop(slot, rec, lr);
+        shle_stream_hw_loop(c.slot, c.rec, c.lr);
         return;
     }
-    if (f & 0x08) {                                     /* loc_60453A: the end is in the lower half */
+    if (c.f & 0x08) {                                   /* loc_60453A: the end is in the lower half */
         if (shle_ca_upper(i)) return;
-        shle_stream_done(i, rec);
+        shle_stream_done(i, c.rec);
         return;
     }
-    /* loc_6045D8: the last chunk */
-    shle_ww(rec + 0x1E, (uint16_t)((a2 - shle_rl(rec + 0xE)) + d5));
-    shle_copy(a2, a1, 0x200);
-    if (!(d2 & 0x80)) {
-        shle_wb(rec, shle_rb(rec) | 0x08);
-        shle_wb(rec + 1, d2 + 0x10);
-        return;
-    }
-    shle_stream_done(i, rec);                           /* loc_6046C2: in the upper half, at once */
+    shle_stream_last(&c);
 }
 
 /* ---- note on (MidEvt_NoteOn) ------------------------------------------------------ */
