@@ -1088,6 +1088,41 @@ static inline void scsp_slot_run(scsp_t *s, unsigned i, uint32_t to) {
     hprof_leave(zone);
 }
 
+static inline int32_t scsp_clamp(int32_t v, int32_t lo, int32_t hi) {
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+/* One sample to the DAC: 18-bit or 16-bit, the master volume, the sink. */
+static inline void scsp_sample_out(scsp_t *s, int32_t l, int32_t r) {
+    if (SCSP_C_DAC18B(s)) {
+        l = scsp_clamp(l, -131072, 131071) >> 2;
+        r = scsp_clamp(r, -131072, 131071) >> 2;
+    } else {
+        l = scsp_clamp(l >> 2, -32768, 32767);
+        r = scsp_clamp(r >> 2, -32768, 32767);
+    }
+    int mvol = (int)SCSP_C_MVOL(s);                   /* MAME: output gain MVOL / 15 */
+    s->samples++;
+    if (s->sink) s->sink(s->sink_ud, (int16_t)(l * mvol / 15), (int16_t)(r * mvol / 15));
+}
+
+/* Owed sample k: the slots' sends into the DSP, a DSP step, its effect
+ * outputs onto the direct mix, then out. */
+static inline void scsp_sample_mix(scsp_t *s, uint32_t k) {
+    int32_t *mx = s->acc_mixs[k];
+    for (int j = 0; j < 16; j++) { s->dsp.mixs[j] += mx[j]; mx[j] = 0; }
+    int32_t l = s->acc_l[k], r = s->acc_r[k];
+    s->acc_l[k] = s->acc_r[k] = 0;
+    scsp_dsp_step(s);
+    for (int i = 0; i < 16; i++) {
+        const scsp_slot_t *sl = &s->slot[i];
+        if (!SCSP_EFSDL(sl)) continue;
+        l += (s->dsp.efreg[i] * sl->g_el) >> SCSP_SHIFT;
+        r += (s->dsp.efreg[i] * sl->g_er) >> SCSP_SHIFT;
+    }
+    scsp_sample_out(s, l, r);
+}
+
 /* Make every owed sample: the slots, then the DSP and the mix, in order. */
 static void scsp_sync(scsp_t *s) {
     const uint32_t n = s->owed;
@@ -1095,31 +1130,7 @@ static void scsp_sync(scsp_t *s) {
     int zone = hprof_enter(HPROF_SCSP);
     for (unsigned i = 0; i < 32; i++) scsp_slot_run(s, i, n);
     if (!s->latch_fresh) { scsp_latch(s); s->latch_fresh = 1; }
-    for (uint32_t k = 0; k < n; k++) {
-        int32_t *mx = s->acc_mixs[k];
-        for (int j = 0; j < 16; j++) { s->dsp.mixs[j] += mx[j]; mx[j] = 0; }
-        int32_t l = s->acc_l[k], r = s->acc_r[k];
-        s->acc_l[k] = s->acc_r[k] = 0;
-        scsp_dsp_step(s);
-        for (int i = 0; i < 16; i++) {
-            const scsp_slot_t *sl = &s->slot[i];
-            if (!SCSP_EFSDL(sl)) continue;
-            l += (s->dsp.efreg[i] * sl->g_el) >> SCSP_SHIFT;
-            r += (s->dsp.efreg[i] * sl->g_er) >> SCSP_SHIFT;
-        }
-        if (SCSP_C_DAC18B(s)) {
-            l = l < -131072 ? -131072 : l > 131071 ? 131071 : l;
-            r = r < -131072 ? -131072 : r > 131071 ? 131071 : r;
-            l >>= 2; r >>= 2;
-        } else {
-            l >>= 2; r >>= 2;
-            l = l < -32768 ? -32768 : l > 32767 ? 32767 : l;
-            r = r < -32768 ? -32768 : r > 32767 ? 32767 : r;
-        }
-        int mvol = (int)SCSP_C_MVOL(s);                   /* MAME: output gain MVOL / 15 */
-        s->samples++;
-        if (s->sink) s->sink(s->sink_ud, (int16_t)(l * mvol / 15), (int16_t)(r * mvol / 15));
-    }
+    for (uint32_t k = 0; k < n; k++) scsp_sample_mix(s, k);
     s->sous_ptr = (uint8_t)(s->sous_ptr ^ ((n & 1u) << 5));
     s->owed = 0;
     memset(s->done, 0, sizeof s->done);
