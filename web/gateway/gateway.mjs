@@ -60,7 +60,7 @@ export const DEFAULTS = {
    * the Caddy in front: true means loopback; a list names the proxy's addresses
    * or CIDR blocks (a Caddy in a Docker network reaches us from its bridge). */
   trustProxy: true,
-  origins: ['https://play.sonicthefighte.rs', 'https://biggestsonicfan.github.io'],
+  origins: ['https://arcade.sonicthefighte.rs', 'https://play.sonicthefighte.rs', 'https://biggestsonicfan.github.io'],
   /* How RPCN's certificate is checked: `fingerprint` pins a self-signed one
    * (what `rpcn --cert-gen` makes); `servername` validates a CA-issued one by
    * chain and name instead, which survives renewal where a pin would not. */

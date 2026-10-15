@@ -12,27 +12,32 @@
 #
 # The stylesheet names its fonts (fonts/*.woff2) the same way, and index.html
 # preloads them under those very URLs, so both files are stamped.
-foreach(page index.html m2hle.css)
+foreach(page index.html home.html m2hle.css)
   file(READ "${SITE}/${page}" text)
   string(REPLACE "@M2HLE_VERSION@" "${VERSION}" text "${text}")
   file(WRITE "${SITE}/${page}" "${text}")
 endforeach()
 
-# srally.sonicthefighte.rs serves these same files, and m2hle-game.js gives the
-# page Sega Rally's title once it runs. A link preview (Discord, a chat app, a
-# search engine) reads the page without running it, so srally's proxy serves
-# srally.html for / instead: index.html with Sega Rally's words in its head
-# (web/srally/Caddyfile, Pinboard #673). The same text as m2hle-game.js sets.
+# A game's own page: index.html with that game's words in its head. m2hle-game.js
+# gives the page its game's title once it runs, but a link preview (Discord, a chat
+# app, a search engine) reads the page without running it, so a link that should
+# name its game points at sfight.html or srallyc.html (m2hle-games.js picks the game
+# from the file name; Pinboard #673, #881). The same text as m2hle-game.js sets.
 file(READ "${SITE}/index.html" text)
-set(sonic_title "<title>Sonic the Fighters</title>")
-set(sonic_desc "content=\"Play Sonic the Fighters in your browser, online, with your own copy of the game.\"")
-foreach(want sonic_title sonic_desc)
+set(site_title "<title>Model 2 Arcade</title>")
+set(site_desc "content=\"Play Sega Model 2 arcade games in your browser, with your own copy of the game.\"")
+foreach(want site_title site_desc)
   string(FIND "${text}" "${${want}}" at)
   if(at EQUAL -1)
-    message(FATAL_ERROR "stamp-site: index.html no longer has ${${want}}; update srally.html's words here")
+    message(FATAL_ERROR "stamp-site: index.html no longer has ${${want}}; update the game pages' words here")
   endif()
 endforeach()
-string(REPLACE "${sonic_title}" "<title>Sega Rally Championship</title>" text "${text}")
-string(REPLACE "${sonic_desc}"
-  "content=\"Play Sega Rally Championship in your browser, with your own copy of the game.\"" text "${text}")
-file(WRITE "${SITE}/srally.html" "${text}")
+foreach(game "sfight|Sonic the Fighters" "srallyc|Sega Rally Championship")
+  string(REPLACE "|" ";" game "${game}")
+  list(GET game 0 id)
+  list(GET game 1 title)
+  string(REPLACE "${site_title}" "<title>${title}</title>" page "${text}")
+  string(REPLACE "${site_desc}"
+    "content=\"Play ${title} in your browser, with your own copy of the game.\"" page "${page}")
+  file(WRITE "${SITE}/${id}.html" "${page}")
+endforeach()

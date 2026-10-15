@@ -1,28 +1,31 @@
 # srally.sonicthefighte.rs
 
-The Sega Rally page is play.sonicthefighte.rs under another name: the same files,
-and `web/site/m2hle-game.js` picks Sega Rally when the host name starts `srally.`.
-So the site holds no build of its own. One file differs: for `/` it serves
-`srally.html`, which the build writes beside `index.html` with Sega Rally's
-title and description, so a link preview (which runs no script) names Sega
-Rally (Pinboard #673). A Caddy container on the RPCN droplet
-(`srally-web`, on the `proxy` network) proxies play.sonicthefighte.rs, and srally
-is always whatever the pages workflow last published (Pinboard #649). Until #649
-it served a copy of `build_web/site` deployed by hand, which fell behind play.
+Since Pinboard #881 every game is on **arcade.sonicthefighte.rs** (GitHub Pages):
+`?game=srallyc` plays Sega Rally, and `srallyc.html` is the same page with Sega
+Rally's title and description in its head, for a link preview (which runs no
+script). srally.sonicthefighte.rs and play.sonicthefighte.rs are only aliases:
 
-On the droplet (143.198.49.181):
+| Old address | Goes to |
+|---|---|
+| `srally.sonicthefighte.rs/` | `arcade.sonicthefighte.rs/srallyc.html` |
+| `play.sonicthefighte.rs/` | `arcade.sonicthefighte.rs/sfight.html` |
+| either, any other path | the same path on arcade |
 
-- `/root/srally-web/Caddyfile.web` is [Caddyfile](Caddyfile), mounted into the
-  container. `/root/srally-web/Caddyfile.web.static-20261012` is the old
-  static-copy config, kept for a rollback (with `/srv/srally-web`, the r675 copy).
-- `/root/forgejo/Caddyfile` has the `srally.sonicthefighte.rs` block: TLS with the
-  `*.sonicthefighte.rs` origin certificate, `reverse_proxy srally-web:8080`.
+Keep the query string (`?follow=`, `?ggpo=`, `?wheel=`...). The page also picks the
+game from a host named `srally.*` or `play.*`, so a proxy instead of a redirect
+works too.
 
-To change it, edit the file here, copy it over `/root/srally-web/Caddyfile.web`
-and `docker restart srally-web`. Check with
+The redirect can be a Cloudflare redirect rule, or this directory's
+[Caddyfile](Caddyfile) in the `srally-web` container on the RPCN droplet
+(143.198.49.181, on the `proxy` network; `/root/forgejo/Caddyfile` has the
+`srally.sonicthefighte.rs` block with the `*.sonicthefighte.rs` origin
+certificate, `reverse_proxy srally-web:8080`). To change it, copy the file over
+`/root/srally-web/Caddyfile.web` and `docker restart srally-web`. Check with
 
 ```
-curl -s https://srally.sonicthefighte.rs/ | grep -o 'r[0-9]*-[0-9a-f]\{7\}' | sort -u
+curl -sI https://srally.sonicthefighte.rs/ | grep -i '^location'
 ```
 
-which must print the same version as play.sonicthefighte.rs.
+Until #881 the container proxied play.sonicthefighte.rs and served `srally.html`
+for `/` (Pinboard #649, #673); `/root/srally-web/Caddyfile.web.static-20261012`
+is the older static-copy config.

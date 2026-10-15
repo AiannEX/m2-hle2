@@ -1,37 +1,21 @@
 /*
- * Which game this page plays. Loaded first: the key and pad panels read their
- * row labels from it, and the page script its arguments and ROM text.
- *
- * ?game=srallyc picks Sega Rally, and so does a host named srally.* (the
- * srally.sonicthefighte.rs site serves these same files). Anything else is
- * Sonic the Fighters, as before. The game reaches main_web.c as --profile=ID;
- * ?wheel=range,speed (or ?wheel=range) adjusts Sega Rally's steering pot
- * (src/board/io_5649.h; the default is the operator manual's spec).
+ * Which game this page plays. Loaded after m2hle-games.js, which picked it
+ * from the address (?game=ID&profile=PROFILE, Pinboard #881); the key and pad
+ * panels read their row labels from this, and the page script its arguments
+ * and ROM text. The profile reaches main_web.c as --profile=ID; ?wheel=range,speed
+ * (or ?wheel=range) adjusts Sega Rally's steering pot (src/board/io_5649.h; the
+ * default is the operator manual's spec).
  */
 'use strict';
 
 const m2hleGame = (() => {
   const params = new URLSearchParams(location.search);
-  const GAMES = {
-    sfight: {
-      title: 'Sonic the Fighters',
-      args: [],
-      romHint: 'A merged <code>sfight.zip</code> or <code>schamp.zip</code>',
-      labels: {},
-    },
-    srallyc: {
-      title: 'Sega Rally Championship',
-      args: ['--profile=srallyc'],
-      romHint: 'Your <code>srallyc.zip</code> (Sega Rally Championship, Twin/DX)',
-      /* src/profiles/srallyc.h: LEFT/RIGHT the wheel, B1 accelerator, B2 brake,
-       * UP/DOWN a gear, B3 VIEW CHANGE. */
-      labels: { up: 'Shift up', down: 'Shift down', left: 'Steer left', right: 'Steer right',
-                b1: 'Accelerator', b2: 'Brake', b3: 'View change', b4: 'Unused' },
-    },
-  };
-  const asked = params.get('game');
-  const id = GAMES[asked] ? asked : /^srally\./.test(location.hostname) ? 'srallyc' : 'sfight';
-  const game = Object.assign({ id }, GAMES[id]);
+  /* index.html sends a visit with no game to the front page before this runs;
+   * Sonic the Fighters only if that did not happen yet. */
+  const picked = m2hleGames.picked || { id: 'sfight', profile: 'sfight_console' };
+  const id = picked.id;
+  const game = Object.assign({ id, profile: picked.profile }, m2hleGames.GAMES[id],
+                             { args: ['--profile=' + picked.profile] });
 
   if (id === 'srallyc') {
     const w = (params.get('wheel') || '').split(',').map((v) => v.trim());
@@ -39,7 +23,7 @@ const m2hleGame = (() => {
     if (/^(0x[0-9a-f]+|\d+)$/i.test(w[1] || '')) game.args.push('--wheel-speed=' + w[1]);
   }
 
-  /* The page's own words for the game (index.html is Sonic the Fighters'). */
+  /* The page's own words for the game (index.html's are the whole arcade's). */
   document.title = game.title;
   const head = document.querySelector('#panel .ps-title');
   if (head) head.textContent = game.title;
