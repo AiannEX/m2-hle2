@@ -128,24 +128,32 @@ static inline void replay_ui_dialog(emu_thread_ctx_t *ctx, ImGuiFileDialog *fd) 
     IGFD_CloseDialog(fd);
 }
 
+/* How it ended: who beat whom, or why it stopped. */
+static inline void replay_ui_result(const replay_label_t *l) {
+    if (l->players == 1)
+        igText("Ended: %s", l->ended[0] ? l->ended : "?");
+    else if (l->winner == 0 || l->winner == 1)
+        igText("%s beat %s, %u-%u", l->winner_name, l->loser_name,
+               l->winner == 0 ? l->r1 : l->r2, l->winner == 0 ? l->r2 : l->r1);
+    else
+        igText("No result: %s", l->ended[0] ? l->ended : "it ended early");
+}
+
 /* The label: who, with whom, where, when, and (unless hidden) how it ended. */
 static inline void replay_ui_label(const replay_label_t *l) {
     time_t t = (time_t)l->timestamp;
     struct tm *tm = localtime(&t);
     char when[64] = "";
     if (tm) strftime(when, sizeof when, "%Y-%m-%d %H:%M", tm);
-    igText("%s (%s)  vs  %s (%s)", l->p1, l->c1[0] ? l->c1 : "?", l->p2, l->c2[0] ? l->c2 : "?");
-    igText("Stage: %s", l->stage[0] ? l->stage : "?");
+    bool solo = l->players == 1;
+    if (solo) igText("%s (%s)", l->p1, l->c1[0] ? l->c1 : "?");
+    else igText("%s (%s)  vs  %s (%s)", l->p1, l->c1[0] ? l->c1 : "?", l->p2, l->c2[0] ? l->c2 : "?");
+    igText("%s: %s", solo ? "Course" : "Stage", l->stage[0] ? l->stage : "?");
     igText("Played %s, %u:%02u long", when, l->seconds / 60, l->seconds % 60);
     igTextDisabled("recorded by %s%s; %s, %s", l->recorded_by,
                    strcmp(l->netcode, "ggpo") == 0 ? " over GGPO" : "", l->romset, l->profile);
     igCheckbox("Hide the result", &g_replay_ui.hide_result);
-    if (g_replay_ui.hide_result) return;
-    if (l->winner == 0 || l->winner == 1)
-        igText("%s beat %s, %u-%u", l->winner_name, l->loser_name,
-               l->winner == 0 ? l->r1 : l->r2, l->winner == 0 ? l->r2 : l->r1);
-    else
-        igText("No result: %s", l->ended[0] ? l->ended : "it ended early");
+    if (!g_replay_ui.hide_result) replay_ui_result(l);
 }
 
 /* While it plays: the time line, and the buttons. */

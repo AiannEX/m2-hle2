@@ -44,6 +44,8 @@
  *                        rounds the game kept is not saved.
  *   REPLAY_SAVE_INPUTS   the above plus state.sta and inputs.feed, #572's
  *                        frame-exact record of the whole match.
+ * A game with no format of its own (no native_take: Sega Rally, Pinboard #877)
+ * is always saved the second way (replay__saves_inputs).
  * A local game is recorded too, when the player asks for replays: from the
  * moment the profile says a game is on (game_profile_t.in_play) to its return
  * to attract, every match and the CPU's rounds included. It ends no sooner
@@ -52,7 +54,8 @@
  * never goes back to attract (free play, continues) never ends by itself.
  *
  * The zip is made beside the board (a writer thread; the web build has none and
- * makes it at once) and saved as <p1>-vs-<p2>-<local date>-<time>.m2replay, in
+ * makes it at once) and saved as <p1>-vs-<p2>-<local date>-<time>.m2replay
+ * (<romset>-<date>-<time> for a one-player game), in
  * the replay folder (native) or handed to the page (web_replay_take).
  *
  * Playback (g_replay_play) has two views. The default is the game's own: the
@@ -299,6 +302,12 @@ static inline void replay__sample(emu_thread_ctx_t *ctx, replay_meta_t *m) {
     m->fight_seen = true;
 }
 
+/* Are the state and the feed saved: asked for, or the game keeps no replay of
+ * its own to save instead? */
+static inline bool replay__saves_inputs(void) {
+    return g_replay_rec.format == REPLAY_SAVE_INPUTS || !g_active_profile || !g_active_profile->native_take;
+}
+
 static inline void replay__meta_begin(replay_meta_t *m, bool local) {
     memset(m, 0, sizeof *m);
     replay__copy_name(m->p1, "1P");
@@ -325,7 +334,7 @@ static inline void replay__meta_begin(replay_meta_t *m, bool local) {
         m->side = 0;
         m->session = m->match = 0;
     }
-    m->inputs  = g_replay_rec.format == REPLAY_SAVE_INPUTS;
+    m->inputs  = replay__saves_inputs();
     m->when    = (int64_t)time(NULL);
     m->winner  = -1;
     follow_settings(m->settings);
@@ -340,7 +349,13 @@ static inline void replay__file_part(char *out, size_t cap, const char *in) {
     if (!n) snprintf(out, cap, "player");
 }
 
-/* <p1>-vs-<p2>-YYYYMMDD-HHMMSS.m2replay, in the recorder's local time. */
+/* A one-player game's replay (Sega Rally's race): side 0 only. */
+static inline bool replay__solo(const replay_meta_t *m) {
+    return m->fight_seen && m->fight.players == 1;
+}
+
+/* <p1>-vs-<p2>-YYYYMMDD-HHMMSS.m2replay, in the recorder's local time;
+ * <romset>-YYYYMMDD-HHMMSS.m2replay for a one-player game. */
 static inline void replay_file_name(const replay_meta_t *m, char *out, size_t cap) {
     char a[REPLAY_NAME_MAX], b[REPLAY_NAME_MAX], when[32] = "00000000-000000";
     replay__file_part(a, sizeof a, m->p1);
@@ -348,7 +363,9 @@ static inline void replay_file_name(const replay_meta_t *m, char *out, size_t ca
     time_t t = (time_t)m->when;
     struct tm *tm = localtime(&t);
     if (tm) strftime(when, sizeof when, "%Y%m%d-%H%M%S", tm);
-    snprintf(out, cap, "%s-vs-%s-%s%s", a, b, when, REPLAY_EXT);
+    if (!replay__solo(m)) { snprintf(out, cap, "%s-vs-%s-%s%s", a, b, when, REPLAY_EXT); return; }
+    replay__file_part(a, sizeof a, m->romset[0] ? m->romset : m->profile);
+    snprintf(out, cap, "%s-%s%s", a, when, REPLAY_EXT);
 }
 
 /* `,"key":"value"` with the value escaped. */
@@ -362,23 +379,32 @@ static inline void replay__json_int(char *out, size_t cap, size_t *n, const char
     if (*n < cap) *n += (size_t)snprintf(out + *n, cap - *n, ",\"%s\":%lld", key, v);
 }
 
-/* The fight's half of replay.json: characters, stage, rounds, result. */
-static inline void replay__json_fight(const replay_meta_t *m, char *out, size_t cap, size_t *n) {
+/* Each side's character and rounds, and the stage. A one-player game's is its
+ * car as p1_character and its course as the stage, with no rounds. */
+static inline void replay__json_sides(const replay_meta_t *m, bool solo, char *out, size_t cap, size_t *n) {
     const game_match_info_t *f = &m->fight;
     char unknown[24];
-    for (int side = 0; side < 2 && m->fight_seen; side++) {
+    for (int side = 0; side < (solo ? 1 : 2) && m->fight_seen; side++) {
         const char *key = side ? "p2_character" : "p1_character";
         snprintf(unknown, sizeof unknown, "#%d", f->chara[side]);
         replay__json_str(out, cap, n, key, f->chara_name[side] ? f->chara_name[side] : unknown);
         replay__json_int(out, cap, n, side ? "p2_character_id" : "p1_character_id", f->chara[side]);
-        replay__json_int(out, cap, n, side ? "p2_rounds" : "p1_rounds", f->rounds[side]);
+        if (!solo) replay__json_int(out, cap, n, side ? "p2_rounds" : "p1_rounds", f->rounds[side]);
     }
     if (m->fight_seen) {
         snprintf(unknown, sizeof unknown, "#%d", f->stage);
         replay__json_str(out, cap, n, "stage", f->stage_name ? f->stage_name : unknown);
         replay__json_int(out, cap, n, "stage_id", f->stage);
-        replay__json_int(out, cap, n, "rounds_to_win", f->rounds_to_win);
+        if (!solo) replay__json_int(out, cap, n, "rounds_to_win", f->rounds_to_win);
     }
+}
+
+/* The fight's half of replay.json: characters, stage, rounds, result. A
+ * one-player game's says "players":1 and has no winner. */
+static inline void replay__json_fight(const replay_meta_t *m, char *out, size_t cap, size_t *n) {
+    bool solo = replay__solo(m);
+    replay__json_int(out, cap, n, "players", solo ? 1 : 2);
+    replay__json_sides(m, solo, out, cap, n);
     replay__json_int(out, cap, n, "winner", m->winner);
     if (m->winner == 0 || m->winner == 1) {
         replay__json_str(out, cap, n, "winner_name", m->winner ? m->p2 : m->p1);
@@ -626,7 +652,7 @@ static inline void replay__begin(emu_thread_ctx_t *ctx, bool local) {
     replay_rec_t *R = &g_replay_rec;
     replay_rec_finish(R->local ? "an online match began" : "a new match began");
     R->due = false;
-    bool inputs = R->format == REPLAY_SAVE_INPUTS;
+    bool inputs = replay__saves_inputs();
     const char *err = inputs ? replay__snap(ctx) : NULL;
     if (err) {
         snprintf(R->error, sizeof R->error, "could not start a replay: %s", err);
@@ -961,11 +987,14 @@ typedef struct {
     char     netcode[8];        /* "rpcn", "ggpo"; "" in a replay from before GGPO */
     int      winner;            /* 0 = 1P, 1 = 2P, -1 none */
     uint32_t r1, r2, frames, seconds, timestamp, finished;
+    uint32_t players;           /* 1 a one-player game (Sega Rally), else 2 */
 } replay_label_t;
 
 static inline void replay_label_get(const char *json, replay_label_t *l) {
     memset(l, 0, sizeof *l);
     l->winner = -1;
+    l->players = 2;
+    json_get_u32(json, "players", &l->players);
     json_get_str(json, "p1", l->p1, sizeof l->p1);
     json_get_str(json, "p2", l->p2, sizeof l->p2);
     json_get_str(json, "p1_character", l->c1, sizeof l->c1);

@@ -188,9 +188,12 @@ typedef void (*game_install_fn)(const struct romset *rs,
                                 struct memory_bus *bus);
 
 /* Who fights whom, and where, as a replay labels it (core/replay.h). Read off
- * the board by the profile; -1 / NULL where it does not know. */
+ * the board by the profile; -1 / NULL where it does not know. A one-player
+ * game (players 1, Sega Rally's race) has side 0 only: its car in chara[0],
+ * its course in stage. */
 typedef struct {
-    bool        fighting;        /* a two-player versus fight is on the board */
+    bool        fighting;        /* a versus fight (a race, players 1) is on the board */
+    int         players;         /* 1 a one-player game; 0 or 2 a versus one */
     int         chara[2];        /* each side's character */
     const char *chara_name[2];
     int         stage;
