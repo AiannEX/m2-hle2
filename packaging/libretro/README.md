@@ -120,7 +120,7 @@ same moment and runs them in lockstep from there.
   savestates and can't run this core, so the core carries the match itself over RetroArch's
   connection.
 - **RPCN**: the same rooms as the m2-hle desktop emulator and the website
-  (play.sonicthefighte.rs), in the PS3 release's own online lobby, drawn by the core and
+  (arcade.sonicthefighte.rs), in the PS3 release's own online lobby, drawn by the core and
   driven with the pad. Set **Online play** to RPCN and reload the game, then choose **Online
   Battle** from the main menu (the Arcade version opens the lobby at load, and L + R together
   open it again). Signing in needs no keyboard:

@@ -155,7 +155,7 @@ Use RetroArch's own **Netplay** menu:
 The host is player 1 and the first player to join is player 2. Both games restart when player 2
 joins. Both players need **the same build** of the core; RetroArch refuses a mismatch.
 
-**RPCN** (plays against the m2-hle desktop emulator and play.sonicthefighte.rs)
+**RPCN** (plays against the m2-hle desktop emulator and arcade.sonicthefighte.rs)
 
 1. Set **Online play** to **RPCN**, then close and reload the game.
 2. Choose **Online Battle** from the game's main menu. (The Arcade version opens the lobby at
