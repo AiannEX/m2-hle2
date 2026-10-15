@@ -89,6 +89,9 @@ const replayClock = (frames) => {
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 };
 
+/* A one-player game's replay (Sega Rally's race): its car and its course. */
+const replaySolo = (j) => j.players === 1;
+
 /* A game on this board: the characters the players picked, not the CPU's
  * (Pinboard #875). An online match: who played whom, with what. */
 function replayHeadline(j) {
@@ -98,6 +101,7 @@ function replayHeadline(j) {
     return picked.length ? picked.join('  vs  ') : 'No fight recorded';
   }
   const who = (p, c) => (p || '?') + (c ? ' (' + c + ')' : '');
+  if (replaySolo(j)) return who(j.p1, j.p1_character);
   return who(j.p1, j.p1_character) + '  vs  ' + who(j.p2, j.p2_character);
 }
 
@@ -110,6 +114,7 @@ function replayHow(j) {
 }
 
 function replayResult(j) {
+  if (replaySolo(j)) return 'Ended: ' + (j.ended || '?');
   if (j.winner === 0 || j.winner === 1) {
     const w = j.winner === 0 ? j.p1_rounds : j.p2_rounds, l = j.winner === 0 ? j.p2_rounds : j.p1_rounds;
     return j.winner_name + ' beat ' + j.loser_name + ', ' + (w | 0) + '-' + (l | 0);
@@ -151,7 +156,7 @@ function replayShowLabel() {
   const j = JSON.parse(info);
   $r('replay-file-name').textContent = replay.name;
   $r('replay-who').textContent = replayHeadline(j);
-  $r('replay-stage').textContent = j.stage ? 'Stage: ' + j.stage : '';
+  $r('replay-stage').textContent = j.stage ? (replaySolo(j) ? 'Course: ' : 'Stage: ') + j.stage : '';
   $r('replay-how').textContent = replayHow(j);
   $r('replay-when').textContent = 'Played ' + replayWhen(j) + ', ' + replayClock(j.frames || 0) + ' long';
   $r('replay-by').textContent = (j.netcode === 'local' ? 'played here'
@@ -374,10 +379,24 @@ function replayLoadSettings() {
   }
 }
 
+/* A game with no replay of its own (m2hleGame.ownReplay false) saves its
+ * buttons whatever the format: the two format boxes have nothing to pick. */
+function replayGameText() {
+  if (m2hleGame.ownReplay !== false) return;
+  $r('replay-as-inputs').closest('p').hidden = true;
+  $r('replay-view-inputs').closest('p').hidden = true;
+  $r('replay-step-start').textContent = 'start a game (insert coins, then press Start)';
+  $r('replay-step-kept').textContent = 'A game shorter than about 10 seconds is not kept.';
+  $r('replay-about').textContent = 'Replays are kept in this browser and listed below. ' + m2hleGame.title
+    + ' keeps no replay of its own, so a replay is the game\'s start and your buttons, about 1.5 MB, from'
+    + ' the coin-up to game over. It plays only on the same game.';
+}
+
 const m2hleReplay = {
   onReady(module) {
     replay.M = module;
     if (!module._web_replay_status || !$r('pane-replay')) return;
+    replayGameText();
     replayWire();
     replayLoadSettings();
     replayList();
