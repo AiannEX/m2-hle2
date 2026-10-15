@@ -6,7 +6,9 @@
  *   arcade.sonicthefighte.rs/?game=sfight&profile=sfight_console
  *
  * ?game= is a key of GAMES, ?profile= one of its profiles (the first is the
- * default, as in src/profiles/registry.h). Without ?game=, a page named for a
+ * default, as in src/profiles/registry.h). A game lists every variant MAME
+ * knows; one marked `soon` has no profile in the emulator yet, so the front page
+ * shows it greyed and ?profile= cannot pick it. Without ?game=, a page named for a
  * game (sfight.html, srallyc.html: web/stamp-site.cmake) or a host named for
  * one (play.*, srally.*: the old sites, now aliases) picks it, and any other
  * query (?follow=, ?rom=, ...) is Sonic the Fighters, as it was before there
@@ -34,7 +36,11 @@ const m2hleGames = (() => {
       year: 1995, board: 'Model 2A-CRX', colors: ['#d8361d', '#5c1a0b'],
       blurb: 'Desert, forest, mountain and lakeside: the rally that started it all.',
       profiles: [
-        { id: 'srallyc', name: 'Arcade', about: 'Twin/DX, Rev C' },
+        { id: 'srallyc', name: 'Rev C', about: 'Twin/DX, Revision C' },
+        { id: 'srallycb', name: 'Rev B', about: 'Twin/DX, Revision B', soon: true },
+        { id: 'srallycc', name: 'Rev A', about: 'Twin/DX, Revision A', soon: true },
+        { id: 'srallycdx', name: 'DX Rev A', about: 'DX (single cabinet), Revision A', soon: true },
+        { id: 'srallycdxa', name: 'DX', about: 'DX (single cabinet)', soon: true },
       ],
       romHint: 'Your <code>srallyc.zip</code> (Sega Rally Championship, Twin/DX)',
       /* src/profiles/srallyc.h: LEFT/RIGHT the wheel, B1 accelerator, B2 brake,
@@ -57,7 +63,7 @@ const m2hleGames = (() => {
     else if (loc.search.length > 1) id = 'sfight';
     if (!id) return null;
     const profiles = GAMES[id].profiles;
-    const profile = profiles.find((p) => p.id === q.get('profile')) || profiles[0];
+    const profile = profiles.find((p) => p.id === q.get('profile') && !p.soon) || profiles[0];
     return { id, profile: profile.id };
   }
 

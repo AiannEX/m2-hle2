@@ -1,7 +1,7 @@
 /*
  * The front page's boxes (home.html), one per game in m2hle-games.js. The box
- * plays the game's first profile; a game with more than one lists them all
- * under it, each its own link.
+ * plays the game's first profile; under it, every variant, each its own link,
+ * or greyed when the emulator has no profile for it yet.
  */
 'use strict';
 
@@ -24,7 +24,9 @@
         make('p', {}, g.blurb)));
     main.querySelector('.marquee').style.cssText = `--c0:${g.colors[0]};--c1:${g.colors[1]}`;
     const profiles = make('div', { className: 'profiles' },
-      ...g.profiles.map((p) => make('a', { href: m2hleGames.href(id, p.id), title: p.about }, p.name)));
+      ...g.profiles.map((p) => p.soon
+        ? make('span', { className: 'soon', title: p.about + ': not in the emulator yet' }, p.name)
+        : make('a', { href: m2hleGames.href(id, p.id), title: p.about }, p.name)));
     return make('li', { className: 'game' }, main, profiles);
   }
 
