@@ -385,6 +385,8 @@ function replayGameText() {
   if (m2hleGame.ownReplay !== false) return;
   $r('replay-as-inputs').closest('p').hidden = true;
   $r('replay-view-inputs').closest('p').hidden = true;
+  $r('replay-step-start').textContent = 'start a game (insert coins, then press Start)';
+  $r('replay-step-kept').textContent = 'A game shorter than about 10 seconds is not kept.';
   $r('replay-about').textContent = 'Replays are kept in this browser and listed below. ' + m2hleGame.title
     + ' keeps no replay of its own, so a replay is the game\'s start and your buttons, about 1.5 MB, from'
     + ' the coin-up to game over. It plays only on the same game.';
