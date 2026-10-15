@@ -7,7 +7,7 @@
  * RAM (core/backup_ram.h), the arcade's choices (cookies, arcade/stf-arcade.mjs),
  * keys, pads and settings. A returning player looked signed out, on a fresh board.
  *
- * The old hosts still serve one page, m2hle-migrate.html (web/aliases), and
+ * The old hosts still serve one page, m2hle-migrate.html (web/aliases/Caddyfile), and
  * redirect everything else here. In a hidden frame it posts its localStorage and
  * cookies to this origin and to nothing else. They are one site
  * (sonicthefighte.rs), so the frame sees the storage the host had as a page of

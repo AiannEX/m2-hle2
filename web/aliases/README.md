@@ -20,28 +20,30 @@ followed board or a GGPO match still works.
 A browser keeps a site's storage per host. Everything a player kept on the old
 hosts (the RPCN and GGPO sign-ins, the backup RAM, the arcade's cookies, keys,
 pads, settings) is not on arcade, so a returning player looks signed out, on a
-fresh board. [m2hle-migrate.html](m2hle-migrate.html) is how the arcade gets it
-back: `web/site/m2hle-migrate.js` frames it from each old host once and copies
+fresh board. `/m2hle-migrate.html`, a page the [Caddyfile](Caddyfile) holds, is
+how the arcade gets it back: `web/site/m2hle-migrate.js` frames it from each old host once and copies
 what the arcade does not have yet. A redirect rule cannot serve that page, so
-the old hosts must reach this directory's [Caddyfile](Caddyfile), not a rule.
+the old hosts must reach the Caddyfile, not a rule.
 (The rule as first set up also dropped the query.)
 
 ## Deployed
 
-The `srally-web` container on the RPCN droplet (143.198.49.181, on the `proxy`
-network) runs the Caddyfile. `/root/forgejo/Caddyfile` routes both names to it
-with the `*.sonicthefighte.rs` origin certificate:
+The `srally-web` container (`caddy:2-alpine`) on the RPCN droplet (143.198.49.181,
+on the `proxy` network) runs the Caddyfile, mounted from
+`/root/srally-web/Caddyfile.web`; that one file is all it serves (the page is in
+it). `/root/forgejo/Caddyfile` routes both names to it with the
+`*.sonicthefighte.rs` origin certificate:
 
 ```
 play.sonicthefighte.rs, srally.sonicthefighte.rs {
-	tls /etc/caddy/certs/sonicthefighte.rs.pem /etc/caddy/certs/sonicthefighte.rs.key
+	tls /certs/sonicthefighte.rs.pem /certs/sonicthefighte.rs.key
 	reverse_proxy srally-web:8080
 }
 ```
 
-(use the `tls` line the `srally.sonicthefighte.rs` block already has). To update:
-copy the Caddyfile over `/root/srally-web/Caddyfile.web`, `m2hle-migrate.html`
-into the directory the container mounts at `/srv`, and `docker restart srally-web`.
+To update: copy the Caddyfile over `/root/srally-web/Caddyfile.web` in place
+(`cat Caddyfile > Caddyfile.web`: it is a single-file mount) and
+`docker restart srally-web`.
 In Cloudflare, play and srally are proxied DNS records for the droplet, with no
 redirect rule for them. Check with
 
