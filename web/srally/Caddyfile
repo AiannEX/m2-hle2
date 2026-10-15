@@ -1,11 +1,12 @@
-# srally.sonicthefighte.rs: m2-hle2's web build playing Sega Rally Championship
-# (Pinboard #628, #649). Plain HTTP on 8080; the droplet's Caddy terminates TLS with
-# the *.sonicthefighte.rs origin certificate, behind Cloudflare.
+# srally.sonicthefighte.rs: an alias of arcade.sonicthefighte.rs, the one site for
+# every game m2-hle2's web build plays (Pinboard #881). Plain HTTP on 8080; the
+# droplet's Caddy terminates TLS with the *.sonicthefighte.rs origin certificate,
+# behind Cloudflare. Kept in the repo as web/srally/Caddyfile (README.md there).
 #
-# The page IS play.sonicthefighte.rs: it picks Sega Rally from the host name
-# (web/site/m2hle-game.js), so this proxies that site rather than holding a copy,
-# and srally is always the build the pages workflow last published. Kept in the
-# repo as web/srally/Caddyfile (README.md there).
+# Until #881 this proxied play.sonicthefighte.rs and served srally.html for /
+# (Pinboard #649, #673). Now the page is Sega Rally's own page on the arcade,
+# srallyc.html: the site with Sega Rally's title and description in its head, so a
+# link preview (which runs no script) still names Sega Rally.
 {
 	admin off
 	auto_https off
@@ -13,35 +14,10 @@
 }
 
 :8080 {
-	encode zstd gzip
+	# The page, keeping its query (?wheel=, ...).
+	@page path / /index.html /srally.html
+	redir @page https://arcade.sonicthefighte.rs/srallyc.html?{query} 301
 
-	# The page, with Sega Rally's title and description in its head: a link
-	# preview reads them without running the page's scripts (web/stamp-site.cmake,
-	# Pinboard #673). Every other file is play's own.
-	rewrite / /srally.html
-	rewrite /index.html /srally.html
-
-	reverse_proxy https://play.sonicthefighte.rs {
-		header_up Host {upstream_hostport}
-		header_down -Server
-		header_down -Via
-		header_down -X-Github-Request-Id
-		header_down -X-Served-By
-		header_down -X-Proxy-Cache
-	}
-
-	# Every asset is loaded with ?v=<version>; only the page itself must be
-	# revalidated, or a browser keeps the old version list for ten minutes.
-	@index path / /index.html /srally.html
-	header @index {
-		Cache-Control "no-cache"
-		-Expires
-		defer
-	}
-
-	header {
-		X-Content-Type-Options nosniff
-		Referrer-Policy no-referrer
-		-Server
-	}
+	# Anything else an old link names (privacy pages, ...): the same path there.
+	redir * https://arcade.sonicthefighte.rs{uri} 301
 }

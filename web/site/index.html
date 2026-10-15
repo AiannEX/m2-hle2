@@ -3,8 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sonic the Fighters</title>
-<meta name="description" content="Play Sonic the Fighters in your browser, online, with your own copy of the game.">
+<title>Model 2 Arcade</title>
+<meta name="description" content="Play Sega Model 2 arcade games in your browser, with your own copy of the game.">
+<!-- Which game (?game=ID&profile=PROFILE). Without one, the front page with a box
+     per game: before anything else loads, so no emulator starts behind it.
+     sfight.html and srallyc.html are this page with that game's words above, for a
+     link preview, which runs no script (web/stamp-site.cmake). -->
+<script src="m2hle-games.js?v=@M2HLE_VERSION@"></script>
+<script>if (!m2hleGames.picked) location.replace('home.html');</script>
 <meta name="theme-color" content="#001735">
 <!-- The two faces the first screen shows, asked for before the stylesheet names
      them. Same URLs as m2hle.css's @font-face (stamped there too), so they are
@@ -12,7 +18,9 @@
 <link rel="preload" href="fonts/text.woff2?v=@M2HLE_VERSION@" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/title.woff2?v=@M2HLE_VERSION@" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="m2hle.css?v=@M2HLE_VERSION@">
-<meta name="stf-arcade-api" content="https://arcade.sonicthefighte.rs">
+<!-- The arcade's scores service (code.robkrum.com/rob/play.sonicthefighte.rs). It was
+     arcade.sonicthefighte.rs until that name became this site (Pinboard #881). -->
+<meta name="stf-arcade-api" content="https://scores.sonicthefighte.rs">
 </head>
 <body>
 
@@ -112,6 +120,7 @@
   <footer class="ps-hintbar">
     <p class="ps-strip">
       <span id="build"></span> &middot;
+      <a href="home.html">All games</a> &middot;
       <a href="https://github.com/biggestsonicfan/m2-hle2" target="_blank" rel="noopener noreferrer">Source on GitHub</a> &middot;
       Fonts: Anybody, M&nbsp;PLUS&nbsp;1p and M&nbsp;PLUS&nbsp;1&nbsp;Code, under the SIL Open Font License
       (<a href="fonts/OFL-Anybody.txt" target="_blank">Anybody</a>,

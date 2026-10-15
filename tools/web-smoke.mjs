@@ -75,7 +75,7 @@ const opt = (name, fallback) => {
   const i = args.indexOf(name);
   return i >= 0 && i + 1 < args.length ? args[i + 1] : fallback;
 };
-const url = opt('--url', 'http://localhost:8080/');
+const url = opt('--url', 'http://localhost:8080/?game=sfight');   /* bare / is the front page */
 const seconds = Number(opt('--seconds', '30'));
 const shot = opt('--shot', null);
 const shotAt = (opt('--shot-at', '') || '').split(',').filter(Boolean).map(Number);

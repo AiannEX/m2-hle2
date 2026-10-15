@@ -1,7 +1,7 @@
-// The arcade, on the page that runs the game (m2-hle2's web build at play.sonicthefighte.rs
-// and srally.sonicthefighte.rs).
+// The arcade, on the page that runs the game (m2-hle2's web build at arcade.sonicthefighte.rs,
+// ?game=sfight or ?game=srallyc).
 //
-//   <meta name="stf-arcade-api" content="https://arcade.sonicthefighte.rs">
+//   <meta name="stf-arcade-api" content="https://scores.sonicthefighte.rs">
 //   <script type="module" src="arcade/stf-arcade.mjs?game=srallyc"></script>
 //
 // ?game= names the game (games.mjs): sfight, the default, or srallyc. Each has its own

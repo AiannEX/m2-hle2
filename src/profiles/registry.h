@@ -13,8 +13,8 @@
 #include "sfight.h"
 #include "sfight_console.h"
 /* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
- * play over RPCN, and Sega Rally for srally.sonicthefighte.rs (the page's
- * ?game=srallyc, web/site/m2hle-game.js). Any other set is only download size:
+ * play over RPCN, and Sega Rally (the page's ?game=srallyc,
+ * web/site/m2hle-games.js). Any other set is only download size:
  * left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. */
 #include "srallyc.h"
