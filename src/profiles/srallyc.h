@@ -17,6 +17,9 @@
  * the brake, UP / DOWN shift a gear, B3 is VIEW CHANGE (the VR button). The
  * wheel's pot is adjustable (--wheel-center / --wheel-range / --wheel-speed);
  * the default is the owner's manual's spec.
+ *
+ * Replays: a player's game is recorded as the state and the inputs, labelled
+ * with the car and the course (srallyc_match_info below).
  */
 #ifndef PROFILES_SRALLYC_H
 #define PROFILES_SRALLYC_H
@@ -165,6 +168,41 @@ static inline void srallyc_install(const romset_t *rs, i960_cpu_t *cpu, memory_b
     LOG_INFO("srallyc_install: PRCB=0x%08X initial IP=0x%08X", prcb, cpu->sfr.ip);
 }
 
+/* Replays (core/replay.h, Pinboard #877). Work RAM at 0x200000, read off the
+ * board in attract and a player's game:
+ *   0x202098  the main mode: 2 attract, 3 a player's game (from the coin-up's
+ *             select screens to game over), 4 the test menu
+ *   0x20209C  the game's sub-state (3 mode select, 4/5 championship, 6/7 practice)
+ *   0x20A7DC  the course: 0 forest, 1 desert, 2 mountain (attract's three demos
+ *             and the first championship race)
+ *   0x20A8C4  the car-select cursor, kept into the race: 0 Celica MT,
+ *             1 Celica AT, 2 Delta AT, 3 Delta MT (left to right on the wheel)
+ * The game keeps no replay of its own, so a replay is always the state and the
+ * input feed. */
+#define SRALLYC_MODE   0x00202098u
+#define SRALLYC_COURSE 0x0020A7DCu
+#define SRALLYC_CAR    0x0020A8C4u
+
+static bool srallyc_in_play(memory_bus_t *bus) {
+    return mem_read8(bus, SRALLYC_MODE) == 3;
+}
+
+static void srallyc_match_info(memory_bus_t *bus, game_match_info_t *out) {
+    static const char *const cars[4] = {
+        "Toyota Celica GT-Four (MT)", "Toyota Celica GT-Four (AT)",
+        "Lancia Delta HF Integrale (AT)", "Lancia Delta HF Integrale (MT)",
+    };
+    static const char *const courses[3] = { "Forest", "Desert", "Mountain" };
+    int car = (int)mem_read8(bus, SRALLYC_CAR), course = (int)mem_read8(bus, SRALLYC_COURSE);
+    out->fighting      = srallyc_in_play(bus);
+    out->players       = 1;
+    out->chara[0]      = car;
+    out->chara_name[0] = car < 4 ? cars[car] : NULL;
+    out->chara[1]      = -1;
+    out->stage         = course;
+    out->stage_name    = course < 3 ? courses[course] : NULL;
+}
+
 static const game_profile_t srallyc_profile = {
     .id              = "srallyc",
     .display_name    = "Sega Rally Championship (Rev C)",
@@ -173,6 +211,8 @@ static const game_profile_t srallyc_profile = {
     .load_fn         = srallyc_load,
     .install_fn      = srallyc_install,
     .hook_count      = 0,
+    .match_info      = srallyc_match_info,
+    .in_play         = srallyc_in_play,
     .input = {
         /* IN0 is the cabinet's: COIN1 0x01, TEST 0x04, SERVICE 0x08, VR 0x20,
          * START 0x40 (MAME INPUT_PORTS_START(srallyc)). Byte 1 is not a port

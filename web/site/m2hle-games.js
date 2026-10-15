@@ -47,6 +47,9 @@ const m2hleGames = (() => {
        * UP/DOWN a gear, B3 VIEW CHANGE. */
       labels: { up: 'Shift up', down: 'Shift down', left: 'Steer left', right: 'Steer right',
                 b1: 'Accelerator', b2: 'Brake', b3: 'View change', b4: 'Unused' },
+      /* No replay format of its own: a replay is always the buttons from the
+       * game's start (src/core/replay.h, replay__saves_inputs). */
+      ownReplay: false,
     },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
