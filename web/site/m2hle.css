@@ -817,6 +817,9 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--sel-line); }
 .replay { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0.2rem 16px 0.8rem; max-width: 46rem; }
 .replay p { margin: 0.25rem 0; }
 .replay-label { margin: 0.4rem 0; padding: 0.4rem 0.6rem; border-left: 2px solid var(--text); }
+.replay-steps { padding-left: 1.2rem; }
+.replay-steps li { margin: 0.2rem 0; }
+.replay-steps-icon { vertical-align: -2px; }
 .replay-time-row input[type=range] { flex: 1 1 auto; min-width: 10rem; }
 .replay-list { list-style: none; margin: 0; padding: 0; }
 .replay-list li { padding: 0.35rem 0; border-bottom: 1px solid rgba(255, 255, 255, 0.12); }

@@ -550,6 +550,16 @@
         Save the buttons from power-on instead of the game's own replay</label></p>
       <p class="np-row"><label><input id="replay-view-inputs" type="checkbox">
         Play a replay's buttons from power-on when it has them</label></p>
+      <ol class="fine left replay-steps">
+        <li><b>Start:</b> tick <i>Save a replay&hellip;</i> above, then start a game (coin, then Start) or an
+          online match. Recording starts by itself and <i>recording this match</i> shows beside the tick.</li>
+        <li><b>Stop:</b> a game is saved by itself when it ends and the game goes back to its attract screen;
+          an online match when it is decided. To save a game now (free play and continues can keep it
+          going for ever), press the red <svg class="replay-steps-icon" viewBox="0 0 16 16" width="14" height="14" aria-label="Finish replay"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="5" y="5" width="6" height="6" fill="#E5484D"/></svg> button at the top right, left of Pause. It shows
+          only while your game is being recorded. A game with no round finished yet is not kept.</li>
+        <li><b>Watch:</b> press <i>Watch</i> on one below, or open a file with PLAYBACK. <i>Stop</i> gives
+          you your game back, from power-on.</li>
+      </ol>
       <p id="replay-about" class="fine left">Replays are kept in this browser and listed below. A replay is each round in the
         game's own replay format, the one attract plays, a few KB a round; with the buttons from
         power-on it is the match's start and both players' buttons, a few hundred KB, and plays the
@@ -565,6 +575,7 @@
         <p id="replay-file-name" class="fine left"></p>
         <p id="replay-who" class="lead"></p>
         <p id="replay-stage"></p>
+        <p id="replay-how"></p>
         <p id="replay-when"></p>
         <p id="replay-by" class="fine left"></p>
         <p class="np-row"><label><input id="replay-hide" type="checkbox"> Hide the result</label></p>
