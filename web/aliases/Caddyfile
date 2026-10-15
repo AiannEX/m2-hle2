@@ -1,0 +1,53 @@
+# play.sonicthefighte.rs and srally.sonicthefighte.rs: aliases of
+# arcade.sonicthefighte.rs, the one site for every game m2-hle2's web build plays
+# (Pinboard #881). Plain HTTP on 8080; the droplet's Caddy terminates TLS with the
+# *.sonicthefighte.rs origin certificate, behind Cloudflare. Kept in the repo as
+# web/aliases/Caddyfile (README.md there).
+#
+# Everything is a redirect that keeps the query (?follow=, ?ggpo=, ?wheel=, ...),
+# except m2hle-migrate.html: the page through which the arcade takes over what a
+# player kept on the old host (web/site/m2hle-migrate.js).
+#
+# Until #881 this served srally.sonicthefighte.rs alone, as a proxy of
+# play.sonicthefighte.rs with srally.html for / (Pinboard #649, #673).
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8080 {
+	# Framed by the arcade only, and fetched by it first (CORS) to see that this
+	# host serves it and does not redirect. Never cached: it reads live storage.
+	handle /m2hle-migrate.html {
+		root * /srv
+		header {
+			Content-Security-Policy "frame-ancestors https://arcade.sonicthefighte.rs"
+			Access-Control-Allow-Origin "https://arcade.sonicthefighte.rs"
+			Cache-Control "no-store"
+		}
+		file_server
+	}
+
+	# Everything else redirects. In a handle of its own: Caddy runs redir before
+	# handle, so a bare redir would take the page above too. The game's own page
+	# on the arcade has its title and description in the head, for a link
+	# preview (which runs no script).
+	handle {
+		@srally {
+			host srally.sonicthefighte.rs
+			path / /index.html /srally.html
+		}
+		@play {
+			host play.sonicthefighte.rs
+			path / /index.html /sfight.html
+		}
+		# The first that matches answers, in this order (route keeps it).
+		route {
+			redir @srally https://arcade.sonicthefighte.rs/srallyc.html?{query} 301
+			redir @play https://arcade.sonicthefighte.rs/sfight.html?{query} 301
+			# Anything else an old link names (privacy pages, ...): the same path there.
+			redir https://arcade.sonicthefighte.rs{uri} 301
+		}
+	}
+}

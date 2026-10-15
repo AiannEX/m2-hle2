@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Model 2 Arcade: moving your settings</title>
+<!-- Served on play.sonicthefighte.rs and srally.sonicthefighte.rs, the old sites,
+     by this directory's Caddyfile (Pinboard #881). arcade.sonicthefighte.rs opens
+     it in a hidden frame (web/site/m2hle-migrate.js), and it posts what this host's
+     storage holds (sign-ins, saves, settings, the arcade's cookies) to that origin
+     and to no other. Opened by itself, it goes to the arcade. -->
+<script>
+'use strict';
+(() => {
+  const TO = 'https://arcade.sonicthefighte.rs';
+  if (window.parent === window) { location.replace(TO + '/'); return; }
+  const items = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      items[k] = localStorage.getItem(k);
+    }
+  } catch (e) { /* storage off: send what there is, nothing */ }
+  window.parent.postMessage({ m2hleMigrate: 1, items, cookies: document.cookie }, TO);
+})();
+</script>
