@@ -115,6 +115,36 @@ static inline void vonj_install(const romset_t *rs, i960_cpu_t *cpu, memory_bus_
     LOG_INFO("vonj_install: PRCB=0x%08X initial IP=0x%08X", prcb, cpu->sfr.ip);
 }
 
+/* The PS3 shell's ARCADE rows written into the cabinet's GAME ASSIGNMENTS:
+ * the backup-RAM bytes its test menu edits. The game reads them when a game
+ * starts, so a write during the attract applies to the next game. The PS3 port
+ * does the same (NPJB00321 FUN_0019f0e4, through its board-write call
+ * FUN_0018f6ac).
+ *   0x1D00016..1A  PLAY TIME 1P (stage 1~5) / penalty / stage 6~8 / last stage /
+ *                  versus: (n + 1) * 5 seconds; 0xFF is DEATH-MATCH. The PS3
+ *                  writes 0x16, 0x18 and 0x1A and leaves the penalty and
+ *                  last-stage times alone.
+ *   0x1D0001B..1F  MATCH COUNT: rounds to win - 1 (the PS3 skips 0x1E).
+ *   0x1D00021      GAME DIFFICULTY: 0 NORMAL, 1 HARD, 2 VERY HARD, 3 EASY.
+ *   0x1D00034      free play: the shell has no coins, so START starts a game.
+ * s[] is ps3ui_shell's record: s[0] difficulty (Easy..Very Hard), s[3] play
+ * time (30, 60, 90 s, death-match), s[4] rounds to win - 1. */
+#define VONJ_BACKUP_PLAY_TIME  0x01D00016u
+#define VONJ_BACKUP_MATCHES    0x01D0001Bu
+#define VONJ_BACKUP_DIFFICULTY 0x01D00021u
+#define VONJ_BACKUP_FREE_PLAY  0x01D00034u
+
+static inline void vonj_apply_menu_settings(memory_bus_t *bus, const uint8_t s[8]) {
+    static const uint8_t difficulty[4] = { 3, 0, 1, 2 };
+    static const uint8_t play_time[4]  = { 5, 11, 17, 0xFF };
+    mem_write8(bus, VONJ_BACKUP_DIFFICULTY, difficulty[s[0] < 4 ? s[0] : 1]);
+    for (uint32_t i = 0; i < 5; i += 2)
+        mem_write8(bus, VONJ_BACKUP_PLAY_TIME + i, play_time[s[3] < 4 ? s[3] : 2]);
+    for (uint32_t i = 0; i < 5; i++)
+        if (i != 3) mem_write8(bus, VONJ_BACKUP_MATCHES + i, s[4] < 5 ? s[4] : 0);
+    mem_write8(bus, VONJ_BACKUP_FREE_PLAY, 1);
+}
+
 /* IN0 is the cabinet's: COIN1 0x01, COIN2 0x02, SERVICE 0x04, START 0x10
  * (MAME INPUT_PORTS_START(model2crx)). IN1 (byte 1) the left lever, IN2
  * (byte 2) the right: shot 0x01, dash 0x02, down 0x10, up 0x20, right 0x40,

@@ -37,7 +37,9 @@
  * sits over the game. Signing in needs no keyboard: Twitch shows a code, and an
  * RPCN account is typed on the lobby's own on-screen keyboard. The Arcade
  * version is the board as it shipped (coins on SELECT); its RPCN lobby opens at
- * load and with L + R together.
+ * load and with L + R together. Virtual-On (vonj) gets the same shell with the
+ * PS3 port's Arcade rows (difficulty, rounds to win, time limit) on free play;
+ * its Versus and Online Battle need a second board and say so.
  */
 
 /* net/ first, as in main.c: net_socket.h owns the socket include order. */
@@ -189,7 +191,7 @@ static struct {
 /* The heat guard's stages (core/heat_guard.h); lr_heat_tick feeds it once a retro_run. */
 static heat_guard_t g_heat;
 
-/* The PS3's interface (ui/ps3ui_shell.h): the Console version has it. */
+/* The PS3's interface (ui/ps3ui_shell.h): STF's Console version and Virtual-On have it. */
 static bool g_shell_on;
 
 static struct retro_core_option_v2_category option_cats[] = {
@@ -1018,8 +1020,15 @@ static void lr_shell_reset(void *u) {
     if (state.emu.run_state != EMU_RUNNING) emu_run(&state.emu);
 }
 
+static bool lr_shell_von(void) { return g_active_profile && !strcmp(g_active_profile->id, "vonj"); }
+
 static void lr_shell_apply(void *u, const uint8_t v[8], int versus) {
     (void)u;
+    if (lr_shell_von()) {
+        vonj_apply_menu_settings(&state.bus, v);
+        lr_log(RETRO_LOG_INFO, "Arcade: difficulty %u, rounds to win %u, time %u", v[0], v[4] + 1u, v[3]);
+        return;
+    }
     sfight_apply_menu_settings(&state.bus, v, versus);
     lr_log(RETRO_LOG_INFO, "%s: difficulty %u, rounds %u, time %u, attack %u, barriers %u, type %u",
            versus ? "Offline Versus" : "Arcade", v[0], v[4], v[3], v[5], v[6], v[7]);
@@ -1028,6 +1037,18 @@ static void lr_shell_apply(void *u, const uint8_t v[8], int versus) {
 static void lr_shell_volume(void *u, int music, int se) {
     (void)u;
     g_volume = (float)(music + se) / 10.0f;   /* 5 and 5, the PS3's defaults, are the board as it is */
+}
+
+/* At load: the shell for the games that have one, with the game's rows. */
+static void lr_shell_setup(void) {
+    g_shell_on = g_active_profile && (!strcmp(g_active_profile->id, "sfight_console") || lr_shell_von());
+    if (!g_shell_on) return;
+    ps3ui_shell_init(&g_ps3ui_shell, (ps3ui_host_t){ lr_shell_reset, lr_shell_apply, lr_shell_volume, NULL },
+                     &g_ps3ui_app);
+    if (lr_shell_von()) {
+        ps3ui_shell_set_rules(&g_ps3ui_shell, &ps3ui_rules_von);
+        g_ps3ui_shell.no_controls = 1;   /* levers, not punch / kick / guard */
+    }
 }
 
 /* A RetroPad port as the board's buttons, the way the shell's Controls screen
@@ -1044,6 +1065,7 @@ static uint32_t lr_port_held_shell(unsigned port) {
     const int p = port == 0 ? GAME_INPUT_P1_B1 : GAME_INPUT_P2_B1;   /* B1 punch, B2 kick, B3 guard */
     const uint8_t *code = ps3ui_shell_buttons(&g_ps3ui_shell);
     uint32_t held = lr_port_held(port);
+    if (g_ps3ui_shell.no_controls) return held;   /* Virtual-On: the core's own binds */
     /* the face buttons and shoulders are the Controls screen's, not lr_binds' */
     for (int b = 0; b < 3; b++) held &= ~in->bits[p + b];
     held &= ~in->bits[port == 0 ? GAME_INPUT_P1_B4 : GAME_INPUT_P2_B4];
@@ -2060,10 +2082,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game) {
         return false;
     }
     if (!lr_load_rom(game->path)) return false;
-    g_shell_on = g_active_profile && !strcmp(g_active_profile->id, "sfight_console");
-    if (g_shell_on)
-        ps3ui_shell_init(&g_ps3ui_shell, (ps3ui_host_t){ lr_shell_reset, lr_shell_apply, lr_shell_volume, NULL },
-                         &g_ps3ui_app);
+    lr_shell_setup();
     g_volume = 1.0f;
     lr_set_input_descriptors();
     lr_check_info_cache();
