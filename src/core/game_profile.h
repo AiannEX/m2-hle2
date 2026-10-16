@@ -124,6 +124,16 @@ typedef struct {
      * that says so; any other board would keep the winner on against the CPU. */
     bool     vs_rematch;
 
+    /* The region (hle_hooks.h g_region; ?lang= on the web, Pinboard #942).
+     * Every game the emulator runs should honour it: region_hook says the
+     * profile carries the hooks that put g_region where the game keeps its
+     * country setting (the factory default, and over saved backup RAM when
+     * g_region_over_saved is up). A game that cannot is named by region_fixed,
+     * which says why (the region is the program ROM's, say). emu_test fails a
+     * profile that sets neither. */
+    bool        region_hook;
+    const char *region_fixed;
+
     /* The profile carries a hook that honours g_enemy_rank (hle_hooks.h): the
      * CPU opponent's AI table, including STF's two unused ones. The desktop's
      * Profile menu offers the choice only for a profile that says so. */

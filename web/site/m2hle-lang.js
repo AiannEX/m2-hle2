@@ -74,8 +74,12 @@ const m2hleLang = (() => {
   const LANGS = { en: { name: 'English', strings: en }, ja: { name: '日本語', strings: ja } };
   const DEFAULT = 'en';
 
+  /* Other names a visit may give a language: ?lang=jp is Japanese. */
+  const ALIASES = { jp: 'ja' };
+
   const q = new URLSearchParams(location.search);
-  const lang = LANGS[q.get('lang')] ? q.get('lang') : DEFAULT;
+  const asked = ALIASES[q.get('lang')] || q.get('lang');
+  const lang = LANGS[asked] ? asked : DEFAULT;
 
   /* The string for `key` in this page's language, {name}s filled from `vars`. */
   function t(key, vars) {

@@ -10,7 +10,7 @@
  * textures loaded. Interrupts go through the program's own table (irq_vectors):
  * the vblank handler at 0x5A0490 clears the texture-upload budget flag at
  * 0x202004 and arms timer 2, and without it the course and title textures were
- * never uploaded. No hooks.
+ * never uploaded. One hook: the region (srallyc_hook_country_default).
  *
  * Controls: the 315-5649 I/O board's wheel, pedals and four-speed lever
  * (board/io_5649.h). LEFT / RIGHT turn the wheel, B1 is the accelerator, B2
@@ -36,6 +36,7 @@
 #include "memory.h"
 #include "model2a.h"
 #include "i960.h"
+#include "hle_hooks.h"
 #include "io_5649.h"
 #include "savestate_reg.h"
 
@@ -203,6 +204,26 @@ static void srallyc_match_info(memory_bus_t *bus, game_match_info_t *out) {
     out->stage_name    = course < 3 ? courses[course] : NULL;
 }
 
+/*
+ * country_default (0x5A19A4, in the factory defaults at 0x5A1978; the program
+ * runs from RAM, copied from ROM 0x1000 to 0x5A0000 at boot). The routine
+ * stores each GAME ASSIGNMENTS setting's default in the working block at
+ * 0x202010; COUNTRY is the byte at 0x202019 (0 JPN, 1 USA, 2 EXPORT: the
+ * strings at 0x5A5C68, and the test menu at 0x5A5F80 keeps it at 2 or less),
+ * set to 0 by the instruction before this one, `stob g14, 0x202019` (g14 is
+ * zeroed at the routine's start). Put g_region there and let this one run. The routine runs on
+ * every boot here: the block comes from the EEPROM (0x5A11A0), which this
+ * board does not have yet, so its checksum always fails. Japan (0) is the
+ * ROM's default and MAME's, so --region japan (the graders') leaves the board
+ * as it was. An EEPROM that keeps the settings would need the region put in
+ * over a saved block too (g_region_over_saved, as sfight_hook_settings_loaded).
+ */
+static int srallyc_hook_country_default(i960_cpu_t *cpu, memory_bus_t *bus) {
+    (void)cpu;
+    mem_write8(bus, 0x00202019u, (uint8_t)g_region);
+    return 1;
+}
+
 static const game_profile_t srallyc_profile = {
     .id              = "srallyc",
     .display_name    = "Sega Rally Championship (Rev C)",
@@ -210,7 +231,10 @@ static const game_profile_t srallyc_profile = {
     .board           = BOARD_MODEL2A_CRX,
     .load_fn         = srallyc_load,
     .install_fn      = srallyc_install,
-    .hook_count      = 0,
+    .hook_count      = 1,
+    .hooks = {
+        { 0x005A19A4, srallyc_hook_country_default, "country_default" },
+    },
     .match_info      = srallyc_match_info,
     .in_play         = srallyc_in_play,
     .input = {
@@ -239,6 +263,7 @@ static const game_profile_t srallyc_profile = {
         .irq_vectors      = true,
         .board_vblank     = true,
         .io_5649          = true,
+        .region_hook      = true,         /* srallyc_hook_country_default */
         /* The grid's LOD budget is a timer read (0x5BADE0: timer 3 into
          * 0x20AAC0, 0x5BB2A0 picks a quota row from it). At MAME's table the
          * frame ends early, the row is 8 and the third car ahead of the player

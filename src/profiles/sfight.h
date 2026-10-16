@@ -369,7 +369,8 @@ static int sfight_hook_vs_rematch(i960_cpu_t *cpu, memory_bus_t *bus) {
  * both stores run. The game takes this path on a cold boot whose backup RAM
  * is blank or fails its checksum -- every boot of a graded, scripted or netplay
  * run, which keep no backup RAM (core/backup_ram.h) -- and from the test menu's
- * INITIALIZE. A player's saved backup RAM keeps the region it was saved with. Japan (0) shows the "only in Japan" warning; USA (1) skips it,
+ * INITIALIZE. A player's saved backup RAM keeps the region it was saved with,
+ * but on the web (settings_loaded, below). Japan (0) shows the "only in Japan" warning; USA (1) skips it,
  * shows the FBI picture before the Sega logo in attract, and uses the US
  * names and credit limit.
  */
@@ -692,6 +693,26 @@ static int sfight_hook_xplay_vic_dsp(i960_cpu_t *cpu, memory_bus_t *bus) {
 #define SFIGHT_BARRIER_DEFAULT   0x0050A424u  /* barrier_default_num (.long)    */
 #define SFIGHT_ROUND_TIME        0x00500090u  /* time, seconds (.byte)          */
 
+/*
+ * settings_loaded (0x6974, the instruction after main's `call 0x3634`): the
+ * game has loaded its settings. 0x3634 checks backup RAM's block and copies it
+ * to the working one (the stq loop at 0x38D0 into 0x59C340), or, when it fails
+ * its checksum, writes the factory block (init_game_assignments, where
+ * country_default puts g_region). With g_region_over_saved up (the web page's
+ * --region, hle_hooks.h) the region goes in country_val, the working copy
+ * (block +0x12, 0x59C352), here too, so a saved board plays in the page's
+ * region. The saved block and its checksum are left as they are: the next boot
+ * still accepts them. Nothing reads country_val before this point.
+ */
+static int sfight_hook_settings_loaded(i960_cpu_t *cpu, memory_bus_t *bus) {
+    (void)cpu;
+    if (!g_region_over_saved) return 1;
+    uint32_t base = mem_read32(bus, SFIGHT_SETTINGS_PTR);
+    uint32_t blk  = (base == 0x00599000u || base == 0x01D00000u) ? base + 0x3340u : SFIGHT_SETTINGS_WORK;
+    mem_write8(bus, blk + 0x12u, (uint8_t)g_region);
+    return 1;
+}
+
 /* The CPU's difficulty for a replay's label (sfight_match_info). */
 static void sfight_match_difficulty(memory_bus_t *bus, game_match_info_t *out) {
     uint32_t base = mem_read32(bus, SFIGHT_SETTINGS_PTR);
@@ -799,13 +820,14 @@ static inline void sfight_apply_menu_settings(memory_bus_t *bus, const uint8_t s
 /* The hooks every STF profile needs to boot and pace frames, the versus hook
  * netplay rooms read the result from, VS mode's rematch, and the region
  * default. */
-#define SFIGHT_BASE_HOOK_COUNT (23 + SFIGHT_NATIVE_HOOK_COUNT)
+#define SFIGHT_BASE_HOOK_COUNT (24 + SFIGHT_NATIVE_HOOK_COUNT)
 #define SFIGHT_BASE_HOOKS                                                      \
     { 0x00011A04, sfight_hook_frame_pace,         "frame_pace"              }, \
     { 0x000077F8, sfight_hook_cop_err_hang,       "co_processor_error_hang" }, \
     { 0x0000DC3C, sfight_hook_versus_result,      "versus_result"           }, \
     { 0x0000E584, sfight_hook_vs_rematch,         "next_round+0x1a4"        }, \
     { 0x00062688, sfight_hook_country_default,    "country_default"         }, \
+    { 0x00006974, sfight_hook_settings_loaded,    "settings_loaded"         }, \
     { 0x00062674, sfight_hook_damage_default,     "damage_default"          }, \
     { 0x000624F8, sfight_hook_rounds_default,     "rounds_default"          }, \
     { 0x0003B274, sfight_hook_enemy_rank_table,   "enemy_rank_table"        }, \
@@ -883,6 +905,7 @@ _Static_assert(sizeof((hle_hook_entry_t[]){ SFIGHT_BASE_HOOKS }) ==
     .warning_skip_addr      = 0x00500410,   /* SKIP_WARNING; see g_warning_skip */   \
     .vs_rematch             = true,         /* sfight_hook_vs_rematch */             \
     .enemy_ranks            = true,         /* sfight_hook_enemy_rank_table */       \
+    .region_hook            = true,         /* country_default, settings_loaded */   \
     .attract_replay = {                                                             \
         .step_addr   = 0x00500030,           /* _sub_mode */                          \
         .from_step   = 5,                                                             \
