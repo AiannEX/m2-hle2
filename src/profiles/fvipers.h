@@ -274,7 +274,7 @@ static const game_profile_t fvipers_profile = {
         /* Fighting Vipers' country setting is not found yet: the game runs as
          * its ROM and backup RAM have it. Find the default's store, as
          * sfight's country_default and srallyc's, and hook it. */
-        .region_fixed = "not reverse-engineered yet",
+        .region = { .kind = REGION_TODO, .why = "the country setting is not found yet" },
     },
 };
 

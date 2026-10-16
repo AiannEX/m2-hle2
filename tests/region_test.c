@@ -2,14 +2,14 @@
  * region_test.c -- the board region (g_region, core/hle_hooks.h) on every
  * runnable profile, on a bare memory bus. No ROM.
  *
- * Every profile in registry.h says what it does with the region: a hook that
- * puts g_region in the game's country setting (quirks.region_hook) or why the
- * set has none (quirks.region_fixed). The web page sets the region from its
- * ?lang= (Pinboard #942), so a new profile has to answer. Then the hooks
- * themselves: Sega Rally's country_default writes COUNTRY (0x202019) and its
- * settings_checked writes it over a saved block, and STF's settings_loaded
- * writes the working block's country over a saved block, both only when the
- * region was asked for (g_region_over_saved).
+ * Every profile in registry.h says what it does with the region
+ * (quirks.region, game_region_use_t). A hooked one names two hooks in its table:
+ * the factory default's and the one after a saved block is accepted, which
+ * runs here on every hooked profile: a saved country stays when the region was
+ * not asked for and becomes g_region when it was (g_region_over_saved). The web
+ * page sets the region from its ?lang= (Pinboard #942), and a kept save must
+ * not hide it (#948), so a new profile cannot skip that hook: the other kinds
+ * need a reason, and "not found yet" only the profiles listed here take.
  *
  * A ctest (CMakeLists.txt, region_test).
  */
@@ -35,30 +35,66 @@ static hle_hook_fn hook_named(const game_profile_t *p, const char *name) {
     return NULL;
 }
 
+/* The profiles whose country setting is not found yet (REGION_TODO). Add none. */
+static const char *const g_region_todo[] = { "fvipers" };
+
+static int region_todo_allowed(const char *id) {
+    for (size_t i = 0; i < sizeof g_region_todo / sizeof g_region_todo[0]; i++)
+        if (!strcmp(g_region_todo[i], id)) return 1;
+    return 0;
+}
+
+static uint32_t hook_addr(const game_profile_t *p, const char *name) {
+    for (int i = 0; i < p->hook_count; i++)
+        if (p->hooks[i].name && !strcmp(p->hooks[i].name, name)) return p->hooks[i].addr;
+    return 0;
+}
+
+/* A saved country (EXPORT, or JAPAN when that is asked for) under each region. */
+static void check_over_saved(const game_profile_t *p, hle_hook_fn fn) {
+    int ok_kept = 1, ok_over = 1;
+    for (int r = GAME_REGION_JAPAN; r <= GAME_REGION_EXPORT; r++) {
+        uint8_t saved = r == GAME_REGION_EXPORT ? GAME_REGION_JAPAN : GAME_REGION_EXPORT;
+        uint32_t at = p->quirks.region.country(&bus);
+        g_region = r;
+        g_region_over_saved = 0;
+        mem_write8(&bus, at, saved);
+        ok_kept &= fn(&cpu, &bus) == 1 && mem_read8(&bus, at) == saved;
+        g_region_over_saved = 1;
+        ok_over &= fn(&cpu, &bus) == 1 && mem_read8(&bus, at) == (uint32_t)r;
+    }
+    g_region_over_saved = 0;
+    CHECK(ok_kept, "%s: a saved country stays when the region was not asked for", p->id);
+    CHECK(ok_over, "%s: the asked-for region goes over the saved country", p->id);
+}
+
+static void check_hooked(const game_profile_t *p) {
+    const game_region_use_t *g = &p->quirks.region;
+    hle_hook_fn def  = g->factory_default ? hook_named(p, g->factory_default) : NULL;
+    hle_hook_fn over = g->over_saved      ? hook_named(p, g->over_saved)      : NULL;
+    CHECK(def != NULL, "%s: the factory default's hook is in the table", p->id);
+    CHECK(over != NULL, "%s: the hook over a saved block is in the table", p->id);
+    CHECK(g->country != NULL, "%s: country() says where the working copy's country is", p->id);
+    if (!def || !over || !g->country) return;
+    CHECK(hook_addr(p, g->factory_default) != hook_addr(p, g->over_saved),
+          "%s: the two hooks are at two places", p->id);
+    check_over_saved(p, over);
+}
+
 static void check_declared(void) {
     for (size_t i = 0; i < g_profile_count; i++) {
         const game_profile_t *p = g_profiles[i];
-        int hook = p->quirks.region_hook, fixed = p->quirks.region_fixed && p->quirks.region_fixed[0];
-        CHECK(hook != fixed, "%s: region_hook or region_fixed, one of them", p->id);
+        const game_region_use_t *g = &p->quirks.region;
+        if (g->kind == REGION_HOOKED) { check_hooked(p); continue; }
+        CHECK(g->kind != REGION_UNDECLARED, "%s: says what it does with the region", p->id);
+        CHECK(g->why && g->why[0], "%s: says why it has no region hook", p->id);
+        CHECK(!g->factory_default && !g->over_saved, "%s: names no hooks it does not take", p->id);
+        if (g->kind == REGION_TODO)
+            CHECK(region_todo_allowed(p->id), "%s: on the list of settings not found yet", p->id);
     }
 }
 
-/* A saved block (EEPROM) brought EXPORT; the boot goes on at settings_checked. */
-static void check_srallyc_saved(void) {
-    hle_hook_fn fn = hook_named(&srallyc_profile, "settings_checked");
-    CHECK(fn != NULL, "srallyc: settings_checked hook");
-    if (!fn) return;
-    g_region = GAME_REGION_USA;
-    g_region_over_saved = 0;
-    mem_write8(&bus, 0x00202019u, GAME_REGION_EXPORT);
-    CHECK(fn(&cpu, &bus) == 1 && mem_read8(&bus, 0x00202019u) == GAME_REGION_EXPORT,
-          "srallyc: a saved COUNTRY stays when the region was not asked for");
-    g_region_over_saved = 1;
-    CHECK(fn(&cpu, &bus) == 1 && mem_read8(&bus, 0x00202019u) == GAME_REGION_USA,
-          "srallyc: the asked-for region goes over the saved COUNTRY");
-    g_region_over_saved = 0;
-}
-
+/* Sega Rally's factory default writes COUNTRY itself (STF's loads r15). */
 static void check_srallyc(void) {
     hle_hook_fn fn = hook_named(&srallyc_profile, "country_default");
     CHECK(fn != NULL, "srallyc: country_default hook");
@@ -73,23 +109,11 @@ static void check_srallyc(void) {
 }
 
 static void check_sfight(void) {
-    hle_hook_fn fn = hook_named(&sfight_profile, "settings_loaded");
-    CHECK(fn != NULL, "sfight: settings_loaded hook");
-    CHECK(hook_named(&sfight_console_profile, "settings_loaded") == fn, "sfight_console: the same hook");
-    if (!fn) return;
-    const uint32_t country = SFIGHT_SETTINGS_WORK + 0x12u;
+    CHECK(hook_named(&sfight_console_profile, "settings_loaded") == hook_named(&sfight_profile, "settings_loaded"),
+          "sfight_console: the same settings_loaded hook");
     mem_write32(&bus, SFIGHT_SETTINGS_PTR, 0x00599000u);
-    g_region = GAME_REGION_EXPORT;
-
-    g_region_over_saved = 0;
-    mem_write8(&bus, country, GAME_REGION_USA);
-    CHECK(fn(&cpu, &bus) == 1 && mem_read8(&bus, country) == GAME_REGION_USA,
-          "sfight: a saved country stays when the region was not asked for");
-
-    g_region_over_saved = 1;
-    CHECK(fn(&cpu, &bus) == 1 && mem_read8(&bus, country) == GAME_REGION_EXPORT,
-          "sfight: the asked-for region goes over the saved country");
-    g_region_over_saved = 0;
+    CHECK(sfight_country(&bus) == SFIGHT_SETTINGS_WORK + 0x12u, "sfight: country_val in the working block");
+    check_over_saved(&sfight_profile, sfight_hook_settings_loaded);
 }
 
 int main(void) {
@@ -97,7 +121,6 @@ int main(void) {
     i960_reset(&cpu);
     check_declared();
     check_srallyc();
-    check_srallyc_saved();
     check_sfight();
     printf(g_fail ? "\nFAILED (%d)\n" : "\nPASSED\n", g_fail);
     return g_fail ? 1 : 0;

@@ -7,7 +7,7 @@
  * default is the operator manual's spec). The page's language picks the board's
  * country, --region= (Pinboard #942): English USA, Japanese Japan, any other
  * language Export. Every game takes it; a profile says what it does with it
- * (game_quirks_t.region_hook / region_fixed, src/core/game_profile.h).
+ * (game_quirks_t.region, game_region_use_t in src/core/game_profile.h).
  */
 'use strict';
 

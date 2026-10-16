@@ -704,12 +704,15 @@ static int sfight_hook_xplay_vic_dsp(i960_cpu_t *cpu, memory_bus_t *bus) {
  * region. The saved block and its checksum are left as they are: the next boot
  * still accepts them. Nothing reads country_val before this point.
  */
-static int sfight_hook_settings_loaded(i960_cpu_t *cpu, memory_bus_t *bus) {
-    (void)cpu;
-    if (!g_region_over_saved) return 1;
+static uint32_t sfight_country(memory_bus_t *bus) {
     uint32_t base = mem_read32(bus, SFIGHT_SETTINGS_PTR);
     uint32_t blk  = (base == 0x00599000u || base == 0x01D00000u) ? base + 0x3340u : SFIGHT_SETTINGS_WORK;
-    mem_write8(bus, blk + 0x12u, (uint8_t)g_region);
+    return blk + 0x12u;
+}
+
+static int sfight_hook_settings_loaded(i960_cpu_t *cpu, memory_bus_t *bus) {
+    (void)cpu;
+    if (g_region_over_saved) mem_write8(bus, sfight_country(bus), (uint8_t)g_region);
     return 1;
 }
 
@@ -905,7 +908,8 @@ _Static_assert(sizeof((hle_hook_entry_t[]){ SFIGHT_BASE_HOOKS }) ==
     .warning_skip_addr      = 0x00500410,   /* SKIP_WARNING; see g_warning_skip */   \
     .vs_rematch             = true,         /* sfight_hook_vs_rematch */             \
     .enemy_ranks            = true,         /* sfight_hook_enemy_rank_table */       \
-    .region_hook            = true,         /* country_default, settings_loaded */   \
+    .region = { .kind = REGION_HOOKED, .factory_default = "country_default",        \
+                .over_saved = "settings_loaded", .country = sfight_country },         \
     .attract_replay = {                                                             \
         .step_addr   = 0x00500030,           /* _sub_mode */                          \
         .from_step   = 5,                                                             \

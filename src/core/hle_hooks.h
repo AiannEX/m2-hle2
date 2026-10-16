@@ -100,8 +100,10 @@ static volatile int g_region = GAME_REGION_USA;
  * the player's choice. A netplay session's board has no backup RAM, so the
  * default hook has put g_region there already and this changes nothing.
  *
- * Every profile says what it does with g_region (game_quirks_t.region_hook /
- * region_fixed; emu_test checks each one says one or the other). */
+ * Every profile says what it does with g_region (game_quirks_t.region,
+ * game_region_use_t); a hooked one names the hook that honours this flag
+ * (region.over_saved), and
+ * region_test runs it. */
 static volatile int g_region_over_saved = 0;
 
 /* Versus mode: the cabinet setting Sega's console emulator calls VS mode. When

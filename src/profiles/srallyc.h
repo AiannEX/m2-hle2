@@ -238,9 +238,11 @@ static int srallyc_hook_country_default(i960_cpu_t *cpu, memory_bus_t *bus) {
     return 1;
 }
 
+static uint32_t srallyc_country(memory_bus_t *bus) { (void)bus; return SRALLYC_COUNTRY; }
+
 static int srallyc_hook_settings_checked(i960_cpu_t *cpu, memory_bus_t *bus) {
     (void)cpu;
-    if (g_region_over_saved) mem_write8(bus, SRALLYC_COUNTRY, (uint8_t)g_region);
+    if (g_region_over_saved) mem_write8(bus, srallyc_country(bus), (uint8_t)g_region);
     return 1;
 }
 
@@ -284,7 +286,8 @@ static const game_profile_t srallyc_profile = {
         .irq_vectors      = true,
         .board_vblank     = true,
         .io_5649          = true,
-        .region_hook      = true,         /* country_default, settings_checked */
+        .region           = { .kind = REGION_HOOKED, .factory_default = "country_default",
+                              .over_saved = "settings_checked", .country = srallyc_country },
         /* The grid's LOD budget is a timer read (0x5BADE0: timer 3 into
          * 0x20AAC0, 0x5BB2A0 picks a quota row from it). At MAME's table the
          * frame ends early, the row is 8 and the third car ahead of the player
