@@ -72,7 +72,10 @@
  * --m2comm-phantom links the comm board (board/m2comm.h) to a second cabinet
  * in this process that answers with the board's own window, so a linked
  * game's ring comes up and its packets come back; a split set (vonj) takes
- * its parent zip from beside the one named.
+ * its parent zip from beside the one named. --m2comm-udp is the same phantom
+ * with the two cabinets on either end of a pair of UDP sockets on 127.0.0.1,
+ * their datagrams packed and sent as the room's channel sends them
+ * (src/net/comm_link.h); the link's counts go to stderr at the end.
  *
  * Two builds of it, one from each configuration, so each has exactly its
  * frontend's compiler flags:
@@ -101,6 +104,9 @@
 #include "registry.h"
 #include "gems.h"
 #include "m2comm_loop.h"
+#ifndef __EMSCRIPTEN__
+#include "comm_link_loop.h"
+#endif
 
 static memory_bus_t     bus;
 static i960_cpu_t       cpu;
@@ -247,7 +253,29 @@ static bool follow_next_ready(emu_thread_ctx_t *emu) {
 /* --m2comm-phantom: the comm board linked to a second cabinet that sends the
  * board's own window back (m2comm_loop.h). The game's cabinet role has to say
  * MASTER (Virtual-On: --poke F:1D00028:01). */
-static bool m2comm_phantom;
+static bool m2comm_phantom, m2comm_udp;
+
+/* The phantom on the board's comm link, over UDP if asked (and built for it). */
+static void m2comm_phantom_link(void) {
+#ifndef __EMSCRIPTEN__
+    if (m2comm_udp) {
+        if (!comm_udp_phantom_attach(0x700u)) fprintf(stderr, "m2comm-udp: no sockets\n");
+        return;
+    }
+#endif
+    if (m2comm_phantom) m2comm_phantom_attach(0x700u);
+}
+
+static void m2comm_phantom_report(void) {
+#ifndef __EMSCRIPTEN__
+    if (!m2comm_udp) return;
+    const comm_link_t *b = &g_comm_udp_board.link, *p = &g_comm_udp_phantom.link;
+    fprintf(stderr, "m2comm-udp: board sent %u took %u (stale %u torn %u too big %u overflow %u), "
+            "largest packed %u B, %u datagrams %u B; phantom sent %u took %u\n",
+            b->sent, b->taken, b->stale, b->torn, b->too_big, b->overflow, b->packed_peak,
+            g_comm_udp_board.wire_dgrams, g_comm_udp_board.wire_bytes, p->sent, p->taken);
+#endif
+}
 
 static const char *load_path;
 static uint32_t    save_frame;
@@ -570,6 +598,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--profile") && i + 1 < argc) profile_id = argv[++i];
         else if (!strcmp(argv[i], "--mem")) state_mem = true;
         else if (!strcmp(argv[i], "--m2comm-phantom")) m2comm_phantom = true;
+        else if (!strcmp(argv[i], "--m2comm-udp")) m2comm_udp = true;
         else if (!strcmp(argv[i], "--gems-i960"))   g_gems_i960 = true;
         else if (!strcmp(argv[i], "--gems-cop"))    g_gems_cop = true;
         else if (!strcmp(argv[i], "--gems-verify")) g_gems_verify = true;
@@ -630,7 +659,7 @@ int main(int argc, char **argv) {
     input_reset();
     input_attach(&bus);
     emu_board_reset_state();
-    if (m2comm_phantom) m2comm_phantom_attach(0x700u);
+    m2comm_phantom_link();
     emu_ctx_init(&emu, &cpu, &bus);
     emu_run(&emu);
     sound_set_tap(snd_out_tap, NULL);
@@ -736,6 +765,7 @@ int main(int argc, char **argv) {
         if (g_follow.split) return 1;
     }
     rewind_report();
+    m2comm_phantom_report();
     fprintf(stderr, "texload: %llu rows in C\n", (unsigned long long)g_texload_rows);
     fprintf(stderr, "spin: %llu idle iterations skipped\n", (unsigned long long)g_spin_iters);
     if (cop_out) fclose(cop_out);

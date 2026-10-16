@@ -111,7 +111,20 @@ Steps:
    ROM's CRC at 0x3120, over bytes 0x16..0x37, stored at 0x14) the ring comes
    up node 1 of 2, `net_flag` is 1, and `cRecn+4` takes the echoed packets
    (0xFF -> 0x00 -> 0x10, attract) from frame 590.
-2. Add a packet channel to the RPCN P2P socket (`net/`) carrying the window.
+2. Done (#964). `net/comm_link.h` is the m2comm peer over the room's P2P
+   socket: each message (ring traffic, or the type byte and the window) is a
+   `LOCKSTEP_PACKET_COMM` datagram, the room's header, an epoch, a seq and the
+   message RLE-packed, sent three times. Each seq is taken once (one up to 32
+   behind the newest still counts, so a ring message overtaken by its pass's
+   data frame is not lost); a new epoch starts the count again; the inbox
+   keeps the 8 newest. A message that packs past 1180 bytes (the gateway
+   relay's 1200-byte datagram) is not sent: Virtual-On's attract windows
+   pack to 69 at most. `netplay_comm_open` / `_close` link the board to the opponent
+   (nothing calls them yet: step 3). `tests/comm_link_test.c` runs two boards
+   over a lossy stand-in and over UDP on 127.0.0.1; `det_digest
+   --m2comm-udp` is the phantom of step 1 over that UDP pair: 1500 frames
+   of vonj give the same digests and the same `cRecn+4` as the in-process
+   phantom (922 messages, 3 datagrams each, none torn or too big).
 3. Set the role from the room.
 4. Pace the board to 60 Hz while linked.
 5. Test two headless clients on the container's RPCN.

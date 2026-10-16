@@ -192,3 +192,11 @@ are **silently wrong** rather than loudly wrong when you get them half right.
     and would relay an official-server login to ours; an unknown path is a 404 there. So the
     gateway must be deployed with its `upstreams` before a web build that offers the official
     server, and until then that choice fails cleanly.
+- **A linked comm board's datagrams are not lockstep traffic** (`LOCKSTEP_PACKET_COMM`,
+  `net/comm_link.h`, Virtual-On). Each board runs alone and reads the other cabinet's packets,
+  so nothing gates on them and no desync check covers them. A message must fit the gateway
+  relay's 1200-byte datagram (`WS_RELAY_DGRAM_MAX`, smaller than the web socket's 1400): the
+  window goes RLE-packed. Dedupe takes each seq once within 32 of the newest, not "newer than the
+  last": the master's ring size and its data frame leave in the same pass, and a strict
+  newest-wins drops the size when the two arrive swapped. The drain's buffer is a whole
+  datagram's (it was an input packet's 84 bytes, which truncated these).

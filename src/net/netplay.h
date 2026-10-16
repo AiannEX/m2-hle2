@@ -97,6 +97,7 @@
 #include "net_socket.h"
 
 #include "com_id.h"
+#include "comm_link.h"
 #include "lockstep.h"
 #include "ps3_link.h"
 #include "room.h"
@@ -108,6 +109,7 @@
 #include "i960.h"
 #include "input.h"
 #include "log.h"
+#include "m2comm.h"     /* a linked comm board's peer (comm_link.h) */
 #include "memory.h"
 #include "thread_mutex.h"
 
@@ -1368,6 +1370,49 @@ static inline void netplay_on_bye_packet(uint16_t from, const lockstep_announce_
     }
 }
 
+/* ---- A linked comm board over the room (comm_link.h, Pinboard #964) ----
+ *
+ * Virtual-On's two cabinets talk through their comm boards (board/m2comm.h):
+ * each runs its own board at its own pace, and the ROM's link traffic goes to
+ * the opponent as LOCKSTEP_PACKET_COMM datagrams on the room's socket. It is
+ * not a lockstep match: no barrier, no frame gate, no desync check; what the
+ * i960 reads there is the other cabinet's (VIRTUAL-ON-PS3.md, "RPCN").
+ * Emu thread only, like the rest of this file: m2comm.h sends from inside the
+ * board's slice and the drain below feeds the inbox between slices. Opened
+ * with the opponent known; the room picking the role is the next step. */
+static comm_link_t   g_netplay_comm;
+static m2comm_peer_t g_netplay_comm_peer;
+static bool          g_netplay_comm_open;
+
+static inline void netplay__comm_transmit(void *ud, const void *buf, uint32_t len) {
+    (void)ud;
+    uint16_t to = netplay_opponent_id();
+    if (to != ROOM_NO_MEMBER) rpcn_session_send_to(&g_netplay.session, to, buf, len);
+}
+
+/* Link the comm board to the opponent's: the ring comes up the next time the
+ * game starts its board. */
+static inline void netplay_comm_open(void) {
+    lockstep_header_t h;
+    netplay_fill_header(&h, LOCKSTEP_PACKET_COMM);
+    comm_link_start(&g_netplay_comm, (uint16_t)(net_now_us() | 1u), &h, netplay__comm_transmit, NULL);
+    g_netplay_comm_peer = (m2comm_peer_t){ &g_netplay_comm, comm_link_send, comm_link_recv };
+    m2comm_set_peer(&g_netplay_comm_peer);
+    g_netplay_comm_open = true;
+}
+
+/* The board alone again, as it was before the link. */
+static inline void netplay_comm_close(void) {
+    if (!g_netplay_comm_open) return;
+    m2comm_set_peer(NULL);
+    g_netplay_comm_open = false;
+}
+
+static inline void netplay_on_comm_packet(uint16_t from, const uint8_t *buf, int got) {
+    if (g_netplay_comm_open && from == netplay_opponent_id())
+        comm_link_on_datagram(&g_netplay_comm, buf, (uint32_t)got);
+}
+
 /* One accepted datagram, by its type; one too short for its type is dropped. */
 static inline void netplay_on_datagram(uint16_t from, const uint8_t *buf, int got) {
     const lockstep_header_t *hdr = (const lockstep_header_t *)buf;
@@ -1388,12 +1433,14 @@ static inline void netplay_on_datagram(uint16_t from, const uint8_t *buf, int go
     } else if (hdr->type == LOCKSTEP_PACKET_BYE
                && got >= (int)sizeof(lockstep_announce_packet_t)) {
         netplay_on_bye_packet(from, (const lockstep_announce_packet_t *)buf);
+    } else if (hdr->type == LOCKSTEP_PACKET_COMM) {
+        netplay_on_comm_packet(from, buf, got);
     }
 }
 
 static inline void netplay_drain_socket(void) {
     if (g_netplay.ps3) { netplay_drain_socket_ps3(); return; }
-    uint8_t buf[sizeof(lockstep_input_packet_t) + 64];
+    uint8_t buf[COMM_LINK_DGRAM_MAX];   /* the largest datagram, a comm board's */
     for (;;) {
         uint16_t from = 0;
         uint32_t ip = 0;
