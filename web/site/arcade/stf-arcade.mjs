@@ -42,25 +42,84 @@ const YEAR = 365 * 24 * 3600;
 const PAGE = {
   sfight: {
     cookie: 'stf', sentKey: 'stfArcade.sent', asksKeep: false, privacy: 'privacy.html',
-    what: `<p><b>Arcade: shared high scores.</b> Your game starts on the same board as everyone
-else's, the one the Fly plays on the stream, and fights for the same ranking. When you set
-a time, its <b>initials and clear time</b> are sent to the arcade and shown to everyone.</p>`,
-    share: 'Arcade: share my high scores, play on the shared board',
-    only: 'High scores only',
   },
   srallyc: {
     cookie: 'srally', sentKey: 'srallyArcade.sent', asksKeep: true, privacy: 'srally-privacy.html',
-    what: `<p><b>Arcade: shared best times.</b> Your game starts on the same board as everyone
+  },
+}[GAME.id];
+const SENT_KEY = PAGE.sentKey;               // entries the shared board already has
+
+/* The words, by language (Pinboard #944), as HTML: the game page's m2hleLang picks one
+ * (?lang=); without it they are English. A game's own are arcade.<game id>.*. */
+const WORDS = {
+  en: {
+    'arcade.sfight.what': `<p><b>Arcade: shared high scores.</b> Your game starts on the same board as everyone
+else's, the one the Fly plays on the stream, and fights for the same ranking. When you set
+a time, its <b>initials and clear time</b> are sent to the arcade and shown to everyone.</p>`,
+    'arcade.sfight.share': 'Arcade: share my high scores, play on the shared board',
+    'arcade.sfight.only': 'High scores only',
+    'arcade.srallyc.what': `<p><b>Arcade: shared best times.</b> Your game starts on the same board as everyone
 else's who plays Sega Rally here, and races for the same best times on every course. When
 you set one, its <b>initials, time and car</b> are sent to the arcade and shown to everyone.
 Your settings and best times are kept in this browser too.</p>
 <p><b>Keep my save here.</b> Or keep them in this browser only, and send nothing. Say no to
 everything and every visit starts on a fresh board.</p>`,
-    share: 'Arcade: share my best times, race on the shared board',
-    only: 'Best times only',
+    'arcade.srallyc.share': 'Arcade: share my best times, race on the shared board',
+    'arcade.srallyc.only': 'Best times only',
+    'arcade.stats': `<b>Usage stats.</b> Anonymous counts that help us keep the site working: that the page
+opened, that a game started (alone, netplay or watching), and how long it ran.
+Nothing else: no address, no browser details, no tracking across sites.`,
+    'arcade.ids': `Sharing either one gives this browser a random id (cookie <code>{player}</code>) so you
+can see or delete what was sent. Your choice is kept in the cookie <code>{consent}</code>.
+<a href="{privacy}" target="_blank" rel="noopener">The details</a>.`,
+    'arcade.later': 'Your choice applies the next time the game starts. Reload the page to switch boards now.',
+    'arcade.join': 'Join the arcade?',
+    'arcade.both': 'Join, share both',
+    'arcade.keepOnly': 'Keep my save here, send nothing',
+    'arcade.noKeep': 'No thanks, keep nothing',
+    'arcade.noAlone': 'No thanks, play alone',
+    'arcade.keepRow': 'Keep my save in this browser (also without the arcade; off deletes it)',
+    'arcade.usageRow': 'Usage stats: anonymous counts of visits, games and play time',
+    'arcade.panel': 'Arcade &amp; your data',
+    'arcade.panelAria': 'Arcade and your data',
+    'arcade.save': 'Save',
+    'arcade.show': 'What have you got on me?',
+    'arcade.forget': 'Delete what I sent',
+    'arcade.close': 'Close',
+    'arcade.nothing': 'Nothing: this browser has not sent anything.',
   },
-}[GAME.id];
-const SENT_KEY = PAGE.sentKey;               // entries the shared board already has
+  ja: {
+    'arcade.sfight.what': `<p><b>アーケード：ハイスコアの共有。</b>みんなと同じ基板、配信で Fly がプレイしている基板でゲームが始まり、同じランキングを競います。記録を出すと、その<b>イニシャルとクリアタイム</b>がアーケードに送られ、全員に表示されます。</p>`,
+    'arcade.sfight.share': 'アーケード：ハイスコアを共有し、共有の基板でプレイする',
+    'arcade.sfight.only': 'ハイスコアのみ',
+    'arcade.srallyc.what': `<p><b>アーケード：ベストタイムの共有。</b>ここでセガラリーをプレイするみんなと同じ基板でゲームが始まり、すべてのコースで同じベストタイムを競います。記録を出すと、その<b>イニシャル、タイム、車</b>がアーケードに送られ、全員に表示されます。設定とベストタイムはこのブラウザにも保存されます。</p>
+<p><b>セーブをここに保存。</b>または、このブラウザだけに保存して何も送らないこともできます。すべて断ると、毎回まっさらな基板から始まります。</p>`,
+    'arcade.srallyc.share': 'アーケード：ベストタイムを共有し、共有の基板でレースする',
+    'arcade.srallyc.only': 'ベストタイムのみ',
+    'arcade.stats': `<b>利用統計。</b>サイトの運営に役立つ匿名の集計です。ページを開いたこと、ゲームを始めたこと（ひとりで、オンライン対戦で、観戦で）、そのプレイ時間だけを送ります。アドレスやブラウザの詳細は送らず、サイトをまたいだ追跡もしません。`,
+    'arcade.ids': `どちらかを共有すると、送った内容を確認・削除できるよう、このブラウザにランダムな ID（Cookie <code>{player}</code>）が付きます。選択は Cookie <code>{consent}</code> に保存されます。<a href="{privacy}" target="_blank" rel="noopener">詳しくはこちら（英語）</a>。`,
+    'arcade.later': '選択は次にゲームを始めたときから有効です。今すぐ基板を切り替えるには、ページを再読み込みしてください。',
+    'arcade.join': 'アーケードに参加しますか？',
+    'arcade.both': '参加して、両方とも共有',
+    'arcade.keepOnly': 'セーブをここに保存し、何も送らない',
+    'arcade.noKeep': '参加しない、何も保存しない',
+    'arcade.noAlone': '参加しない、ひとりで遊ぶ',
+    'arcade.keepRow': 'このブラウザにセーブを保存（アーケードなしでも。オフにすると削除します）',
+    'arcade.usageRow': '利用統計：訪問、ゲーム、プレイ時間の匿名の集計',
+    'arcade.panel': 'アーケードとデータ',
+    'arcade.panelAria': 'アーケードとデータ',
+    'arcade.save': '保存',
+    'arcade.show': '送ったデータを見る',
+    'arcade.forget': '送ったデータを削除',
+    'arcade.close': '閉じる',
+    'arcade.nothing': 'ありません。このブラウザはまだ何も送っていません。',
+  },
+};
+const LANG = typeof m2hleLang === 'object' ? m2hleLang : null;   // a page script's global, not window's
+if (LANG) LANG.add(WORDS);
+const tr = (key, vars) => (LANG ? LANG.t(key, vars) :
+  WORDS.en[key].replace(/\{(\w+)\}/g, (m, k) => (vars && k in vars ? vars[k] : m)));
+const own = (what) => tr(`arcade.${GAME.id}.${what}`);
 
 /* ---- The choice, in cookies ------------------------------------------------- */
 
@@ -223,13 +282,9 @@ addEventListener('pagehide', () => {
 
 /* ---- The banner and the panel -------------------------------------------- */
 
-const WHAT = `${PAGE.what}
-<p><b>Usage stats.</b> Anonymous counts that help us keep the site working: that the page
-opened, that a game started (alone, netplay or watching), and how long it ran.
-Nothing else: no address, no browser details, no tracking across sites.</p>
-<p>Sharing either one gives this browser a random id (cookie <code>${PLAYER}</code>) so you
-can see or delete what was sent. Your choice is kept in the cookie <code>${CONSENT}</code>.
-<a href="${API}/${PAGE.privacy}" target="_blank" rel="noopener">The details</a>.</p>`;
+const WHAT = `${own('what')}
+<p>${tr('arcade.stats')}</p>
+<p>${tr('arcade.ids', { player: PLAYER, consent: CONSENT, privacy: `${API}/${PAGE.privacy}` })}</p>`;
 
 function el(html) {
   const t = document.createElement('template');
@@ -245,7 +300,7 @@ function choose(c, box) {
   if (!keepSave() && kept) forgetSave();
   applyKeep();
   if (!!(before && before.arcade) === c.arcade) return;
-  if (started) note('Your choice applies the next time the game starts. Reload the page to switch boards now.');
+  if (started) note(tr('arcade.later'));
   else ready = ready.then(prepare);       // the game has not loaded yet: switch boards now
 }
 
@@ -256,13 +311,13 @@ function note(text) {
 }
 
 function banner() {
-  const box = el(`<div class="stfa-banner" role="dialog" aria-label="Join the arcade?">
-    <h2>Join the arcade?</h2>${WHAT}
+  const box = el(`<div class="stfa-banner" role="dialog" aria-label="${tr('arcade.join')}">
+    <h2>${tr('arcade.join')}</h2>${WHAT}
     <div class="stfa-buttons">
-      <button data-a="all">Join, share both</button>
-      <button data-a="arcade">${PAGE.only}</button>
-      ${PAGE.asksKeep ? '<button data-a="keep">Keep my save here, send nothing</button>' : ''}
-      <button data-a="none">${PAGE.asksKeep ? 'No thanks, keep nothing' : 'No thanks, play alone'}</button>
+      <button data-a="all">${tr('arcade.both')}</button>
+      <button data-a="arcade">${own('only')}</button>
+      ${PAGE.asksKeep ? `<button data-a="keep">${tr('arcade.keepOnly')}</button>` : ''}
+      <button data-a="none">${tr(PAGE.asksKeep ? 'arcade.noKeep' : 'arcade.noAlone')}</button>
     </div></div>`);
   box.addEventListener('click', (e) => {
     const a = e.target.dataset && e.target.dataset.a;
@@ -273,23 +328,23 @@ function banner() {
 
 function panelRows(c) {
   const keep = PAGE.asksKeep ? `<label><input type="checkbox" name="keep" ${c.keep ? 'checked' : ''}>
-      Keep my save in this browser (also without the arcade; off deletes it)</label>` : '';
+      ${tr('arcade.keepRow')}</label>` : '';
   return `<label><input type="checkbox" name="arcade" ${c.arcade ? 'checked' : ''}>
-      ${PAGE.share}</label>
+      ${own('share')}</label>
     <label><input type="checkbox" name="usage" ${c.usage ? 'checked' : ''}>
-      Usage stats: anonymous counts of visits, games and play time</label>${keep}`;
+      ${tr('arcade.usageRow')}</label>${keep}`;
 }
 
 function panel() {
   const c = readConsent() || { arcade: false, usage: false, keep: false };
-  const box = el(`<div class="stfa-banner" role="dialog" aria-label="Arcade and your data">
-    <h2>Arcade &amp; your data</h2>${WHAT}${panelRows(c)}
+  const box = el(`<div class="stfa-banner" role="dialog" aria-label="${tr('arcade.panelAria')}">
+    <h2>${tr('arcade.panel')}</h2>${WHAT}${panelRows(c)}
     <pre class="stfa-mine" hidden></pre>
     <div class="stfa-buttons">
-      <button data-a="save">Save</button>
-      <button data-a="show">What have you got on me?</button>
-      <button data-a="forget">Delete what I sent</button>
-      <button data-a="close">Close</button>
+      <button data-a="save">${tr('arcade.save')}</button>
+      <button data-a="show">${tr('arcade.show')}</button>
+      <button data-a="forget">${tr('arcade.forget')}</button>
+      <button data-a="close">${tr('arcade.close')}</button>
     </div></div>`);
   box.addEventListener('click', (e) => panelAction(e.target.dataset && e.target.dataset.a, box));
   document.body.append(box);
@@ -303,7 +358,7 @@ async function panelAction(a, box) {
   } else if (a === 'close') box.remove();
   else if (a === 'show' || a === 'forget') {
     pre.hidden = false;
-    if (!player()) { pre.textContent = 'Nothing: this browser has not sent anything.'; return; }
+    if (!player()) { pre.textContent = tr('arcade.nothing'); return; }
     const out = await post(a === 'show' ? '/api/me' : '/api/forget', { player: player() }).catch((e) => e.message);
     pre.textContent = JSON.stringify(out, null, 1);
     if (a === 'forget') { setCookie(PLAYER, '', 0); saveConsent(readConsent() || {}); }
@@ -313,7 +368,7 @@ async function panelAction(a, box) {
 function start() {
   const css = el(`<link rel="stylesheet" href="${new URL('stf-arcade.css', import.meta.url)}">`);
   document.head.append(css);
-  const button = el('<button class="stfa-open" title="Arcade &amp; your data">Arcade &amp; your data</button>');
+  const button = el(`<button class="stfa-open" title="${tr('arcade.panel')}">${tr('arcade.panel')}</button>`);
   button.addEventListener('click', panel);
   document.body.append(button);
   if (!readConsent()) banner();
