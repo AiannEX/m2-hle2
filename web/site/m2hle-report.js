@@ -13,6 +13,27 @@
 'use strict';
 
 const m2hleReport = (() => {
+  /* The panel's words. What goes to the developers (report.txt, the issue's
+   * facts, the console) stays English; the issue's last line asks the player. */
+  m2hleLang.add({
+    en: {
+      'report.error': 'The picture could not be taken. Is a game running offline?',
+      'report.frame': '{game}, frame {frame}',
+      'report.state.with': 'with a savestate of this frame',
+      'report.state.without': 'without a savestate ({why})',
+      'report.state.none': 'no state was saved',
+      'report.attach': 'Attach the downloaded {file} here (drag it into this box).',
+    },
+    ja: {
+      'report.error': '画面を取得できませんでした。ゲームをオフラインで遊んでいますか？',
+      'report.frame': '{game}、フレーム {frame}',
+      'report.state.with': 'このフレームのセーブステート付き',
+      'report.state.without': 'セーブステートなし（{why}）',
+      'report.state.none': 'セーブステートを保存できませんでした',
+      'report.attach': 'ダウンロードした {file} をここに添付してください（この欄にドラッグします）。',
+    },
+  });
+  const t = m2hleLang.t;
   const $ = (id) => document.getElementById(id);
   const ISSUES = 'https://github.com/biggestsonicfan/m2-hle2/issues/new';
   let M = null;
@@ -119,7 +140,7 @@ const m2hleReport = (() => {
     let state = null, stateError = '';
     if (withState) {
       state = copyOut(M._web_state_data(), M._web_state_len());
-      stateError = state ? '' : M.UTF8ToString(M._web_state_error()) || 'no state was saved';
+      stateError = state ? '' : M.UTF8ToString(M._web_state_error());   /* '': none, no reason */
       M._web_state_free();
     }
     return rgba ? { w, h, rgba, state, stateError, info: info(), when: new Date() } : null;
@@ -180,7 +201,7 @@ const m2hleReport = (() => {
       'Frame      ' + r.info.frame,
       'Page       ' + location.href,
       ...m2hleTools.systemInfo(),
-      'State      ' + (r.state ? r.state.length + ' bytes (state.sta)' : 'none: ' + r.stateError),
+      'State      ' + (r.state ? r.state.length + ' bytes (state.sta)' : 'none: ' + (r.stateError || 'no state was saved')),
     ].join('\n');
   }
 
@@ -206,7 +227,7 @@ const m2hleReport = (() => {
     const title = '[web] ' + (desc.split('\n')[0].slice(0, 80) || report.info.game + ': ');
     let body = reportText();
     if (body.length > 5000) body = body.slice(0, 5000) + '\n...';
-    body += '\n\nAttach the downloaded ' + stamp(report) + '-report.zip here (drag it into this box).';
+    body += '\n\n' + t('report.attach', { file: stamp(report) + '-report.zip' });
     window.open(ISSUES + '?title=' + encodeURIComponent(title) + '&body=' + encodeURIComponent(body),
                 '_blank', 'noopener');
   }
@@ -216,10 +237,11 @@ const m2hleReport = (() => {
     $('rp-busy').hidden = true;
     $('rp-ready').hidden = !r;
     $('rp-error').hidden = !!r;
-    if (!r) { $('rp-error').textContent = 'The picture could not be taken. Is a game running offline?'; return; }
+    if (!r) { $('rp-error').textContent = t('report.error'); return; }
     $('rp-img').src = URL.createObjectURL(r.png);
-    $('rp-frame').textContent = r.info.game + ', frame ' + r.info.frame;
-    $('rp-state').textContent = r.state ? 'with a savestate of this frame' : 'without a savestate (' + r.stateError + ')';
+    $('rp-frame').textContent = t('report.frame', { game: r.info.game, frame: r.info.frame });
+    $('rp-state').textContent = r.state ? t('report.state.with')
+      : t('report.state.without', { why: r.stateError || t('report.state.none') });
     $('rp-saved').hidden = true;
   }
 

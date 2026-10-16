@@ -17,6 +17,60 @@
  */
 'use strict';
 
+/* The words (m2hle-lang.js). The rows' names are m2hle-keys.js's keys.act.*. */
+m2hleLang.add({
+  en: {
+    'pad.std.0': 'A / Cross', 'pad.std.1': 'B / Circle', 'pad.std.2': 'X / Square', 'pad.std.3': 'Y / Triangle',
+    'pad.std.4': 'Left bumper', 'pad.std.5': 'Right bumper', 'pad.std.6': 'Left trigger', 'pad.std.7': 'Right trigger',
+    'pad.std.8': 'Back / Select', 'pad.std.9': 'Start', 'pad.std.10': 'Left stick press',
+    'pad.std.11': 'Right stick press', 'pad.std.12': 'D-pad up', 'pad.std.13': 'D-pad down',
+    'pad.std.14': 'D-pad left', 'pad.std.15': 'D-pad right', 'pad.std.16': 'Home',
+    'pad.axis.0-': 'Left stick left', 'pad.axis.0+': 'Left stick right',
+    'pad.axis.1-': 'Left stick up', 'pad.axis.1+': 'Left stick down',
+    'pad.axis.2-': 'Right stick left', 'pad.axis.2+': 'Right stick right',
+    'pad.axis.3-': 'Right stick up', 'pad.axis.3+': 'Right stick down',
+    'pad.button': 'Button {n}',
+    'pad.axis': 'Axis {n} {dir}',
+    'pad.sub.macros': 'Macros: one press holds several buttons',
+    'pad.sub.page': 'The page: offline only, as the button beside the menu',
+    'pad.none': 'Not set',
+    'pad.remove': 'Remove',
+    'pad.remove.from': 'Remove {button} from {action}',
+    'pad.add': 'Add',
+    'pad.press': 'Press a button…',
+    'pad.status.none': 'No controller found. Connect one and press any button on it.',
+    'pad.status.p1': 'Player 1: {name}',
+    'pad.status.p2': 'Player 2: {name}',
+    'pad.status.also': 'Also player 1: {name}',
+    'pad.status.odd': '{pads} (unrecognised layout: buttons are shown by number)',
+  },
+  ja: {
+    'pad.std.0': 'A / ×', 'pad.std.1': 'B / ○', 'pad.std.2': 'X / □', 'pad.std.3': 'Y / △',
+    'pad.std.4': '左バンパー', 'pad.std.5': '右バンパー', 'pad.std.6': '左トリガー', 'pad.std.7': '右トリガー',
+    'pad.std.8': 'Back / セレクト', 'pad.std.9': 'スタート', 'pad.std.10': '左スティック押し込み',
+    'pad.std.11': '右スティック押し込み', 'pad.std.12': '十字キー上', 'pad.std.13': '十字キー下',
+    'pad.std.14': '十字キー左', 'pad.std.15': '十字キー右', 'pad.std.16': 'ホーム',
+    'pad.axis.0-': '左スティック左', 'pad.axis.0+': '左スティック右',
+    'pad.axis.1-': '左スティック上', 'pad.axis.1+': '左スティック下',
+    'pad.axis.2-': '右スティック左', 'pad.axis.2+': '右スティック右',
+    'pad.axis.3-': '右スティック上', 'pad.axis.3+': '右スティック下',
+    'pad.button': 'ボタン{n}',
+    'pad.axis': '軸{n} {dir}',
+    'pad.sub.macros': 'マクロ：1回押すと複数のボタンを同時に押します',
+    'pad.sub.page': 'ページ：オフライン時のみ。メニュー横のボタンと同じです',
+    'pad.none': '未設定',
+    'pad.remove': '削除',
+    'pad.remove.from': '{action}から{button}を削除',
+    'pad.add': '追加',
+    'pad.press': 'ボタンを押してください…',
+    'pad.status.none': 'コントローラーが見つかりません。接続して、いずれかのボタンを押してください。',
+    'pad.status.p1': 'プレイヤー1：{name}',
+    'pad.status.p2': 'プレイヤー2：{name}',
+    'pad.status.also': 'こちらもプレイヤー1：{name}',
+    'pad.status.odd': '{pads}（未対応の配置のため、ボタンは番号で表示しています）',
+  },
+});
+
 const m2hlePad = (() => {
   const $ = (id) => document.getElementById(id);
   const STORE = 'm2hle.pad';
@@ -24,16 +78,16 @@ const m2hlePad = (() => {
   /* The rows of the panel. `act` is the GAME_INPUT_* index for player 1
    * (src/core/game_profile.h), `acts` a macro's; player 2's is 10 further on. */
   const ACTIONS = [
-    { id: 'up',    label: 'Up',       act: 0 },
-    { id: 'down',  label: 'Down',     act: 1 },
-    { id: 'left',  label: 'Left',     act: 2 },
-    { id: 'right', label: 'Right',    act: 3 },
-    { id: 'b1',    label: 'Punch',    act: 4 },
-    { id: 'b2',    label: 'Kick',     act: 5 },
-    { id: 'b3',    label: 'Barrier',  act: 6 },
-    { id: 'b4',    label: 'Button 4', act: 7 },
-    { id: 'start', label: 'Start',    act: 8 },
-    { id: 'coin',  label: 'Coin',     act: 9 },
+    { id: 'up',    act: 0 },
+    { id: 'down',  act: 1 },
+    { id: 'left',  act: 2 },
+    { id: 'right', act: 3 },
+    { id: 'b1',    act: 4 },
+    { id: 'b2',    act: 5 },
+    { id: 'b3',    act: 6 },
+    { id: 'b4',    act: 7 },
+    { id: 'start', act: 8 },
+    { id: 'coin',  act: 9 },
     /* Macros: one binding that holds several buttons at once, as the Gems
      * Collection and HD ports offer. Unbound until the player binds them. */
     { id: 'pk',    label: 'P + K',     acts: [4, 5],    macro: true },
@@ -42,10 +96,10 @@ const m2hlePad = (() => {
     { id: 'pkb',   label: 'P + K + B', acts: [4, 5, 6], macro: true },
     /* The page's Pause (m2hle-page.js), not a game button: it holds nothing.
      * Unbound until the player binds it, as every standard button has a job. */
-    { id: 'pause', label: 'Pause',     acts: [],        page: true },
+    { id: 'pause', acts: [],        page: true },
   ];
   for (const a of ACTIONS) a.mask = (a.acts || [a.act]).reduce((m, i) => m | (1 << i), 0);
-  for (const a of ACTIONS) a.label = m2hleGame.labels[a.id] || a.label;
+  for (const a of ACTIONS) a.label = m2hleGame.labels[a.id] || a.label || m2hleLang.t('keys.act.' + a.id);
   const P2_OFFSET = 10;
 
   /* A binding is a button ({b: index}) or one direction of an axis ({a: index, d: ±1}).
@@ -105,16 +159,14 @@ const m2hlePad = (() => {
 
   /* ---- Names ------------------------------------------------------------------ */
 
-  const STD_BUTTONS = ['A / Cross', 'B / Circle', 'X / Square', 'Y / Triangle', 'Left bumper', 'Right bumper',
-                       'Left trigger', 'Right trigger', 'Back / Select', 'Start', 'Left stick press',
-                       'Right stick press', 'D-pad up', 'D-pad down', 'D-pad left', 'D-pad right', 'Home'];
-  const STD_AXES = [['Left stick left', 'Left stick right'], ['Left stick up', 'Left stick down'],
-                    ['Right stick left', 'Right stick right'], ['Right stick up', 'Right stick down']];
+  /* The "standard" layout's buttons and stick axes have names (pad.std.*, pad.axis.*). */
+  const STD_BUTTONS = 17, STD_AXES = 4;
 
   function bindName(x, standard) {
-    if (x.b !== undefined) return standard && STD_BUTTONS[x.b] ? STD_BUTTONS[x.b] : 'Button ' + x.b;
-    if (standard && STD_AXES[x.a]) return STD_AXES[x.a][x.d > 0 ? 1 : 0];
-    return 'Axis ' + x.a + (x.d > 0 ? ' +' : ' −');
+    const t = m2hleLang.t;
+    if (x.b !== undefined) return standard && x.b < STD_BUTTONS ? t('pad.std.' + x.b) : t('pad.button', { n: x.b });
+    if (standard && x.a < STD_AXES) return t('pad.axis.' + x.a + (x.d > 0 ? '+' : '-'));
+    return t('pad.axis', { n: x.a, dir: x.d > 0 ? '+' : '−' });
   }
 
   /* ---- Polling ---------------------------------------------------------------- */
@@ -260,13 +312,13 @@ const m2hlePad = (() => {
       if (a.macro && a === ACTIONS.find((x) => x.macro)) {
         const sub = document.createElement('li');
         sub.className = 'pad-sub';
-        sub.textContent = 'Macros: one press holds several buttons';
+        sub.textContent = m2hleLang.t('pad.sub.macros');
         rows.appendChild(sub);
       }
       if (a.page) {
         const sub = document.createElement('li');
         sub.className = 'pad-sub';
-        sub.textContent = 'The page: offline only, as the button beside the menu';
+        sub.textContent = m2hleLang.t('pad.sub.page');
         rows.appendChild(sub);
       }
       const tr = document.createElement('li');
@@ -282,15 +334,15 @@ const m2hlePad = (() => {
       if (binds[a.id].length === 0) {
         const none = document.createElement('span');
         none.className = 'status';
-        none.textContent = 'Not set';
+        none.textContent = m2hleLang.t('pad.none');
         chips.appendChild(none);
       }
       binds[a.id].forEach((x, i) => {
         const chip = document.createElement('button');
         chip.className = 'pad-chip';
         chip.type = 'button';
-        chip.title = 'Remove';
-        chip.setAttribute('aria-label', 'Remove ' + bindName(x, standard) + ' from ' + a.label);
+        chip.title = m2hleLang.t('pad.remove');
+        chip.setAttribute('aria-label', m2hleLang.t('pad.remove.from', { button: bindName(x, standard), action: a.label }));
         chip.textContent = bindName(x, standard) + ' ×';
         chip.addEventListener('click', () => { binds[a.id].splice(i, 1); save(); render(); });
         chips.appendChild(chip);
@@ -301,7 +353,7 @@ const m2hlePad = (() => {
       add.className = 'tool pad-add';
       add.type = 'button';
       const on = listening && listening.id === a.id;
-      add.textContent = on ? 'Press a button…' : 'Add';
+      add.textContent = m2hleLang.t(on ? 'pad.press' : 'pad.add');
       add.setAttribute('aria-pressed', String(!!on));
       add.addEventListener('click', () => listen(a.id));
       tr.appendChild(add);
@@ -315,12 +367,13 @@ const m2hlePad = (() => {
     const el = $('pad-status');
     if (!el) return;
     if (list.length === 0) {
-      el.textContent = 'No controller found. Connect one and press any button on it.';
+      el.textContent = m2hleLang.t('pad.status.none');
       return;
     }
-    const names = list.map((p, i) => (i === 0 ? 'Player 1: ' : (i === 1 && secondIsP2 ? 'Player 2: ' : 'Also player 1: ')) +
-                                    p.id.replace(/\s*\(.*?Vendor.*?\)\s*/i, ' ').trim());
-    el.textContent = names.join(' · ') + (list[0].mapping === 'standard' ? '' : ' (unrecognised layout: buttons are shown by number)');
+    const names = list.map((p, i) => m2hleLang.t(i === 0 ? 'pad.status.p1' : (i === 1 && secondIsP2 ? 'pad.status.p2' : 'pad.status.also'),
+                                                 { name: p.id.replace(/\s*\(.*?Vendor.*?\)\s*/i, ' ').trim() }));
+    const pads = names.join(' · ');
+    el.textContent = list[0].mapping === 'standard' ? pads : m2hleLang.t('pad.status.odd', { pads });
   }
 
   /* The rows light up while the first pad holds them: the quickest way to check a mapping. */
