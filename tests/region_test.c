@@ -6,9 +6,10 @@
  * puts g_region in the game's country setting (quirks.region_hook) or why the
  * set has none (quirks.region_fixed). The web page sets the region from its
  * ?lang= (Pinboard #942), so a new profile has to answer. Then the hooks
- * themselves: Sega Rally's country_default writes COUNTRY (0x202019), and
- * STF's settings_loaded writes the working block's country over a saved block
- * only when the region was asked for (g_region_over_saved).
+ * themselves: Sega Rally's country_default writes COUNTRY (0x202019) and its
+ * settings_checked writes it over a saved block, and STF's settings_loaded
+ * writes the working block's country over a saved block, both only when the
+ * region was asked for (g_region_over_saved).
  *
  * A ctest (CMakeLists.txt, region_test).
  */
@@ -40,6 +41,22 @@ static void check_declared(void) {
         int hook = p->quirks.region_hook, fixed = p->quirks.region_fixed && p->quirks.region_fixed[0];
         CHECK(hook != fixed, "%s: region_hook or region_fixed, one of them", p->id);
     }
+}
+
+/* A saved block (EEPROM) brought EXPORT; the boot goes on at settings_checked. */
+static void check_srallyc_saved(void) {
+    hle_hook_fn fn = hook_named(&srallyc_profile, "settings_checked");
+    CHECK(fn != NULL, "srallyc: settings_checked hook");
+    if (!fn) return;
+    g_region = GAME_REGION_USA;
+    g_region_over_saved = 0;
+    mem_write8(&bus, 0x00202019u, GAME_REGION_EXPORT);
+    CHECK(fn(&cpu, &bus) == 1 && mem_read8(&bus, 0x00202019u) == GAME_REGION_EXPORT,
+          "srallyc: a saved COUNTRY stays when the region was not asked for");
+    g_region_over_saved = 1;
+    CHECK(fn(&cpu, &bus) == 1 && mem_read8(&bus, 0x00202019u) == GAME_REGION_USA,
+          "srallyc: the asked-for region goes over the saved COUNTRY");
+    g_region_over_saved = 0;
 }
 
 static void check_srallyc(void) {
@@ -80,6 +97,7 @@ int main(void) {
     i960_reset(&cpu);
     check_declared();
     check_srallyc();
+    check_srallyc_saved();
     check_sfight();
     printf(g_fail ? "\nFAILED (%d)\n" : "\nPASSED\n", g_fail);
     return g_fail ? 1 : 0;
