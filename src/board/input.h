@@ -165,7 +165,12 @@ static inline void input_action_up(int act) {
     if (act < 0 || act >= GAME_INPUT_COUNT || !g_active_profile) return;
     uint32_t bit = g_active_profile->input.bits[act];
     if (g_input_holds[act] > 0 && --g_input_holds[act] > 0) return;
-    if (bit) g_input.held &= ~bit;
+    if (!bit) return;
+    g_input.held &= ~bit;
+    /* An action whose mask shares a bit with this one (Virtual-On's B3 is
+     * both triggers, B1 the left one) keeps it while still held. */
+    for (int a = 0; a < GAME_INPUT_COUNT; a++)
+        if (g_input_holds[a]) g_input.held |= g_active_profile->input.bits[a] & bit;
 }
 
 /* ---- Combos ---------------------------------------------------------------- */
