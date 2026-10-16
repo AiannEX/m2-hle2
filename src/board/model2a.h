@@ -56,16 +56,10 @@ static uint32_t model2a_ctl_read_cb(mem_region_t *r, uint32_t addr, int size) {
     if (off < 4)       v = g_tgp.coproctl >> (off * 8);
     else if (off < 8)  v = off == 4 ? (tgp_out_empty() ? 1u : 0u) : 0u;
     else if (off == 0xC) {
-        /* videoctl_r: a frame-number bit over the low two bits the game wrote.
-         * In 30 Hz render mode (0x10000000 bit 2 clear) bit 2 is frame bit 1,
-         * so it flips every other vblank; at 60 Hz, every vblank. Sega Rally
-         * polls it at boot to wait out frames. This register is on every
-         * Model 2 board (model2_base_mem); only the 2A map serves it so far. */
+        /* videoctl_r (irqt_videoctl). Served by the 2A map and the 2B map with
+         * a SHARC COP (model2b_cop.h); STF's map leaves it plain storage. */
         const memory_bus_t *bus = (const memory_bus_t *)r->user;
-        bool mode60 = bus && (bus->unknown_vid[0] & 0x04u);
-        irqt_flush();
-        uint32_t fn = (uint32_t)g_irqt.vbl_count;
-        v = (mode60 ? (fn & 1u) << 2 : (fn & 2u) << 1) | (r->data[0xC] & 3u);
+        v = irqt_videoctl(bus && (bus->unknown_vid[0] & 0x04u), r->data[0xC]);
     } else {
         v = 0;
         for (int k = 0; k < size && off + (uint32_t)k < r->size; k++)
