@@ -113,6 +113,7 @@ typedef struct {
     char values[M2LUA_VALUE_MAX][32];
     int  nvalues;
     int  value;
+    int  dflt;           /* the value the script gave it (RetroArch's cheats go back to it) */
     bool runfunc, changefunc;
 } m2lua_option_t;
 
@@ -545,6 +546,7 @@ static inline void m2lua_option_read(lua_State *L) {
     o->changefunc = m2lua_field_is_fn(L, "changefunc");
     lua_getfield(L, -1, "value");
     o->value = lua_isinteger(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+    o->dflt  = o->value;
     lua_pop(L, 1);
     lua_pushinteger(L, o->value);       /* Options.<key>.value is always there */
     lua_setfield(L, -2, "value");
@@ -822,6 +824,97 @@ static inline bool m2lua_reload(void) {
     bool ok = m2lua_load_source(set, src, g_m2lua.bus, g_m2lua.rom, true);
     free(src);
     return ok;
+}
+
+/* ---- RetroArch's cheats (the libretro core, Pinboard #967) ----------------
+ *
+ * RetroArch has no room for a core's own menu, so there a script's options are
+ * cheats: one per value other than the option's default, code "<key>=<value>"
+ * (the value's index or its name; several joined by '+'). The core writes them
+ * as <set>.cht beside the script, the player loads that file in Quick Menu >
+ * Cheats, and RetroArch hands the codes of the ones switched on to
+ * retro_cheat_set. A cheat switched off puts its option back to the default. */
+
+/* s with its double quotes made single, for a .cht string. */
+static inline const char *m2lua_cht_str(const char *s, char *buf, size_t cap) {
+    snprintf(buf, cap, "%s", s);
+    for (char *p = buf; *p; p++) if (*p == '"') *p = '\'';
+    return buf;
+}
+
+static inline void m2lua_cht_entry(char *out, int cap, int *at, int n, const m2lua_option_t *o, int v) {
+    char name[64], value[32];
+    if (*at < cap)
+        *at += snprintf(out + *at, (size_t)(cap - *at),
+                        "\ncheat%d_desc = \"%s: %s\"\ncheat%d_code = \"%s=%d\"\n"
+                        "cheat%d_enable = \"false\"\ncheat%d_handler = \"0\"\n",
+                        n, m2lua_cht_str(o->name, name, sizeof name), m2lua_cht_str(o->values[v], value, sizeof value),
+                        n, o->key, v, n, n);
+}
+
+/* The loaded script's options as a RetroArch .cht file; its length, 0 for a
+ * script with no options. */
+static inline int m2lua_cht_text(char *out, int cap) {
+    int n = 0;
+    for (int i = 0; i < g_m2lua.noptions; i++)
+        for (int v = 0; v < g_m2lua.options[i].nvalues; v++) n += v != g_m2lua.options[i].dflt;
+    out[0] = 0;
+    if (n <= 0 || cap <= 0) return 0;
+    int at = snprintf(out, (size_t)cap,
+                      "# The options of %s.lua as RetroArch cheats: m2-hle writes this file when it\n"
+                      "# loads the script (edits are lost). Code \"<option>=<value>\"; a cheat\n"
+                      "# switched off puts its option back to the script's default.\ncheats = \"%d\"\n",
+                      g_m2lua.set, n);
+    n = 0;
+    for (int i = 0; i < g_m2lua.noptions; i++) {
+        const m2lua_option_t *o = &g_m2lua.options[i];
+        for (int v = 0; v < o->nvalues; v++)
+            if (v != o->dflt) m2lua_cht_entry(out, cap, &at, n++, o, v);
+    }
+    return at < cap ? at : cap - 1;
+}
+
+/* One "<key>=<value>" of a cheat's code into want[]. */
+static inline bool m2lua_cheat_one(const char *s, size_t len, int *want) {
+    const char *eq = memchr(s, '=', len);
+    if (!eq) return false;
+    char key[sizeof g_m2lua.options[0].key], val[sizeof g_m2lua.options[0].values[0]];
+    snprintf(key, sizeof key, "%.*s", (int)(eq - s), s);
+    snprintf(val, sizeof val, "%.*s", (int)(s + len - eq - 1), eq + 1);
+    int i = m2lua_option_index(key);
+    if (i < 0) return false;
+    const m2lua_option_t *o = &g_m2lua.options[i];
+    char *end;
+    long v = strtol(val, &end, 10);
+    if (end == val || *end)
+        for (v = o->nvalues - 1; v >= 0 && strcmp(o->values[v], val) != 0; v--) {}
+    if (v < 0 || v >= o->nvalues) return false;
+    want[i] = (int)v;
+    return true;
+}
+
+/* A cheat's code into want[] (one value per option); how many it set. */
+static inline int m2lua_cheat_code(const char *code, int *want) {
+    int n = 0;
+    while (code && *code) {
+        size_t len = strcspn(code, "+");
+        n += m2lua_cheat_one(code, len, want);
+        code += len;
+        if (*code) code++;
+    }
+    return n;
+}
+
+/* want[] back to every option's default. */
+static inline void m2lua_cheat_defaults(int *want) {
+    for (int i = 0; i < g_m2lua.noptions; i++) want[i] = g_m2lua.options[i].dflt;
+}
+
+/* Every option whose value differs from want[] set to it (and its changefunc
+ * called). Emu mutex held, the script running. */
+static inline void m2lua_cheat_apply(const int *want) {
+    for (int i = 0; i < g_m2lua.noptions; i++)
+        if (want[i] != g_m2lua.options[i].value) m2lua_set_option(i, want[i]);
 }
 
 /* ---- The script's state as JSON (the bridge's script_status, the web page) - */

@@ -3,7 +3,8 @@
 Code: `src/core/m2lua.h` (the runtime), `src/ui/m2lua_ui.h` (the desktop's Script
 menu and drawing), `src/ui/m2lua_mcp.h` (the bridge's `script_*`),
 `web/site/m2hle-cheats.js` with `web_cheats_*` in `src/main_web.c` (the web's
-Cheats tab). Lua 5.5.1 is the `vendor/lua` submodule, built from `onelua.c`.
+Cheats tab), `lr_lua_*` and `retro_cheat_*` in `src/main_libretro.c` (the
+libretro core). Lua 5.5.1 is the `vendor/lua` submodule, built from `onelua.c`.
 Test: `m2lua_test`.
 
 ## What M2emulator did (read off EMULATOR.EXE with rea + Ghidra)
@@ -47,3 +48,26 @@ Test: `m2lua_test`.
 - The web draws text only (`web_cheats_draw`, on a canvas over the picture);
   `Video_CreateSurfaceFromFile` has no file to read there.
 - `Model2_Set*` (widescreen, stretch) are kept and reported, not drawn.
+
+## The libretro core (Pinboard #967)
+
+- The script is `m2hle/scripts/<set>.lua` in RetroArch's system folder (core
+  option "Game scripts", read at load). `require` finds `model2.lua` and
+  `common.lua` there too.
+- RetroArch has no menu of a core's own, so **the options are RetroArch
+  cheats**. At load the core writes `<set>.cht` beside the script
+  (`m2lua_cht_text`; rewritten only when it would differ): one cheat per value
+  other than the option's default, code `<key>=<value>` (index or value name,
+  several joined by `+`), handler 0 (the core's). The player opens it in Quick
+  Menu > Cheats > Load Cheat File. RetroArch calls `retro_cheat_reset`, then
+  `retro_cheat_set` for each cheat that is on: they fill a wanted value per
+  option (default when no cheat names it), applied with `m2lua_set_option` at
+  the next frame edge the script may run. The .cht's RAM-poking cheat types
+  (RetroArch's own handler) are not used.
+- `lr_lua_may_run`: `emu_script_may_run()`, and no session (`lr_sound_may_go`:
+  RetroArch netpacket, RPCN, GGPO), and no savestate of RetroArch's rollback
+  netplay context (`RETRO_SAVESTATE_CONTEXT_ROLLBACK_NETPLAY`) in the last 120
+  frames. Rewind and run-ahead savestates do not stop it.
+- PostDraw's text is drawn over the game with the PS3 menus' fonts
+  (`ps3ui_text`, board pixels scaled to the frame, bold = the title font);
+  images are not. The sdl3 frontend has no scripts (no `vendor/lua` either).

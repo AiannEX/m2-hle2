@@ -156,7 +156,10 @@ endif()
 if(M2HLE_WEB)
     set(M2HLE_SUBMODULE_PATHS vendor/sokol vendor/miniz vendor/stb vendor/lua)
     set(M2HLE_SUBMODULE_PROBES sokol/sokol_gfx.h miniz/miniz.c stb/stb_truetype.h lua/onelua.c)
-elseif(M2HLE_SDL3 OR M2HLE_LIBRETRO)
+elseif(M2HLE_LIBRETRO)
+    set(M2HLE_SUBMODULE_PATHS vendor/sokol vendor/miniz vendor/stb vendor/lua)
+    set(M2HLE_SUBMODULE_PROBES sokol/sokol_gfx.h miniz/miniz.c stb/stb_truetype.h lua/onelua.c)
+elseif(M2HLE_SDL3)
     set(M2HLE_SUBMODULE_PATHS vendor/sokol vendor/miniz vendor/stb)
     set(M2HLE_SUBMODULE_PROBES sokol/sokol_gfx.h miniz/miniz.c stb/stb_truetype.h)
 else()
@@ -224,17 +227,20 @@ target_include_directories(miniz PUBLIC ${VENDOR}/miniz ${MINIZ_GEN_DIR})
 # ---------------------------------------------------------------------------
 # Lua 5.5 (C), the game scripts' language (core/m2lua.h, Pinboard #958): the
 # library half of onelua.c, every core and standard library in one unit. The
-# desktop and the web link it (the web page's scratchpad).
+# desktop, the web (the page's scratchpad) and the libretro core link it; the
+# handheld frontend has no scripts, and its checkout no vendor/lua.
 # ---------------------------------------------------------------------------
-add_library(lua55 STATIC EXCLUDE_FROM_ALL ${VENDOR}/lua/onelua.c)
-target_compile_definitions(lua55 PRIVATE MAKE_LIB)
-if(MSVC)
-    target_compile_definitions(lua55 PRIVATE _CRT_SECURE_NO_WARNINGS)
-elseif(NOT WIN32 AND NOT EMSCRIPTEN)
-    target_compile_definitions(lua55 PRIVATE LUA_USE_POSIX)   # mkstemp, popen
-    target_link_libraries(lua55 PUBLIC m)
+if(NOT M2HLE_SDL3)
+    add_library(lua55 STATIC EXCLUDE_FROM_ALL ${VENDOR}/lua/onelua.c)
+    target_compile_definitions(lua55 PRIVATE MAKE_LIB)
+    if(MSVC)
+        target_compile_definitions(lua55 PRIVATE _CRT_SECURE_NO_WARNINGS)
+    elseif(NOT WIN32 AND NOT EMSCRIPTEN)
+        target_compile_definitions(lua55 PRIVATE LUA_USE_POSIX)   # mkstemp, popen
+        target_link_libraries(lua55 PUBLIC m)
+    endif()
+    target_include_directories(lua55 PUBLIC ${VENDOR}/lua)
 endif()
-target_include_directories(lua55 PUBLIC ${VENDOR}/lua)
 
 # ---------------------------------------------------------------------------
 # sdl3 frontend: m2hle from src/main_sdl.c, then stop — nothing below (ImGui,
@@ -278,6 +284,7 @@ if(M2HLE_LIBRETRO)
     endif()
     # Only the retro_* API leaves the library (libretro.h marks it default).
     set_target_properties(miniz PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+    set_target_properties(lua55 PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 
     add_library(sokol_gfx STATIC ${SRC}/sokol_gfx_impl.c)
     set_target_properties(sokol_gfx PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
@@ -329,7 +336,7 @@ if(M2HLE_LIBRETRO)
         # default visibility. retro_* are in main_libretro.c, not a library.
         target_link_options(m2hle_libretro PRIVATE -Wl,--exclude-libs,ALL)
     endif()
-    target_link_libraries(m2hle_libretro PRIVATE sokol_gfx miniz)
+    target_link_libraries(m2hle_libretro PRIVATE sokol_gfx miniz lua55)
     target_compile_definitions(m2hle_libretro PRIVATE M2HLE_DEV_TOOLS=0)   # src/core/build_features.h
     target_include_directories(m2hle_libretro PRIVATE
         ${VENDOR}/stb

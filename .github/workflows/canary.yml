@@ -166,7 +166,7 @@ jobs:
       # The libretro frontend's submodule list: no ImGui, so no dear_bindings
       # and no Python.
       - name: Fetch build submodules
-        run: git submodule update --init vendor/sokol vendor/miniz vendor/stb vendor/ggpo
+        run: git submodule update --init vendor/sokol vendor/miniz vendor/stb vendor/ggpo vendor/lua
 
       - name: Install Linux deps
         if: matrix.name == 'linux-x64'
@@ -284,7 +284,7 @@ jobs:
       - name: Fetch build submodules
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git submodule update --init vendor/sokol vendor/miniz vendor/stb vendor/ggpo
+          git submodule update --init vendor/sokol vendor/miniz vendor/stb vendor/ggpo vendor/lua
 
       - name: Stamp version
         id: ver

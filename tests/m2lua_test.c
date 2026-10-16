@@ -8,6 +8,8 @@
  *     and the patches coming off on suspend and unload.
  *   - A script file: Options (names, values, defaults), Init, Frame, the
  *     runfuncs of the options that are on, changefunc, PostDraw's list.
+ *   - The options as RetroArch cheats (the libretro core): the .cht text and
+ *     the codes retro_cheat_set hands over.
  *
  * A ctest (CMakeLists.txt, m2lua_test). Writes m2lua_test_set.lua in the
  * working directory and deletes it.
@@ -100,12 +102,35 @@ static void test_options(void) {
           "changefunc(2), then runfunc(2) each frame; the table sees the value");
 }
 
+/* The libretro core's cheats: a .cht entry per value other than the default,
+ * codes by index or by name, back to the defaults when none is on. */
+static void test_cheats(void) {
+    static char cht[4096];
+    int len = m2lua_cht_text(cht, (int)sizeof cht);
+    CHECK(len > 0 && strstr(cht, "cheats = \"3\"") && strstr(cht, "cheat0_desc = \"Infinite time: On\"") &&
+          strstr(cht, "cheat0_code = \"cheat=1\"") && strstr(cht, "cheat2_code = \"plain=1\"") &&
+          !strstr(cht, "cheat=0"), "the .cht: one cheat per value but the default");
+    int c = m2lua_option_index("cheat"), p = m2lua_option_index("plain");
+    int want[M2LUA_OPTION_MAX];
+    m2lua_cheat_defaults(want);
+    CHECK(m2lua_cheat_code("cheat=Max+plain=1", want) == 2 && want[c] == 2 && want[p] == 1,
+          "a code: by name and by index, joined by +");
+    CHECK(m2lua_cheat_code("nosuch=1+cheat=9+plain", want) == 0, "an unknown key, a value out of range: nothing");
+    m2lua_cheat_apply(want);
+    CHECK(g_m2lua.options[c].value == 2 && g_m2lua.options[p].value == 1, "applied to the options");
+    m2lua_cheat_defaults(want);
+    m2lua_cheat_apply(want);
+    CHECK(g_m2lua.options[c].value == 0 && g_m2lua.options[p].value == 0, "every cheat off: the defaults");
+}
+
 static void test_script(void) {
     CHECK(write_script(), "wrote the script");
     m2lua_set_dir(".");
     CHECK(m2lua_load("m2lua_test_set", &bus, &rom), "the script loads");
     CHECK(strcmp(eval("return Inits"), "1") == 0 && rom.maincpu[0] == 0x99, "Init ran and patched the ROM");
     test_options();
+    test_cheats();
+    m2lua_set_option(m2lua_option_index("cheat"), 2);   /* as test_options left it */
     m2lua_draw_t list[M2LUA_DRAW_MAX];
     int n = 0;
     m2lua_take_draw(list, &n);
