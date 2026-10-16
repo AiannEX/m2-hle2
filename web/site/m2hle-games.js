@@ -91,9 +91,13 @@ const m2hleGames = (() => {
       romHint: 'Your <code>vonj.zip</code> and its parent <code>von.zip</code>, picked together, or a merged <code>vonj.zip</code>',
       /* src/profiles/vonj.h: the left lever is UP/DOWN/LEFT/RIGHT, B1 its
        * trigger, B2 its dash; B3 both triggers, B4 both dashes. The right lever
-       * is player 2's directions and B1 / B2. */
+       * is player 2's directions and B1 / B2, which a pad plays as rows of its
+       * own (`twin`, m2hle-pad.js), and a Saturn Twin Stick on a Bliss-Box whole. */
+      twin: true,
       labels: { up: 'Left lever up', down: 'Left lever down', left: 'Left lever left', right: 'Left lever right',
-                b1: 'Left shot', b2: 'Left dash', b3: 'Both shots', b4: 'Both dashes' },
+                rup: 'Right lever up', rdown: 'Right lever down', rleft: 'Right lever left', rright: 'Right lever right',
+                b1: 'Left shot', b2: 'Left dash', rshot: 'Right shot', rdash: 'Right dash',
+                b3: 'Both shots', b4: 'Both dashes' },
       ownReplay: false,
       /* No shared board or ranking for it (arcade/games.mjs); its save is kept
        * in the browser (m2hle-page.js, web_backup_keep). */
@@ -108,7 +112,9 @@ const m2hleGames = (() => {
                       vonr: { name: 'リレー', about: 'リレー（日本）' } },
           romHint: 'お持ちの <code>vonj.zip</code> と親セットの <code>von.zip</code> を一緒に選ぶか、マージ済みの <code>vonj.zip</code>',
           labels: { up: '左レバー上', down: '左レバー下', left: '左レバー左', right: '左レバー右',
-                    b1: '左ショット', b2: '左ダッシュ', b3: '両ショット', b4: '両ダッシュ' },
+                    rup: '右レバー上', rdown: '右レバー下', rleft: '右レバー左', rright: '右レバー右',
+                    b1: '左ショット', b2: '左ダッシュ', rshot: '右ショット', rdash: '右ダッシュ',
+                    b3: '両ショット', b4: '両ダッシュ' },
         },
       },
     },
