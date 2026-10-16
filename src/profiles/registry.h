@@ -18,6 +18,7 @@
  * left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. */
 #include "srallyc.h"
+#include "vonj.h"
 #ifndef M2HLE_WEB
 #include "fvipers.h"
 #include "m2snake.h"
@@ -36,6 +37,7 @@ const game_profile_t *const g_profiles[] = {
     &sfight_console_profile,
     &sfight_profile,
     &srallyc_profile,
+    &vonj_profile,
 #ifndef M2HLE_WEB
     &fvipers_profile,
     &m2snake_profile,

@@ -437,9 +437,10 @@ static inline const char *emu_state_flat_load(emu_thread_ctx_t *ctx, const void 
  * in slots 18-31 over sd_flag and the rest (issue #112): the sd_flag sequencer
  * then read a command code as a pointer (unmapped reads at IP 0x3F5AC). */
 static inline bool emu_sound_pending(emu_thread_ctx_t *ctx, const game_quirks_t *q) {
-    if (!q->sound_queue_count_addr) return false;
-    uint32_t cnt = mem_read8(ctx->bus, q->sound_queue_count_addr);
-    if (cnt > g_sound.queue_hi) g_sound.queue_hi = cnt;
+    if (q->sound_queue_count_addr) {        /* STF's queue, for the stats */
+        uint32_t cnt = mem_read8(ctx->bus, q->sound_queue_count_addr);
+        if (cnt > g_sound.queue_hi) g_sound.queue_hi = cnt;
+    }
     if (!(g_irqt.intena & 0x400u)) return false;
     irqt_raise(0x400u);                      /* bit 10 = sound */
     return true;

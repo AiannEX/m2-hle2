@@ -94,9 +94,10 @@ function loadZipNow(bytes) {
     if (!ptr) { romError('Not enough memory to read that file.'); return; }
     Module.HEAPU8.set(bytes, ptr);           /* HEAPU8 read AFTER malloc: growth replaces the view */
     /* Keep this game's save in localStorage, or not: the arcade asks (Sega Rally asks
-     * first; without the arcade, only Sonic the Fighters' is kept, as before). */
+     * first; without the arcade, Sonic the Fighters' is kept, as before, and a game
+     * that says keepSave in m2hle-games.js). */
     Module._web_backup_keep(window.stfArcade ? (window.stfArcade.keepSave() ? 1 : 0)
-                                             : (m2hleGame.id === 'sfight' ? 1 : 0));
+                                             : (m2hleGame.id === 'sfight' || m2hleGame.keepSave ? 1 : 0));
     const rc = Module._web_rom_load(ptr, bytes.length);   /* takes ownership of ptr */
     if (rc !== 0) {
       romError(explainMissing(Module.UTF8ToString(Module._web_rom_missing())));
