@@ -1042,26 +1042,59 @@ sapp_desc sokol_main(int argc, char *argv[]) {
 
 /* ---- What the page calls -------------------------------------------------- */
 
+/* The other zips of a split set (a clone's parent: von.zip beside vonj.zip),
+ * given before web_rom_load, which reads them with its own and frees them. */
+static uint8_t *g_web_rom_extra[RL_MEM_ZIPS - 1];
+static int      g_web_rom_extra_len[RL_MEM_ZIPS - 1];
+static int      g_web_rom_extra_n;
+
+static void web_rom_extra_free(void) {
+    for (int i = 0; i < g_web_rom_extra_n; i++) free(g_web_rom_extra[i]);
+    g_web_rom_extra_n = 0;
+}
+
+/* One more zip for the next web_rom_load, which takes `zip` over (a malloc'd
+ * buffer the page filled). 0, or -1 when it holds as many as it can. */
+EMSCRIPTEN_KEEPALIVE int web_rom_extra(uint8_t *zip, int len) {
+    if (!zip || len <= 0 || g_web_rom_extra_n >= RL_MEM_ZIPS - 1) { free(zip); return -1; }
+    g_web_rom_extra[g_web_rom_extra_n] = zip;
+    g_web_rom_extra_len[g_web_rom_extra_n++] = len;
+    return 0;
+}
+
+/* The active profile's parent set, "von.zip", or "" for a set of its own: the
+ * zip the page asks for when a split clone's files are missing. */
+EMSCRIPTEN_KEEPALIVE const char *web_rom_parent(void) {
+    return g_active_profile && g_active_profile->parent_zip_name ? g_active_profile->parent_zip_name : "";
+}
+
 /*
- * Load the ROM set from the bytes of the one zip the player picked. `zip` is a
- * malloc'd buffer the page filled; this takes it over and frees it before
- * returning, because the zip is 18 MB that nothing needs once the regions are
- * extracted. Strict: every file must be in the zip by CRC (rom_loader.h).
+ * Load the ROM set from the bytes of the zip the player picked, and of any
+ * web_rom_extra gave (a split clone's parent). `zip` is a malloc'd buffer the
+ * page filled; this takes it over and frees it, and the extras, before
+ * returning, because a zip is 18 MB that nothing needs once the regions are
+ * extracted. Strict: every file must be in one of the zips by CRC (rom_loader.h).
  *
  * Returns 0 and starts the board, or -1 (web_rom_missing names what was not
  * found) or -2 (no profile).
  */
 EMSCRIPTEN_KEEPALIVE int web_rom_load(uint8_t *zip, int len) {
-    if (!zip || len <= 0) { free(zip); return -1; }
-    if (!g_active_profile) { free(zip); return -2; }
+    if (!zip || len <= 0 || !g_active_profile) {
+        free(zip);
+        web_rom_extra_free();
+        return g_active_profile ? -1 : -2;
+    }
 
     state.emu.run_state = EMU_STOPPED;
     replay_game_loaded();   /* a recording ends; a replay lets go of the board */
     rl_mem_zip_set(zip, (size_t)len, true);
+    for (int i = 0; i < g_web_rom_extra_n; i++)
+        rl_mem_zip_add(g_web_rom_extra[i], (size_t)g_web_rom_extra_len[i]);
     int rc = g_active_profile->load_fn(&state.romset, NULL, NULL);
-    /* Drop the pointer, keep the report: the page reads it after a failed load. */
+    /* Drop the pointers, keep the report: the page reads it after a failed load. */
     rl_mem_zip_clear();
     free(zip);
+    web_rom_extra_free();
     if (rc != 0) return -1;
     /* The model lookup is built from the ROM's model table: a new set needs a new one. */
     geo3d_lookup_invalidate();

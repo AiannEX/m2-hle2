@@ -43,6 +43,8 @@ const m2hleLang = (() => {
     'step.fatal': 'This browser could not start the game.',
     'step.reload': 'Reload',
     'hint.rom': ':Choose file',
+    'rom.missing.parent': 'This zip is missing {file}, which the game needs. If it is a split set, the rest is in its parent set, {parent}: add {parent} too.',
+    'rom.missing.more': 'These zips are missing {file}, which the game needs. Choose the game\'s zip and {parent} together, or a merged set.',
   };
 
   const ja = {
@@ -64,6 +66,8 @@ const m2hleLang = (() => {
     'step.fatal': 'このブラウザではゲームを起動できませんでした。',
     'step.reload': '再読み込み',
     'hint.rom': '：ファイルを選ぶ',
+    'rom.missing.parent': 'この zip にはゲームに必要な {file} がありません。スプリットセットなら、残りのファイルは親セットの {parent} にあります。{parent} も追加してください。',
+    'rom.missing.more': 'これらの zip にはゲームに必要な {file} がありません。ゲームの zip と {parent} を一緒に選ぶか、マージ済みのセットを選んでください。',
   };
 
   /* name: the language's name in itself, for the switch. */

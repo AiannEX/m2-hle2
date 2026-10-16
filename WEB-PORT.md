@@ -87,6 +87,7 @@ const char *web_netplay_status(unsigned log_from);              /* <- netplay_ge
 void        web_netplay_signout(void);                          /* leave, forget the token and password */
 void        web_netplay_set_gateway(const char *url);           /* ?gw=, before connecting */
 int         web_rom_load(uint8_t *zip, int len);                /* -> §3.5 */
+int         web_rom_extra(uint8_t *zip, int len);               /* a split set's parent, before web_rom_load (§3.7) */
 const char *web_rom_missing(void);                              /* the files not found, space separated */
 ```
 
@@ -141,7 +142,7 @@ The site ships the emulator and nothing else. The player picks (or drops) **one 
 
 The page's words are in `web/site/m2hle-lang.js` (Pinboard #935): `?lang=ja` is Japanese, and no `?lang=` (or one the site does not have) is English, the default. `arcade.sonicthefighte.rs/?lang=ja&game=vonj` opens Virtual-On's page in Japanese. The language is the words only; `?game=` and `?profile=` still pick what runs, so any language can play any set, and links within the site carry `?lang=` on (`m2hleLang.keep`). English is the template: every key is in `en`, and a key a language leaves out shows its English. A game's own words (title, blurb, profile names, ROM hint, controls) sit in its `GAMES` entry under `i18n.<lang>` (`m2hleGames.text`). The page marks what to translate with `data-i18n` (text), `data-i18n-html`, `data-i18n-title` and `data-i18n-aria`. To add a language, copy `en`, translate it, and add it to `LANGS`; the home page's switch lists every entry.
 
-The page loads one zip (§3.5), so a clone set such as `vonj` needs a merged zip: its own files and its parent's (`von.zip`) in one.
+**Split clone sets (Pinboard #940).** The page also takes a clone and its parent as two zips, `vonj.zip` and `von.zip` (or `sfight.zip` and `schamp.zip`), picked or dropped together; a merged zip still works on its own. The emulator holds up to four zips in memory (`rl_mem_zip_add`, `RL_MEM_ZIPS` in `rom_loader.h`) and looks for each file by CRC in every one, so their order does not matter. The page gives the extra zips with `web_rom_extra` before `web_rom_load`, which takes them over and frees them. If a load misses files and the profile has a parent (`web_rom_parent`), the page keeps the zips it was given and asks for the parent by name, so the two can be picked one at a time.
 
 ## 4. The gateway
 
@@ -226,6 +227,7 @@ Toolchain: Emscripten **6.0.9**, installed beside the repo (`../emsdk`, not on `
 emcmake cmake -S . -B build_web -G Ninja -DCMAKE_MAKE_PROGRAM="<VS>/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe" -DM2HLE_FRONTEND=web -DCMAKE_BUILD_TYPE=Release
 cmake --build build_web          # -> build_web/site/ is the whole website
 node tools/web-serve.mjs --rom path/to/merged.zip      # http://localhost:8080/?rom=/dev-rom.zip
+node tools/web-serve.mjs --rom vonj.zip --rom von.zip  # a split set: /vonj.html?rom=/dev-rom/vonj.zip&rom=/dev-rom/von.zip
 node tools/web-smoke.mjs --url "http://localhost:8080/?rom=/dev-rom.zip" --seconds 30 --shot out.png --keys "5@8,1@11"
 ```
 

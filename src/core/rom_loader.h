@@ -52,8 +52,11 @@ static inline uint8_t *file_load(const char *path, size_t *out_size) {
 
 /*
  * A ROM set held in memory instead of on disk: the web build is handed the bytes
- * of the one zip the player picked and has no file system to put them in. While
+ * of the zips the player picked and has no file system to put them in. While
  * g_rl_mem_zip is set, zip_extract_from_set ignores its zip paths and reads here.
+ * It holds one zip, or a few: a split clone set is the clone's zip and its
+ * parent's (vonj.zip and von.zip, Pinboard #940), and a file is looked for in
+ * each of them, in the order they were given.
  *
  * Entries are found BY CRC32, out of the zip's central directory, which costs no
  * decompression. A merged MAME set is one zip holding a parent and its clones,
@@ -66,24 +69,39 @@ static inline uint8_t *file_load(const char *path, size_t *out_size) {
  * back to its name with a warning. On disk a mismatch is a use case (hacked
  * sets); over netplay one different byte is a desync, so the web build is strict.
  */
+#define RL_MEM_ZIPS 4
+
 static struct {
-    const uint8_t *data;
-    size_t         size;
+    const uint8_t *data[RL_MEM_ZIPS];
+    size_t         size[RL_MEM_ZIPS];
+    int            count;                   /* 0: read from disk */
     bool           strict;
     int            missing;                 /* files the last load did not find */
     char           missing_names[512];      /* their names, space separated, for the UI */
 } g_rl_mem_zip;
 
+/* The first zip; rl_mem_zip_add gives the others (a split set's parent). */
 static inline void rl_mem_zip_set(const uint8_t *data, size_t size, bool strict) {
     memset(&g_rl_mem_zip, 0, sizeof(g_rl_mem_zip));
-    g_rl_mem_zip.data   = data;
-    g_rl_mem_zip.size   = size;
     g_rl_mem_zip.strict = strict;
+    g_rl_mem_zip.data[0] = data;
+    g_rl_mem_zip.size[0] = size;
+    g_rl_mem_zip.count   = 1;
+}
+
+/* One more zip after rl_mem_zip_set's. 0, or -1 when there is no room. */
+static inline int rl_mem_zip_add(const uint8_t *data, size_t size) {
+    if (g_rl_mem_zip.count < 1 || g_rl_mem_zip.count >= RL_MEM_ZIPS) return -1;
+    g_rl_mem_zip.data[g_rl_mem_zip.count] = data;
+    g_rl_mem_zip.size[g_rl_mem_zip.count] = size;
+    g_rl_mem_zip.count++;
+    return 0;
 }
 
 static inline void rl_mem_zip_clear(void) {
-    g_rl_mem_zip.data = NULL;
-    g_rl_mem_zip.size = 0;
+    memset(g_rl_mem_zip.data, 0, sizeof(g_rl_mem_zip.data));
+    memset(g_rl_mem_zip.size, 0, sizeof(g_rl_mem_zip.size));
+    g_rl_mem_zip.count = 0;
 }
 
 static inline void rl_mem_zip_note_missing(const char *filename) {
@@ -96,10 +114,12 @@ static inline void rl_mem_zip_note_missing(const char *filename) {
     }
 }
 
-static inline uint8_t *zip_extract_mem(const char *filename, size_t *out_size, uint32_t expected_crc) {
+/* The file out of in-memory zip `z`, by CRC (by name too, when not strict). */
+static inline uint8_t *zip_extract_mem_one(int z, const char *filename, size_t *out_size,
+                                           uint32_t expected_crc) {
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
-    if (!mz_zip_reader_init_mem(&zip, g_rl_mem_zip.data, g_rl_mem_zip.size, 0)) return NULL;
+    if (!mz_zip_reader_init_mem(&zip, g_rl_mem_zip.data[z], g_rl_mem_zip.size[z], 0)) return NULL;
 
     void *data = NULL;
     mz_uint count = mz_zip_reader_get_num_files(&zip);
@@ -113,6 +133,13 @@ static inline uint8_t *zip_extract_mem(const char *filename, size_t *out_size, u
         data = mz_zip_reader_extract_file_to_heap(&zip, filename, out_size, MZ_ZIP_FLAG_IGNORE_PATH);
     mz_zip_reader_end(&zip);
     return (uint8_t *)data;
+}
+
+static inline uint8_t *zip_extract_mem(const char *filename, size_t *out_size, uint32_t expected_crc) {
+    uint8_t *data = NULL;
+    for (int z = 0; z < g_rl_mem_zip.count && !data; z++)
+        data = zip_extract_mem_one(z, filename, out_size, expected_crc);
+    return data;
 }
 
 /* crc (optional) gets the file's CRC-32 as the zip's directory records it. That
@@ -163,7 +190,7 @@ static inline uint8_t *zip_extract_by_crc(const char *zippath, uint32_t crc, siz
 static inline uint8_t *zip_extract_from_set(const char *child_zip, const char *parent_zip,
                                             const char *filename, size_t *out_size,
                                             uint32_t expected_crc) {
-    if (g_rl_mem_zip.data) {
+    if (g_rl_mem_zip.count > 0) {
         uint8_t *mem = zip_extract_mem(filename, out_size, expected_crc);
         if (!mem) {
             rl_mem_zip_note_missing(filename);

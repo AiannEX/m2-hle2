@@ -33,7 +33,7 @@ const m2hleGames = (() => {
         { id: 'sfight_console', name: 'Console', about: 'The PS3 release: its menus, free play' },
         { id: 'sfight', name: 'Arcade', about: 'The cabinet as it was' },
       ],
-      romHint: 'A merged <code>sfight.zip</code> or <code>schamp.zip</code>',
+      romHint: 'A merged <code>sfight.zip</code> or <code>schamp.zip</code>, or <code>sfight.zip</code> and <code>schamp.zip</code> together',
       labels: {},
       i18n: {
         ja: {
@@ -41,7 +41,7 @@ const m2hleGames = (() => {
           blurb: 'ソニックたちがデスエッグで大乱闘。RPCN と GGPO でオンライン対戦。',
           profiles: { sfight_console: { name: 'コンソール', about: 'PS3 版：メニュー付き、フリープレイ' },
                       sfight: { name: 'アーケード', about: '筐体そのまま' } },
-          romHint: 'マージ済みの <code>sfight.zip</code> または <code>schamp.zip</code>',
+          romHint: 'マージ済みの <code>sfight.zip</code> または <code>schamp.zip</code>、もしくは <code>sfight.zip</code> と <code>schamp.zip</code> を一緒に',
         },
       },
     },
@@ -87,8 +87,8 @@ const m2hleGames = (() => {
         { id: 'vonu', name: 'USA', about: 'Twin (USA, Revision B)', soon: true },
         { id: 'vonr', name: 'Relay', about: 'Relay (Japan)', soon: true },
       ],
-      /* The page takes one zip, and vonj is a clone: its files and von's in one. */
-      romHint: 'A merged <code>vonj.zip</code>: the Japanese files and those of its parent, <code>von.zip</code>, in one zip',
+      /* vonj is a clone: its zip and its parent's, picked together, or a merged one. */
+      romHint: 'Your <code>vonj.zip</code> and its parent <code>von.zip</code>, picked together, or a merged <code>vonj.zip</code>',
       /* src/profiles/vonj.h: the left lever is UP/DOWN/LEFT/RIGHT, B1 its
        * trigger, B2 its dash; B3 both triggers, B4 both dashes. The right lever
        * is player 2's directions and B1 / B2. */
@@ -106,7 +106,7 @@ const m2hleGames = (() => {
                       von: { name: '海外', about: 'ツイン（海外）' },
                       vonu: { name: '北米', about: 'ツイン（北米、リビジョン B）' },
                       vonr: { name: 'リレー', about: 'リレー（日本）' } },
-          romHint: 'マージ済みの <code>vonj.zip</code>（日本版のファイルと親セット <code>von.zip</code> のファイルをひとつの zip に）',
+          romHint: 'お持ちの <code>vonj.zip</code> と親セットの <code>von.zip</code> を一緒に選ぶか、マージ済みの <code>vonj.zip</code>',
           labels: { up: '左レバー上', down: '左レバー下', left: '左レバー左', right: '左レバー右',
                     b1: '左ショット', b2: '左ダッシュ', b3: '両ショット', b4: '両ダッシュ' },
         },
