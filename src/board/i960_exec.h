@@ -93,6 +93,45 @@ static I960_HOT_INLINE uint32_t reg_src(i960_cpu_t *cpu, int idx, int mode) {
 static inline double i960_bits_to_double(uint64_t u) { double d; memcpy(&d, &u, 8); return d; }
 static inline uint64_t i960_double_to_bits(double d) { uint64_t u; memcpy(&u, &d, 8); return u; }
 
+/* movre's 80-bit extended real as three words (fraction low, fraction high,
+ * sign and exponent), to and from the double an FP register holds, in integer
+ * bit operations only (MAME double_to_extended / extended_to_double). */
+static inline void i960_double_to_ext(double d, uint32_t w[3]) {
+    uint64_t u = i960_double_to_bits(d), m = u & 0x000FFFFFFFFFFFFFull, frac;
+    uint32_t sign = (uint32_t)(u >> 63) << 15, E = (uint32_t)(u >> 52) & 0x7FFu, e;
+    if (E == 0x7FFu)  { frac = 1ull << 63 | m << 11; e = 0x7FFFu; }
+    else if (E)       { frac = 1ull << 63 | m << 11; e = E - 1023u + 16383u; }
+    else if (!m)      { frac = 0; e = 0; }
+    else {                                          /* denormal: normalize */
+        int z = 0;
+        while (!(m << z >> 63)) z++;
+        frac = m << z; e = 15372u - (uint32_t)z;
+    }
+    w[0] = (uint32_t)frac; w[1] = (uint32_t)(frac >> 32); w[2] = sign | e;
+}
+
+static inline double i960_ext_to_double(const uint32_t w[3]) {
+    uint64_t frac = (uint64_t)w[0] | (uint64_t)w[1] << 32, sign = (uint64_t)(w[2] >> 15 & 1u) << 63;
+    int32_t e = (int32_t)(w[2] & 0x7FFFu);
+    if (e == 0x7FFF)
+        return i960_bits_to_double(sign | (frac << 1 ? 0x7FF8000000000000ull | (frac & ~(1ull << 63)) >> 11
+                                                     : 0x7FF0000000000000ull));
+    if (!frac) return i960_bits_to_double(sign);
+    if (!e) e = 1;
+    while (!(frac >> 63)) { frac <<= 1; e--; }      /* integer bit to bit 63 */
+    int32_t E = e - 16383 + 1023;                   /* the double's biased exponent */
+    int sh = 11;                                    /* fraction bits that go */
+    if (E <= 0) { sh += 1 - E; E = 0; }
+    if (sh > 64) return i960_bits_to_double(sign);
+    uint64_t q = sh == 64 ? 0 : frac >> sh, rem = frac << (64 - sh), half = 1ull << 63;
+    if (rem > half || (rem == half && (q & 1u))) q++;   /* to nearest, even */
+    /* q holds the integer bit for a normal (bit 52) and none for a denormal; a
+     * carry out of it moves the exponent up one, which the add below does. */
+    uint64_t bits = E ? ((uint64_t)(E - 1) << 52) + q : q;
+    if (bits >= 0x7FF0000000000000ull) bits = 0x7FF0000000000000ull;
+    return i960_bits_to_double(sign | bits);
+}
+
 static inline double i960_nan_result(double r, double a, double b) {
     if (r == r) return r;
     if (a != a) return i960_bits_to_double(i960_double_to_bits(a) | I960_QNAN_BIT);
@@ -362,12 +401,26 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
                 {
                     if (cpu->frame_depth > 0) {
                         uint32_t return_ip = cpu->locals.rip;
+                        /* Return status 7 in pfp, set by the program, is an
+                         * interrupt return from a frame it built: PC and AC
+                         * come from FP-16 and FP-12 (MAME do_ret, supervisor
+                         * only). Virtual-On's boot (0xA30) drops from priority
+                         * 31 to 0 that way; ignored, no interrupt ever came. */
+                        bool rt7 = (cpu->locals.pfp & 7u) == 7u && (cpu->sfr.pc & 2u);
+                        uint32_t rt7_pc = 0, rt7_ac = 0;
+                        if (M2_UNLIKELY(rt7)) {
+                            rt7_pc = mem_read32(bus, cpu->globals.fp - 16u);
+                            rt7_ac = mem_read32(bus, cpu->globals.fp - 12u);
+                        }
                         cpu->frame_depth--;
                         cpu->locals = cpu->frame_stack[cpu->frame_depth];
                         if (cpu->frame_irq[cpu->frame_depth]) {   /* interrupt return */
                             cpu->sfr.ac = cpu->frame_irq_ac[cpu->frame_depth];
                             cpu->sfr.pc = cpu->frame_irq_pc[cpu->frame_depth];
                             cpu->frame_irq[cpu->frame_depth] = 0;
+                        } else if (M2_UNLIKELY(rt7)) {
+                            cpu->sfr.ac = rt7_ac;
+                            cpu->sfr.pc = rt7_pc;
                         }
                         cpu->sfr.ip = return_ip;
                         cpu->globals.fp = cpu->frame_fp[cpu->frame_depth];
@@ -1086,6 +1139,20 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
                 case 0x6D9: // movrl
                     FP_DST_WRITEL(FP_SRC1L);
                     break;
+                case 0x6E1: // movre (MAME: the encoding Dead or Alive saves fp0-fp3 with)
+                case 0x6E9: // movre: three registers from a multiple of 4, or an FP one
+                {
+                    uint32_t w[3];
+                    if (!m1) {
+                        w[0] = reg_read(cpu, src1_idx & 0x1C);
+                        w[1] = reg_read(cpu, (src1_idx & 0x1C) + 1);
+                        w[2] = reg_read(cpu, (src1_idx & 0x1C) + 2) & 0xFFFFu;
+                    } else i960_double_to_ext(FP_LIT_OR_REG(src1_idx), w);
+                    if (!m3)
+                        for (int k = 0; k < 3; k++) reg_write(cpu, (dst_idx & 0x1C) + k, w[k]);
+                    else if (dst_idx < 4) cpu->fp_regs[dst_idx] = i960_ext_to_double(w);
+                    break;
+                }
                 case 0x79F: // addrl
                 {
                     double a = FP_SRC1L, b = FP_SRC2L;

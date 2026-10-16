@@ -223,6 +223,45 @@ int main(void) {
     CHECK(cpu.locals.r[7] == 0xDEAD, "ret restores caller locals");
     CHECK(cpu.globals.fp == 0x0FC0, "ret restores the caller's g15/fp");
 
+    /* ---- ret with return status 7: an interrupt return ------------------- */
+    /* pfp & 7 == 7 in supervisor mode: the PC and AC saved under the frame
+     * (FP-16, FP-12) come back (MAME do_ret). Virtual-On's boot code (0xA30)
+     * drops from priority 31 to 0 this way. */
+    i960_reset(&cpu);
+    cpu.locals.pfp = 0;
+    cpu.locals.sp  = RAM_BASE + 0x2010;
+    cpu.globals.fp = RAM_BASE + 0x1FC0;
+    cpu.sfr.pc = 0x001F0002;
+    cpu.sfr.ip = CODE;
+    put(CODE,        enc_ctrl(0x09, 0x80));  /* call +0x80 */
+    put(CODE + 0x80, enc_ctrl(0x0A, 0));     /* ret        */
+    i960_step(&cpu, &bus);   /* call */
+    cpu.locals.pfp |= 7u;
+    put(cpu.globals.fp - 16u, 0x00000000);   /* saved PC: user, priority 0 */
+    put(cpu.globals.fp - 12u, 0x00003001);   /* saved AC */
+    i960_step(&cpu, &bus);   /* ret */
+    CHECK(cpu.sfr.ip == CODE + 4, "ret (status 7) returns to saved rip");
+    CHECK(cpu.sfr.pc == 0, "ret (status 7) restores the PC saved at FP-16");
+    CHECK(cpu.sfr.ac == 0x00003001, "ret (status 7) restores the AC saved at FP-12");
+
+    /* ---- movre: three registers <-> an FP register, 80-bit ---------------- */
+    i960_reset(&cpu);
+    cpu.globals.g[4] = 0;
+    cpu.globals.g[5] = 0xC0000000u;          /* 1.5: mantissa 1.1b, explicit integer bit */
+    cpu.globals.g[6] = 0xABCD3FFFu;          /* exponent 0x3FFF; the high half is ignored */
+    cpu.sfr.ip = CODE;
+    put(CODE,     enc_reg(0x6E1, 0, 0, 0, G(4), 0, 1));     /* movre g4, fp0 */
+    put(CODE + 4, enc_reg(0x6E1, L(8), 0, 0, 0, 1, 0));     /* movre fp0, r8 */
+    put(CODE + 8, enc_reg(0x6E9, L(12), 0, 0, 22, 1, 0));   /* movre 0f1.0, r12 */
+    i960_step(&cpu, &bus);
+    CHECK(cpu.fp_regs[0] == 1.5, "movre reads an extended real from three registers");
+    i960_step(&cpu, &bus);
+    CHECK(cpu.locals.r[8] == 0 && cpu.locals.r[9] == 0xC0000000u && cpu.locals.r[10] == 0x3FFFu,
+          "movre writes an FP register as an extended real");
+    i960_step(&cpu, &bus);
+    CHECK(cpu.locals.r[12] == 0 && cpu.locals.r[13] == 0x80000000u && cpu.locals.r[14] == 0x3FFFu,
+          "movre writes the literal 1.0 as an extended real");
+
     /* ---- modpc src, mask, src/dst ---------------------------------------- */
     /* The boot code's `modpc r4, r4, r5` with r4 = 0x1F0000 (the priority
      * field) and r5 = 0 drops the priority to 0 and hands back the old PC. */
