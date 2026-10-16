@@ -96,9 +96,9 @@ typedef struct {
  * runs every over_saved hook on a bare bus: a saved country stays with the
  * flag down and becomes g_region with it up, for every region.
  *
- * The others say why there is no hook; `why` is that reason, in words.
- * REGION_TODO (the setting is not found yet) is only taken from the profiles
- * region_test lists, so a new game cannot use it to skip the hooks.
+ * The others say why there is no hook; `why` is that reason, in words. Only
+ * the profiles region_test lists may take them, each as its listed kind, so a
+ * new game can skip the hooks only by editing that test.
  */
 typedef enum {
     REGION_UNDECLARED = 0,  /* region_test fails it */

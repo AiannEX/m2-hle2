@@ -9,7 +9,8 @@
  * not asked for and becomes g_region when it was (g_region_over_saved). The web
  * page sets the region from its ?lang= (Pinboard #942), and a kept save must
  * not hide it (#948), so a new profile cannot skip that hook: the other kinds
- * need a reason, and "not found yet" only the profiles listed here take.
+ * need a reason and are only taken by the profiles listed here, each as its
+ * listed kind.
  *
  * A ctest (CMakeLists.txt, region_test).
  */
@@ -35,12 +36,20 @@ static hle_hook_fn hook_named(const game_profile_t *p, const char *name) {
     return NULL;
 }
 
-/* The profiles whose country setting is not found yet (REGION_TODO). Add none. */
-static const char *const g_region_todo[] = { "fvipers" };
+/* The only profiles that take no region hooks, each with the kind it may
+ * declare. A profile not here must be REGION_HOOKED; add one only when the set
+ * truly has no country setting (homebrew, a one-country program ROM), never
+ * for "not found yet". */
+static const struct { const char *id; game_region_kind_t kind; } g_region_unhooked[] = {
+    { "fvipers",         REGION_TODO },
+    { "vonj",            REGION_PROGRAM_ROM },
+    { "m2snake",         REGION_HOMEBREW },
+    { "sfight_homebrew", REGION_HOMEBREW },
+};
 
-static int region_todo_allowed(const char *id) {
-    for (size_t i = 0; i < sizeof g_region_todo / sizeof g_region_todo[0]; i++)
-        if (!strcmp(g_region_todo[i], id)) return 1;
+static int region_unhooked_allowed(const char *id, game_region_kind_t kind) {
+    for (size_t i = 0; i < sizeof g_region_unhooked / sizeof g_region_unhooked[0]; i++)
+        if (!strcmp(g_region_unhooked[i].id, id)) return g_region_unhooked[i].kind == kind;
     return 0;
 }
 
@@ -89,8 +98,7 @@ static void check_declared(void) {
         CHECK(g->kind != REGION_UNDECLARED, "%s: says what it does with the region", p->id);
         CHECK(g->why && g->why[0], "%s: says why it has no region hook", p->id);
         CHECK(!g->factory_default && !g->over_saved, "%s: names no hooks it does not take", p->id);
-        if (g->kind == REGION_TODO)
-            CHECK(region_todo_allowed(p->id), "%s: on the list of settings not found yet", p->id);
+        CHECK(region_unhooked_allowed(p->id, g->kind), "%s: on the list of profiles without hooks, as that kind", p->id);
     }
 }
 
