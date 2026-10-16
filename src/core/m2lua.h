@@ -117,8 +117,9 @@ typedef struct {
     bool runfunc, changefunc;
 } m2lua_option_t;
 
-/* The Model2_Set* switches. m2-hle2 draws no widescreen yet: they are kept,
- * and reported, so a script's view of them holds. */
+/* The Model2_Set* switches. The sdl3 frontend draws them (g_game_wide,
+ * ui/game_render.h); the others keep and report them, so a script's view of
+ * them holds. */
 typedef struct {
     bool widescreen;
     bool stretch_a_low, stretch_b_low, stretch_a_high, stretch_b_high;

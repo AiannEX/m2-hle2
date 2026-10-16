@@ -47,7 +47,7 @@ Test: `m2lua_test`.
   unrun, until the session ends.
 - The web draws text only (`web_cheats_draw`, on a canvas over the picture);
   `Video_CreateSurfaceFromFile` has no file to read there.
-- `Model2_Set*` (widescreen, stretch) are kept and reported, not drawn.
+- `Model2_Set*` (widescreen, stretch): the sdl3 frontend draws them (`g_game_wide`, `ui/game_render.h`), the others keep and report them. Widescreen is 16:9 at 384 lines, 682 columns: the 3D is Hor+ (same focal lengths, 93 more columns each side; a window that spans the board spans the picture, a narrower one stays put), the tile layers stay 496 wide in the middle. The board composes both chips into one layer behind the 3D and one in front, so `StretchALow`/`BLow` stretch the one behind and `AHigh`/`BHigh` the one in front. Off with no script, `--no-scripts` or a session holding scripts off. Drawing only; the game culls by its own 4:3 view, so things can pop in at the sides, as in M2emulator.
 
 ## The libretro core (Pinboard #967)
 

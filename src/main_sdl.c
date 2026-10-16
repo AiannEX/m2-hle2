@@ -381,7 +381,8 @@ static bool load_rom(const char *zip) {
  * The desktop's and the libretro core's: <dir>/<set>.lua runs with the game,
  * through the emu thread's hooks, and never while a netplay session has the
  * board (emu_script_may_run). Its options are set from the command line in the
- * libretro core's cheat codes; PostDraw's text is drawn with sokol's 8x8 font. */
+ * libretro core's cheat codes; PostDraw's text is drawn with sokol's 8x8 font,
+ * and Model2_SetWideScreen and the stretches shape the picture (scripts_wide). */
 
 static bool scripts_is_dir(const char *path) {
     struct stat st;
@@ -426,6 +427,25 @@ static void scripts_load(void) {
     scripts_apply_options();
     printf("m2hle: script %s (%d option%s)\n", g_m2lua.path, g_m2lua.noptions,
            g_m2lua.noptions == 1 ? "" : "s");
+}
+
+/* The picture the script asks for (g_game_wide, ui/game_render.h): 16:9 with
+ * the 3D widened while it has Model2_SetWideScreen on, the tile layers
+ * stretched by the Stretch switches (A or B: the two chips' layers are drawn
+ * as one). The board's 4:3 with no script, --no-scripts or a session holding
+ * scripts off. True when the width changed. */
+static bool scripts_wide(void) {
+    const m2lua_video_flags_t *v = &g_m2lua.video;
+    bool on = g_m2lua.loaded && !g_m2lua.disabled && !g_m2lua.suspended && v->widescreen;
+    game_wide_t want = { 0 };
+    if (on) want = (game_wide_t){
+        .extra        = GAME_RENDER_WIDE_EXTRA,
+        .stretch_low  = v->stretch_a_low  || v->stretch_b_low,
+        .stretch_high = v->stretch_a_high || v->stretch_b_high,
+    };
+    bool changed = want.extra != g_game_wide.extra;
+    g_game_wide = want;
+    return changed;
 }
 
 /* PostDraw's text over the picture at (ox, oy, w, h): board pixels scaled with
@@ -1050,7 +1070,7 @@ static struct {
 } g_rt;
 
 static void game_target_make(void) {
-    g_rt.w = VIDEO_WIDTH * opt.render_scale;
+    g_rt.w = game_render_wide_width() * opt.render_scale;
     g_rt.h = VIDEO_HEIGHT * opt.render_scale;
     if (opt.render_scale <= 0) return;
     g_rt.color = sg_make_image(&(sg_image_desc){
@@ -1164,6 +1184,13 @@ static void stats_report(Uint64 now, bool audio) {
     memset(&g_game_frame_times, 0, sizeof g_game_frame_times);
 }
 
+/* The target at the picture's width, after a script turned widescreen on or off. */
+static void game_target_fit(void) {
+    if (!scripts_wide()) return;
+    game_target_destroy();
+    game_target_make();
+}
+
 /* ---- One render ------------------------------------------------------------------ */
 
 /* Bring the tile layers and the 3D up to the board's latest frame. Returns how
@@ -1195,11 +1222,12 @@ static Uint64 frame_prepare(void) {
 /* Where the picture goes on a fb_w x fb_h screen: letterboxed to fit, or at
  * --display-scale, centred, when that fits. */
 static void screen_rect(int fb_w, int fb_h, int *ox, int *oy, int *w, int *h) {
-    game_rect_t r = game_render_letterbox(fb_w, fb_h, VIDEO_WIDTH, VIDEO_HEIGHT);
+    const int pic_w = game_render_wide_width();
+    game_rect_t r = game_render_letterbox(fb_w, fb_h, pic_w, VIDEO_HEIGHT);
     *ox = r.x; *oy = r.y; *w = r.w; *h = r.h;
-    if (opt.display_scale > 0 && VIDEO_WIDTH * opt.display_scale <= fb_w
+    if (opt.display_scale > 0 && pic_w * opt.display_scale <= fb_w
             && VIDEO_HEIGHT * opt.display_scale <= fb_h) {
-        *w  = VIDEO_WIDTH * opt.display_scale;
+        *w  = pic_w * opt.display_scale;
         *h  = VIDEO_HEIGHT * opt.display_scale;
         *ox = (fb_w - *w) / 2;
         *oy = (fb_h - *h) / 2;
@@ -1220,6 +1248,7 @@ static void render_frame(void) {
     SDL_GetWindowSizeInPixels(g_window, &fb_w, &fb_h);
     cpu_start += frame_prepare();
     float lerp_t = game_frame_lerp();
+    game_target_fit();
 
     int ox, oy, w, h;
     screen_rect(fb_w, fb_h, &ox, &oy, &w, &h);
@@ -1255,7 +1284,10 @@ static void render_frame(void) {
         game_render_draw_target(g_rt.texture, opt.linear, ox, oy, w, h);
     else if (show_game)
         game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){ox, oy, w, h}, lerp_t);
-    if (show_game) scripts_draw(fb_w, fb_h, ox, oy, w, h);
+    if (show_game) {
+        game_rect_t board = game_render_tile_rect((game_rect_t){ ox, oy, w, h }, false);
+        scripts_draw(fb_w, fb_h, board.x, board.y, board.w, board.h);
+    }
     if (opt.osd) {
         osd_update(SDL_GetTicksNS());
         osd_draw(fb_w, fb_h);
