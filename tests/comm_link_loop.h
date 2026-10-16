@@ -8,7 +8,8 @@
  *                        over the room's socket
  *   comm_udp_phantom_*   m2comm_loop.h's phantom cabinet, reached over such a
  *                        pair: the real board (g_m2comm) sends through one end,
- *                        the phantom slave answers through the other
+ *                        the phantom (a slave, or a master) answers through
+ *                        the other
  */
 #ifndef COMM_LINK_LOOP_H
 #define COMM_LINK_LOOP_H
@@ -96,9 +97,17 @@ static m2comm_peer_t g_comm_udp_phantom_peer = { NULL, comm_udp_phantom__send, c
 static void comm_udp_phantom__from_board(void *ctx, const uint8_t *msg, uint32_t len) {
     (void)ctx;
     comm_link_send(&g_comm_udp_board.link, msg, len);
+    if (g_m2comm_phantom_master) return;   /* it passes on its own clock */
     comm_udp_drain(&g_comm_udp_phantom);
     while (g_comm_udp_phantom.link.head != g_comm_udp_phantom.link.tail)
         m2comm__pass(&g_m2comm_phantom.s, &g_m2comm_phantom.l);
+}
+
+/* A board frame: a master phantom takes what came and makes its pass. */
+static void comm_udp_phantom_frame(void) {
+    if (!g_m2comm_phantom_master) return;
+    comm_udp_drain(&g_comm_udp_phantom);
+    m2comm__pass(&g_m2comm_phantom.s, &g_m2comm_phantom.l);
 }
 
 static uint32_t comm_udp_phantom__board_recv(void *ctx, uint8_t *msg, uint32_t cap) {
@@ -110,15 +119,23 @@ static uint32_t comm_udp_phantom__board_recv(void *ctx, uint8_t *msg, uint32_t c
 static const m2comm_peer_t comm_udp_phantom_board_peer = {
     NULL, comm_udp_phantom__from_board, comm_udp_phantom__board_recv };
 
-/* m2comm_phantom_attach, with the two cabinets on either end of a UDP pair. */
-static bool comm_udp_phantom_attach(uint32_t window) {
+/* m2comm_phantom_open, with the two cabinets on either end of a UDP pair.
+ * NULL if there are no sockets. */
+static const m2comm_peer_t *comm_udp_phantom_open(uint8_t role, uint32_t window) {
     memset(&g_m2comm_phantom, 0, sizeof g_m2comm_phantom);
-    if (!comm_udp_pair(&g_comm_udp_board, &g_comm_udp_phantom)) return false;
-    m2comm_node_start(&g_m2comm_phantom, 2, window);
+    if (!comm_udp_pair(&g_comm_udp_board, &g_comm_udp_phantom)) return NULL;
+    g_m2comm_phantom_master = role == 1;
+    m2comm_node_start(&g_m2comm_phantom, role, window);
     g_comm_udp_phantom_peer.ctx = &g_comm_udp_phantom.link;
     g_m2comm_phantom.l.peer = &g_comm_udp_phantom_peer;
-    m2comm_set_peer(&comm_udp_phantom_board_peer);
-    return true;
+    return &comm_udp_phantom_board_peer;
+}
+
+/* m2comm_phantom_attach over a UDP pair. */
+static bool comm_udp_phantom_attach(uint32_t window) {
+    const m2comm_peer_t *peer = comm_udp_phantom_open(2, window);
+    if (peer) m2comm_set_peer(peer);
+    return peer != NULL;
 }
 
 #endif /* COMM_LINK_LOOP_H */

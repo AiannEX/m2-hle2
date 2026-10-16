@@ -98,6 +98,7 @@
 
 #include "com_id.h"
 #include "comm_link.h"
+#include "comm_role.h"    /* the room's cabinet role for a linked comm board */
 #include "lockstep.h"
 #include "ps3_link.h"
 #include "room.h"
@@ -1379,7 +1380,9 @@ static inline void netplay_on_bye_packet(uint16_t from, const lockstep_announce_
  * i960 reads there is the other cabinet's (VIRTUAL-ON-PS3.md, "RPCN").
  * Emu thread only, like the rest of this file: m2comm.h sends from inside the
  * board's slice and the drain below feeds the inbox between slices. Opened
- * with the opponent known; the room picking the role is the next step. */
+ * with the opponent known. The room gives the role (Pinboard #969): its owner's
+ * cabinet is the MASTER, the other's the SLAVE, and the board boots into it
+ * (comm_role.h) before it is linked. */
 static comm_link_t   g_netplay_comm;
 static m2comm_peer_t g_netplay_comm_peer;
 static bool          g_netplay_comm_open;
@@ -1390,22 +1393,40 @@ static inline void netplay__comm_transmit(void *ud, const void *buf, uint32_t le
     if (to != ROOM_NO_MEMBER) rpcn_session_send_to(&g_netplay.session, to, buf, len);
 }
 
-/* Link the comm board to the opponent's: the ring comes up the next time the
- * game starts its board. */
+/* This machine's cabinet, as the room makes it: the owner's is the MASTER. */
+static inline game_link_role_t netplay_comm_role(void) {
+    return netplay_is_host() ? GAME_LINK_MASTER : GAME_LINK_SLAVE;
+}
+
+/* Link the comm board to the opponent's, as the room's role: the board boots
+ * into the role (netplay_comm_role_reset, at a frame edge) and the ring comes
+ * up when the game then starts its comm board. */
 static inline void netplay_comm_open(void) {
     lockstep_header_t h;
     netplay_fill_header(&h, LOCKSTEP_PACKET_COMM);
     comm_link_start(&g_netplay_comm, (uint16_t)(net_now_us() | 1u), &h, netplay__comm_transmit, NULL);
     g_netplay_comm_peer = (m2comm_peer_t){ &g_netplay_comm, comm_link_send, comm_link_recv };
-    m2comm_set_peer(&g_netplay_comm_peer);
+    comm_role_begin(netplay_comm_role(), &g_netplay_comm_peer);
     g_netplay_comm_open = true;
+    netplay_log("comm link: this cabinet is the %s; it boots into that once its backup RAM can hold it",
+                comm_role_name(g_comm_role.role));
 }
 
 /* The board alone again, as it was before the link. */
 static inline void netplay_comm_close(void) {
     if (!g_netplay_comm_open) return;
-    m2comm_set_peer(NULL);
+    comm_role_end();
     g_netplay_comm_open = false;
+}
+
+/* Emu thread, emu mutex held, between slices: the reset into the room's role,
+ * once the game can hold it (comm_role.h). True if the board was reset. */
+static inline bool netplay_comm_role_reset(memory_bus_t *bus) {
+    if (!comm_role_reset(bus, g_active_profile, g_netplay.reset_board, g_netplay.reset_ctx)) return false;
+    input_reset();
+    netplay_log("comm link: the board boots as the %s after %u frames alone",
+                comm_role_name(g_comm_role.role), (unsigned)g_comm_role.waited);
+    return true;
 }
 
 static inline void netplay_on_comm_packet(uint16_t from, const uint8_t *buf, int got) {

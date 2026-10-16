@@ -120,12 +120,34 @@ Steps:
    keeps the 8 newest. A message that packs past 1180 bytes (the gateway
    relay's 1200-byte datagram) is not sent: Virtual-On's attract windows
    pack to 69 at most. `netplay_comm_open` / `_close` link the board to the opponent
-   (nothing calls them yet: step 3). `tests/comm_link_test.c` runs two boards
+   (nothing in a room calls them yet). `tests/comm_link_test.c` runs two boards
    over a lossy stand-in and over UDP on 127.0.0.1; `det_digest
    --m2comm-udp` is the phantom of step 1 over that UDP pair: 1500 frames
    of vonj give the same digests and the same `cRecn+4` as the in-process
    phantom (922 messages, 3 datagrams each, none torn or too big).
-3. Set the role from the room.
+3. Done (#969). The room gives the role: its owner is the MASTER, the other
+   the SLAVE (`netplay_comm_role`). The ROM reads the role byte 0x1D00028 only
+   at boot, in the frame a blank board factory-fills the block, so
+   `net/comm_role.h` waits until the ROM has made its block (the frame edge
+   after frame 285 from blank RAM), then the profile's `link_role`
+   (`vonj_link_role`) writes the role into
+   both copies with the ROM's CRC, and the board cold-boots with its backup
+   RAM kept: the boot reads the role, and the peer is plugged in only then.
+   The ROM starts its comm board (CommBoardReset bit 0, CN 1) in frame 345
+   of that boot and sends nothing before it (`m2comm.h` makes no pass
+   while CN is 0). `det_digest --room-role host|guest` stands in for the
+   room, with the phantom of step 1 (now a master too, for a SLAVE board)
+   in-process or over the UDP pair of step 2, through the emulator's own
+   `emu_comm_role_pump`. Over 1500 frames: host gives role byte 1, ring node 1 of
+   2, link_ID 1, `net_flag` 1, `cRecn+4` 0x10, first send in frame 578; guest
+   gives role byte 0, node 2 of 2, link_ID 2, 0x503A08 1, `net_flag` 1,
+   `cRecn+4` 0x10, first send in frame 345; the UDP pair's digests equal the
+   in-process ones. Without a peer the board is 75145df's bit for bit (vonj
+   and STF, 3000 frames with sound); the libretro shell's Arcade launch writes
+   the same backup RAM. Nothing in a room calls `netplay_comm_open` yet, so no
+   session reads the peer's packets and `NETPLAY_PROTO_REV` stays: the room
+   opens the link with steps 4 and 5. `tests/comm_role_test.c` holds the role
+   bytes, the CRC, the shell's settings across it and the order of the reset.
 4. Pace the board to 60 Hz while linked.
 5. Test two headless clients on the container's RPCN.
 

@@ -145,6 +145,66 @@ static inline void vonj_apply_menu_settings(memory_bus_t *bus, const uint8_t s[8
     mem_write8(bus, VONJ_BACKUP_FREE_PLAY, 1);
 }
 
+/* The cabinet's role on the link (Pinboard #969): the backup-RAM byte
+ * InitNetwork (0x18A10) reads at every boot, 0x1D00028: 0 SLAVE (link id 2),
+ * 1 MASTER (link id 1), anything else a cabinet alone (link id 3; the factory
+ * value is 2).
+ *
+ * It is in the settings block InitBackup (0x2440) checks at boot: the ROM's 16
+ * bytes from 0x2420, the block's size 0x20C at +0x10, and at +0x14 GetCRC
+ * (0x3120: seed 0xDEBDEB00, a u16 table at ROM 0x2F20) of +0x16..+0x37. The
+ * block is kept twice, the copy at +0x20C (BackupBKRAM 0x2330); a block that
+ * fails both is factory-filled, in the same frame InitNetwork reads the role
+ * (frame 285 from blank RAM). So the role goes into a block the ROM has made,
+ * with its CRC, and the board boots into it (net/comm_role.h). */
+#define VONJ_BACKUP_BLOCK  0x20Cu
+#define VONJ_BACKUP_CRC    0x14u
+#define VONJ_BACKUP_ROLE   0x28u
+#define VONJ_ROM_HEADER    0x2420u
+#define VONJ_ROM_CRC_TABLE 0x2F20u
+
+static inline uint32_t vonj_rom16(const memory_bus_t *bus, uint32_t off) {
+    return (uint32_t)bus->rom[off] | (uint32_t)bus->rom[off + 1] << 8;
+}
+
+/* GetCRC (0x3120) of n bytes. */
+static inline uint16_t vonj_backup_crc(const memory_bus_t *bus, const uint8_t *p, uint32_t n) {
+    uint32_t c = 0xDEBDEB00u;
+    while (n--) c = ((c + *p++) << 8) ^ (vonj_rom16(bus, VONJ_ROM_CRC_TABLE + (c >> 24) * 2u) << 16);
+    return (uint16_t)(vonj_rom16(bus, VONJ_ROM_CRC_TABLE + (c >> 24) * 2u) ^ (c >> 8));
+}
+
+/* A copy the ROM made: its header and size. */
+static inline bool vonj_backup_made(const memory_bus_t *bus, const uint8_t *b) {
+    return bus->rom && bus->rom_size > VONJ_ROM_CRC_TABLE + 0x200u
+        && memcmp(b, bus->rom + VONJ_ROM_HEADER, 16) == 0
+        && vonj_read32(b, 0x10) == VONJ_BACKUP_BLOCK;
+}
+
+/* One copy of the block, as InitBackup checks it. */
+static inline bool vonj_backup_valid(const memory_bus_t *bus, const uint8_t *b) {
+    return vonj_backup_made(bus, b)
+        && (uint32_t)(b[VONJ_BACKUP_CRC] | b[VONJ_BACKUP_CRC + 1u] << 8) == vonj_backup_crc(bus, b + 0x16, 0x22);
+}
+
+/* The role into each copy the ROM made, with a fresh CRC: the PS3 shell's
+ * Arcade settings (vonj_apply_menu_settings) go into the first copy without
+ * one, and the boot into the role keeps them. False before the ROM made it. */
+static inline bool vonj_link_role(memory_bus_t *bus, game_link_role_t role) {
+    static const uint8_t role_byte[3] = { 2, 1, 0 };   /* ALONE, MASTER, SLAVE */
+    bool any = false;
+    for (uint32_t at = 0; at <= VONJ_BACKUP_BLOCK; at += VONJ_BACKUP_BLOCK) {
+        uint8_t *b = bus->back + at;
+        if (!vonj_backup_made(bus, b)) continue;
+        b[VONJ_BACKUP_ROLE] = role_byte[role <= GAME_LINK_SLAVE ? role : GAME_LINK_ALONE];
+        uint16_t crc = vonj_backup_crc(bus, b + 0x16, 0x22);
+        b[VONJ_BACKUP_CRC]      = (uint8_t)crc;
+        b[VONJ_BACKUP_CRC + 1u] = (uint8_t)(crc >> 8);
+        any = true;
+    }
+    return any;
+}
+
 /* IN0 is the cabinet's: COIN1 0x01, COIN2 0x02, SERVICE 0x04, START 0x10
  * (MAME INPUT_PORTS_START(model2crx)). IN1 (byte 1) the left lever, IN2
  * (byte 2) the right: shot 0x01, dash 0x02, down 0x10, up 0x20, right 0x40,
@@ -162,6 +222,7 @@ static const game_profile_t vonj_profile = {
     .load_fn         = vonj_load,
     .install_fn      = vonj_install,
     .hook_count      = 0,
+    .link_role       = vonj_link_role,
     .input = {
         .bits = {
             [GAME_INPUT_P1_COIN]  = 0x00000001,

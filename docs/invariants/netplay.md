@@ -200,3 +200,13 @@ are **silently wrong** rather than loudly wrong when you get them half right.
   last": the master's ring size and its data frame leave in the same pass, and a strict
   newest-wins drops the size when the two arrive swapped. The drain's buffer is a whole
   datagram's (it was an input packet's 84 bytes, which truncated these).
+- **A linked board boots into the room's role; nothing pokes it into a running board**
+  (`net/comm_role.h`, the profile's `link_role`, Pinboard #969). The room's owner is the MASTER,
+  the other the SLAVE. Virtual-On reads its role (`0x1D00028`) only at boot, in the very frame a
+  blank board factory-fills its backup block (frame 285), so a write from outside never lands
+  between the two. `comm_role_begin` detaches the battery first (the role must not reach the
+  player's file); at each frame edge `link_role` writes the role into each copy the ROM made,
+  under the ROM's CRC (and the PS3 shell's Arcade writes, which leave the first copy's CRC stale,
+  are kept); then the board cold-boots with its backup RAM kept and only then gets its peer.
+  The ROM sends nothing until it starts its comm board (CN 1; `m2comm.h` makes no pass before).
+  The reset is not a lockstep barrier: `emu_comm_role_pump` runs only while no session steps.

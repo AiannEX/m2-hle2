@@ -664,6 +664,10 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     # A linked comm board's datagrams over the room's socket (net/comm_link.h):
     # packing, copies and late datagrams, two boards over UDP on 127.0.0.1. No ROM.
     add_executable(comm_link_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/comm_link_test.c)
+    # The room's cabinet role for a linked comm board (net/comm_role.h): the
+    # profile's role byte with the ROM's CRC, the reset into it. No ROM.
+    add_executable(comm_role_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/comm_role_test.c)
+    target_link_libraries(comm_role_test PRIVATE miniz sokol)
     # Not a ctest: replays a MAME capture of the COP conversation (needs a capture file).
     add_executable(cop_replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/cop_replay.c)
     target_include_directories(cop_replay PRIVATE ${TEST_INCLUDES})
@@ -739,7 +743,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     target_link_libraries(audio_out_test PRIVATE sokol)
 
     foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test input_test net_test ps3net_test tile_test heat_test audio_out_test
-              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test sharc_cpu_test sfight_settings_test region_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test)
+              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test sharc_cpu_test sfight_settings_test region_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test)
         target_include_directories(${t} PRIVATE ${TEST_INCLUDES})
         if(MSVC)
             target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -752,7 +756,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(NOT WIN32)
         foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test
                   input_test net_test ps3net_test tile_test heat_test audio_out_test scsp_dsp_test scsp_dsp_test_masks
-                  scsp_lazy_test tgp_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test ps3ui_render m2comm_test comm_link_test)
+                  scsp_lazy_test tgp_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test ps3ui_render m2comm_test comm_link_test comm_role_test)
             target_link_libraries(${t} PRIVATE m)
         endforeach()
     endif()

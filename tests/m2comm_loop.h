@@ -6,7 +6,8 @@
  *   m2comm_node_t     a whole node: its board state, link and inbox, and a peer
  *                     that sends into another node's inbox
  *   m2comm_phantom_*  a second cabinet for the real board (g_m2comm) to link
- *                     with: a slave whose window is the last one it took, so
+ *                     with: a slave (or, for a board that is the slave, a
+ *                     master, #969) whose window is the last one it took, so
  *                     the board gets its own packets back. Virtual-On's check
  *                     on a packet is self-contained ([+0x556] == [+2] ^ 0xAE5E),
  *                     so its ROM takes them.
@@ -76,6 +77,7 @@ static void m2comm_node_pair(m2comm_node_t *a, m2comm_node_t *b) {
 
 static m2comm_node_t g_m2comm_phantom;
 static m2comm_q_t    g_m2comm_board_in;
+static bool          g_m2comm_phantom_master;   /* its own clock: a pass each board frame */
 
 static void m2comm_phantom__to_board(void *ctx, const uint8_t *msg, uint32_t len) {
     (void)ctx;
@@ -91,11 +93,17 @@ static void m2comm_phantom__to_board(void *ctx, const uint8_t *msg, uint32_t len
     m2comm_q_put(&g_m2comm_board_in, msg, len);
 }
 
-/* The board sends: the phantom makes its pass on it at once. */
+/* The board sends: a slave phantom makes its pass on it at once. A master
+ * keeps its own clock (m2comm_phantom_frame), as the board's Z80 does. */
 static void m2comm_phantom__from_board(void *ctx, const uint8_t *msg, uint32_t len) {
     (void)ctx;
     m2comm_q_put(&g_m2comm_phantom.in, msg, len);
-    m2comm__pass(&g_m2comm_phantom.s, &g_m2comm_phantom.l);
+    if (!g_m2comm_phantom_master) m2comm__pass(&g_m2comm_phantom.s, &g_m2comm_phantom.l);
+}
+
+/* A board frame: a master phantom's pass. */
+static void m2comm_phantom_frame(void) {
+    if (g_m2comm_phantom_master) m2comm__pass(&g_m2comm_phantom.s, &g_m2comm_phantom.l);
 }
 
 static uint32_t m2comm_phantom__board_recv(void *ctx, uint8_t *msg, uint32_t cap) {
@@ -106,15 +114,22 @@ static uint32_t m2comm_phantom__board_recv(void *ctx, uint8_t *msg, uint32_t cap
 static const m2comm_peer_t m2comm_phantom_board_peer = {
     NULL, m2comm_phantom__from_board, m2comm_phantom__board_recv };
 
-/* Link the board (as master: its ROM's role must say so) to a phantom slave. */
-static void m2comm_phantom_attach(uint32_t window) {
+/* A phantom that is `role` (1 master, 2 slave); the board's end of the link,
+ * for the caller to plug in (m2comm_set_peer, or net/comm_role.h's reset). */
+static const m2comm_peer_t *m2comm_phantom_open(uint8_t role, uint32_t window) {
     memset(&g_m2comm_phantom, 0, sizeof g_m2comm_phantom);
     memset(&g_m2comm_board_in, 0, sizeof g_m2comm_board_in);
-    m2comm_node_start(&g_m2comm_phantom, 2, window);
+    g_m2comm_phantom_master = role == 1;
+    m2comm_node_start(&g_m2comm_phantom, role, window);
     g_m2comm_phantom.peer = (m2comm_peer_t){ NULL, m2comm_phantom__to_board, m2comm_node__recv };
     g_m2comm_phantom.peer.ctx = &g_m2comm_phantom;
     g_m2comm_phantom.l.peer = &g_m2comm_phantom.peer;
-    m2comm_set_peer(&m2comm_phantom_board_peer);
+    return &m2comm_phantom_board_peer;
+}
+
+/* Link the board (as master: its ROM's role must say so) to a phantom slave. */
+static void m2comm_phantom_attach(uint32_t window) {
+    m2comm_set_peer(m2comm_phantom_open(2, window));
 }
 
 #endif /* M2COMM_LOOP_H */

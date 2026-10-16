@@ -76,6 +76,11 @@
  * with the two cabinets on either end of a pair of UDP sockets on 127.0.0.1,
  * their datagrams packed and sent as the room's channel sends them
  * (src/net/comm_link.h); the link's counts go to stderr at the end.
+ * --room-role host|guest (with one of those) stands in for the room's role
+ * (Pinboard #969): the board boots alone, then net/comm_role.h resets it into
+ * the role -- host MASTER, guest SLAVE, the phantom the other -- through the
+ * same emu_comm_role_pump the emulator runs, and only then plugs it in;
+ * stderr says when, and what the game made of it.
  *
  * Two builds of it, one from each configuration, so each has exactly its
  * frontend's compiler flags:
@@ -255,18 +260,73 @@ static bool follow_next_ready(emu_thread_ctx_t *emu) {
  * MASTER (Virtual-On: --poke F:1D00028:01). */
 static bool m2comm_phantom, m2comm_udp;
 
-/* The phantom on the board's comm link, over UDP if asked (and built for it). */
+/* --room-role: the role the room would give this machine (GAME_LINK_ALONE:
+ * none, the phantom plugged in at once). The board's end of the link counts
+ * what the board sends, and when. */
+static game_link_role_t     room_role = GAME_LINK_ALONE;
+static const m2comm_peer_t *room_board_peer;
+static uint32_t room_first_send = UINT32_MAX, room_cn = UINT32_MAX, room_sends, room_early;
+
+static void room_board_send(void *ctx, const uint8_t *msg, uint32_t len) {
+    (void)ctx;
+    if (!room_sends++) room_first_send = g_emu_frames;
+    if (!g_m2comm.enabled) room_early++;   /* before its ROM started the comm board: never */
+    room_board_peer->send(room_board_peer->ctx, msg, len);
+}
+
+static uint32_t room_board_recv(void *ctx, uint8_t *msg, uint32_t cap) {
+    (void)ctx;
+    return room_board_peer->recv(room_board_peer->ctx, msg, cap);
+}
+
+static const m2comm_peer_t room_board = { NULL, room_board_send, room_board_recv };
+
+/* The phantom on the board's comm link, over UDP if asked (and built for it):
+ * plugged in now, or, with --room-role, at the reset into the role. */
 static void m2comm_phantom_link(void) {
+    if (!m2comm_phantom && !m2comm_udp) return;
+    uint8_t other = room_role == GAME_LINK_SLAVE ? 1 : 2;   /* the phantom's role byte */
+    const m2comm_peer_t *peer = NULL;
 #ifndef __EMSCRIPTEN__
-    if (m2comm_udp) {
-        if (!comm_udp_phantom_attach(0x700u)) fprintf(stderr, "m2comm-udp: no sockets\n");
+    if (m2comm_udp && !(peer = comm_udp_phantom_open(other, 0x700u))) {
+        fprintf(stderr, "m2comm-udp: no sockets\n");
         return;
     }
 #endif
-    if (m2comm_phantom) m2comm_phantom_attach(0x700u);
+    if (!peer) peer = m2comm_phantom_open(other, 0x700u);
+    if (room_role == GAME_LINK_ALONE) { m2comm_set_peer(peer); return; }
+    room_board_peer = peer;
+    comm_role_begin(room_role, &room_board);
+}
+
+/* A board frame: the phantom's own pass if it is the master, and while the
+ * board waits for its role, the emulator's frame-edge reset into it. */
+static void m2comm_phantom_frame_edge(emu_thread_ctx_t *ctx) {
+#ifndef __EMSCRIPTEN__
+    if (m2comm_udp) comm_udp_phantom_frame();
+    else
+#endif
+    if (m2comm_phantom) m2comm_phantom_frame();
+    if (comm_role_linked() && g_m2comm.enabled && room_cn == UINT32_MAX) room_cn = g_emu_frames - 1u;
+    emu_comm_role_pump(ctx, NETPLAY_STEP_OFF);
 }
 
 static void m2comm_phantom_report(void) {
+    if (room_role != GAME_LINK_ALONE) {
+        fprintf(stderr, "room role: %s; %s", comm_role_name(room_role),
+                comm_role_linked() ? "" : "never reset into it\n");
+        if (comm_role_linked())
+            fprintf(stderr, "reset into it after %u frames alone (frames count from it); the ROM started its comm "
+                    "board in frame %u, first send in frame %u (%u sends, %u before the start); ring %s, "
+                    "node %u of %u, took %u sent %u\n",
+                    g_comm_role.waited, room_cn, room_first_send, room_sends, room_early,
+                    g_m2comm_link.alive == M2COMM_LINK_UP ? "up" : "down",
+                    g_m2comm_link.id, g_m2comm_link.count, g_m2comm_link.taken, g_m2comm_link.sent);
+        if (!strncmp(g_active_profile->id, "von", 3))
+            fprintf(stderr, "vonj: role byte %u, link_ID %u, 503A08 %u, net_flag %u, packets in (cRecn+4) %u\n",
+                    mem_read8(&bus, 0x01D00028u), mem_read8(&bus, 0x005770B1u), mem_read32(&bus, 0x00503A08u),
+                    mem_read8(&bus, 0x005770B0u), mem_read32(&bus, 0x005024F4u));
+    }
 #ifndef __EMSCRIPTEN__
     if (!m2comm_udp) return;
     const comm_link_t *b = &g_comm_udp_board.link, *p = &g_comm_udp_phantom.link;
@@ -275,6 +335,24 @@ static void m2comm_phantom_report(void) {
             b->sent, b->taken, b->stale, b->torn, b->too_big, b->overflow, b->packed_peak,
             g_comm_udp_board.wire_dgrams, g_comm_udp_board.wire_bytes, p->sent, p->taken);
 #endif
+}
+
+/* main_web.c web_install_board, which is also what a netplay reset runs (and
+ * net/comm_role.h's, through the reset hook). */
+static void install_board(void *ctx) {
+    (void)ctx;
+    g_active_profile->install_fn(&romset, &cpu, &bus);
+    if (g_gems_i960 || g_gems_cop || g_gems_verify) gems_apply(profile_rom_set(g_active_profile));
+    irqt_reset();
+    if (g_active_profile->quirks.enable_68k_sound) {
+        sound_reset();
+        sound_attach(&bus);
+        if (romset.audiocpu && romset.audiocpu_size > 0) sound_load_rom(romset.audiocpu, (uint32_t)romset.audiocpu_size);
+        if (romset.samples && romset.samples_size > 0)   sound_load_samples(romset.samples, (uint32_t)romset.samples_size);
+    }
+    input_reset();
+    input_attach(&bus);
+    emu_board_reset_state();
 }
 
 static const char *load_path;
@@ -599,6 +677,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--mem")) state_mem = true;
         else if (!strcmp(argv[i], "--m2comm-phantom")) m2comm_phantom = true;
         else if (!strcmp(argv[i], "--m2comm-udp")) m2comm_udp = true;
+        else if (!strcmp(argv[i], "--room-role") && i + 1 < argc) {
+            const char *r = argv[++i];
+            room_role = !strcmp(r, "host") ? GAME_LINK_MASTER : !strcmp(r, "guest") ? GAME_LINK_SLAVE : GAME_LINK_ALONE;
+            if (room_role == GAME_LINK_ALONE) { fprintf(stderr, "--room-role host|guest\n"); return 2; }
+        }
         else if (!strcmp(argv[i], "--gems-i960"))   g_gems_i960 = true;
         else if (!strcmp(argv[i], "--gems-cop"))    g_gems_cop = true;
         else if (!strcmp(argv[i], "--gems-verify")) g_gems_verify = true;
@@ -646,19 +729,12 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    /* main_web.c web_install_board, which is also what a netplay reset runs. */
-    g_active_profile->install_fn(&romset, &cpu, &bus);
-    if (g_gems_i960 || g_gems_cop || g_gems_verify) gems_apply(profile_rom_set(g_active_profile));
-    irqt_reset();
-    if (g_active_profile->quirks.enable_68k_sound) {
-        sound_reset();
-        sound_attach(&bus);
-        if (romset.audiocpu && romset.audiocpu_size > 0) sound_load_rom(romset.audiocpu, (uint32_t)romset.audiocpu_size);
-        if (romset.samples && romset.samples_size > 0)   sound_load_samples(romset.samples, (uint32_t)romset.samples_size);
+    if (room_role != GAME_LINK_ALONE && !m2comm_phantom && !m2comm_udp) {
+        fprintf(stderr, "--room-role needs --m2comm-phantom or --m2comm-udp\n");
+        return 2;
     }
-    input_reset();
-    input_attach(&bus);
-    emu_board_reset_state();
+    install_board(NULL);
+    netplay_set_reset_hook(install_board, NULL);
     m2comm_phantom_link();
     emu_ctx_init(&emu, &cpu, &bus);
     emu_run(&emu);
@@ -707,6 +783,7 @@ int main(int argc, char **argv) {
         else                                              emu_slice_body(&emu);
         emu_slice_result_t r = emu_slice_finish(&emu);
         slices++;
+        if (r == EMU_SLICE_FRAME) m2comm_phantom_frame_edge(&emu);
         if (r == EMU_SLICE_STOPPED) {
             fprintf(stderr, "board stopped at frame %u, IP 0x%08X\n", (unsigned)g_emu_frames, cpu.sfr.ip);
             break;

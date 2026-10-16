@@ -616,6 +616,24 @@ static inline void emu_state_request_pump(emu_thread_ctx_t *ctx, netplay_step_t 
     ctx->state_count++;
 }
 
+/* A linked comm board's reset into the room's role (net/comm_role.h), once the
+ * game can hold it: a cold boot, so the step count starts again as at the
+ * barrier's (see emu_netplay_pump). A link is not a lockstep session: its
+ * board is reset alone, never while a session steps it. */
+static inline void emu_comm_role_pump(emu_thread_ctx_t *ctx, netplay_step_t step) {
+    if (step != NETPLAY_STEP_OFF || !comm_role_waiting()) return;
+    emu_mutex_lock(&ctx->mutex);
+    if (netplay_comm_role_reset(ctx->bus)) {
+        replay_rec_break("comm link role");
+        replay_play_yield();
+        follow_lead_break("comm link role");
+        ctx->total_steps       = 0;
+        ctx->cpu_prev_snapshot = ctx->cpu_snapshot;
+        ctx->cpu_snapshot      = *ctx->cpu;
+    }
+    emu_mutex_unlock(&ctx->mutex);
+}
+
 /* Pump netplay and hand back what this slice may do.
  *
  * OUTSIDE the emu mutex on purpose: a TLS connect blocks for seconds, and
@@ -666,6 +684,7 @@ static inline netplay_step_t emu_netplay_pump(emu_thread_ctx_t *ctx) {
         emu_mutex_unlock(&ctx->mutex);
         if (asked) ctx->reset_count++;
     }
+    emu_comm_role_pump(ctx, step);
     return step;
 }
 
