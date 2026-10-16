@@ -53,7 +53,12 @@ Test: `m2lua_test`.
 
 - The script is `m2hle/scripts/<set>.lua` in RetroArch's system folder (core
   option "Game scripts", read at load). `require` finds `model2.lua` and
-  `common.lua` there too.
+  `common.lua` there too (`m2lua_set_path`), so M2emulator 1.1a's `scripts`
+  folder is copied in as it is; the repo ships neither file. Checked with
+  1.1a's own scripts on srallyc: srallyc.lua's Init and Frame run each
+  frame, and daytona.lua (run as srallyc.lua, Daytona does not boot yet)
+  gives "Infinite Time: On" in the .cht, whose runfunc holds RAM 0x5010D0 at
+  3200 once the cheat is on.
 - RetroArch has no menu of a core's own, so **the options are RetroArch
   cheats**. At load the core writes `<set>.cht` beside the script
   (`m2lua_cht_text`; rewritten only when it would differ): one cheat per value
