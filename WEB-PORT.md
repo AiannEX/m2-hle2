@@ -1,6 +1,6 @@
 # WEB-PORT.md
 
-The plan for **play.sonicthefighte.rs**: a UI-stripped WebAssembly build of this emulator that plays *Sonic the Fighters* over RPCN, deployed to GitHub Pages from this repository on every push to master.
+The plan for **arcade.sonicthefighte.rs** (play.sonicthefighte.rs until Pinboard #881): a UI-stripped WebAssembly build of this emulator that plays *Sonic the Fighters* over RPCN, deployed to GitHub Pages from this repository on every push to master.
 
 Pair with [CLAUDE.md](CLAUDE.md) (invariants) and [PROPOSAL.md](PROPOSAL.md) (architecture). This file is the web target's equivalent of both: what was found, what was decided and why, and the order to build it in. Work happened on the `wasm` branch until PR #20 (`3d2ca3e`) merged it into master; master is now where the web frontend lives and what deploys.
 
@@ -158,7 +158,7 @@ Because the gateway terminates the browser's TLS, it sees the login token in the
 
 - **The gateway's UDP must leave from its public address, never `localhost`.** RPCN records a player's address from what it sees. Over loopback every browser player is `127.0.0.1`, and a native opponent is told to punch at `127.0.0.1`. *Since verified in RPCN's source (WEB-NETPLAY.md section 2):* the address is the source of the UDP signaling keepalive and nothing else, so the TCP stream may use loopback; `signaling.host` and `udp.bind` must be the public address.
 - **Two browser players share the gateway's public IPv4, which is the case CLAUDE.md already documents:** RPCN hands each the other's *local* address with port 3658 hardcoded. So the gateway gives every session a **virtual local address** from a private pool, reports it as `local_ip` in the signaling keepalive, and routes any datagram addressed to `pool-address:3658` internally, session to session, with no UDP involved. Browser-vs-browser then never leaves the gateway; browser-vs-native goes out the session's real UDP socket, and the native client needs no change at all.
-- **A relay that forwards to any address is a reflector and an SSRF hole.** Allow: the RPCN signaling address, the virtual pool, and public unicast. Refuse: loopback, RFC 1918, link-local, multicast, ports below 1024. Cap datagrams per second and sessions per source IP. Check `Origin: https://play.sonicthefighte.rs` on upgrade.
+- **A relay that forwards to any address is a reflector and an SSRF hole.** Allow: the RPCN signaling address, the virtual pool, and public unicast. Refuse: loopback, RFC 1918, link-local, multicast, ports below 1024. Cap datagrams per second and sessions per source IP. Check `Origin: https://arcade.sonicthefighte.rs` on upgrade (and play.sonicthefighte.rs, the site's old name, which native builds from before #881 send).
 
 Also: every browser player reaches RPCN from one IP, so any per-IP limit RPCN applies (sign-up rate, bans) would apply to all of them at once. RPCN's source shows none (WEB-NETPLAY.md section 2).
 

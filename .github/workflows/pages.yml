@@ -4,7 +4,7 @@ name: pages
 # Every game is on that one site: the front page (home.html) has a box per game,
 # and ?game=ID&profile=PROFILE plays one (web/site/m2hle-games.js, Pinboard #881).
 # play.sonicthefighte.rs and srally.sonicthefighte.rs are aliases that redirect
-# to it (web/srally/README.md).
+# to it (web/aliases/README.md).
 #
 # Every push builds the Emscripten frontend, runs it in headless Chrome, and only
 # then publishes build_web/site/ as the whole website. There is no gh-pages
