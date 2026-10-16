@@ -9,8 +9,9 @@
      per game: before anything else loads, so no emulator starts behind it.
      sfight.html and srallyc.html are this page with that game's words above, for a
      link preview, which runs no script (web/stamp-site.cmake). -->
+<script src="m2hle-lang.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-games.js?v=@M2HLE_VERSION@"></script>
-<script>if (!m2hleGames.picked) location.replace('home.html');</script>
+<script>if (!m2hleGames.picked) location.replace('home.html' + m2hleLang.query());</script>
 <meta name="theme-color" content="#001735">
 <!-- The two faces the first screen shows, asked for before the stylesheet names
      them. Same URLs as m2hle.css's @font-face (stamped there too), so they are
@@ -86,31 +87,31 @@
       <div class="ps-head"><h1 class="ps-title">Sonic the Fighters</h1></div>
       <div class="ps-body">
         <section id="step-loading">
-          <p class="lead">Starting up&hellip;</p>
+          <p class="lead" data-i18n="step.loading">Starting up&hellip;</p>
         </section>
 
         <section id="step-rom" hidden>
-          <p class="lead">Add your copy of the game to begin.</p>
+          <p class="lead" data-i18n="step.rom">Add your copy of the game to begin.</p>
           <input id="file" type="file" accept=".zip,application/zip" class="visually-hidden">
           <label id="drop" class="drop ps-selected" for="file">
             <svg class="ps-glyph drop-glyph" aria-hidden="true"><use href="#ps-cross"/></svg>
-            <strong>Choose your game file</strong>
-            <span>or drop it here</span>
+            <strong data-i18n="step.choose">Choose your game file</strong>
+            <span data-i18n="step.drop">or drop it here</span>
             <span class="hint">A merged <code>sfight.zip</code> or <code>schamp.zip</code></span>
           </label>
           <p id="rom-error" class="error" hidden></p>
-          <p class="fine">Your file stays on this computer. It is read by this page and is never uploaded.</p>
+          <p class="fine" data-i18n="step.private">Your file stays on this computer. It is read by this page and is never uploaded.</p>
         </section>
 
         <section id="step-busy" hidden>
-          <p class="lead">Reading your game file&hellip;</p>
+          <p class="lead" data-i18n="step.busy">Reading your game file&hellip;</p>
           <p class="ps-loading" aria-hidden="true"><span></span><span></span><span></span></p>
         </section>
 
         <section id="step-fatal" hidden>
-          <p class="lead">This browser could not start the game.</p>
+          <p class="lead" data-i18n="step.fatal">This browser could not start the game.</p>
           <p id="fatal-text" class="error"></p>
-          <button id="fatal-reload" class="tool" hidden>Reload</button>
+          <button id="fatal-reload" class="tool" data-i18n="step.reload" hidden>Reload</button>
         </section>
       </div>
     </div>
@@ -120,8 +121,8 @@
   <footer class="ps-hintbar">
     <p class="ps-strip">
       <span id="build"></span> &middot;
-      <a href="home.html">All games</a> &middot;
-      <a href="https://github.com/biggestsonicfan/m2-hle2" target="_blank" rel="noopener noreferrer">Source on GitHub</a> &middot;
+      <a id="all-games" href="home.html" data-i18n="site.games">All games</a> &middot;
+      <a href="https://github.com/biggestsonicfan/m2-hle2" target="_blank" rel="noopener noreferrer" data-i18n="site.source">Source on GitHub</a> &middot;
       Fonts: Anybody, M&nbsp;PLUS&nbsp;1p and M&nbsp;PLUS&nbsp;1&nbsp;Code, under the SIL Open Font License
       (<a href="fonts/OFL-Anybody.txt" target="_blank">Anybody</a>,
       <a href="fonts/OFL-MPLUS.txt" target="_blank">M+</a>,
@@ -130,7 +131,7 @@
       (<a href="fonts/MIT-GGPO.txt" target="_blank">license</a>)
     </p>
     <div class="ps-hints">
-      <label for="file" class="ps-hint hint-rom"><svg class="ps-glyph" aria-hidden="true"><use href="#ps-cross"/></svg>:Choose file</label>
+      <label for="file" class="ps-hint hint-rom"><svg class="ps-glyph" aria-hidden="true"><use href="#ps-cross"/></svg><span data-i18n="hint.rom">:Choose file</span></label>
     </div>
   </footer>
 </main>

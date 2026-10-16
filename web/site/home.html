@@ -68,8 +68,8 @@ footer a { color: #CFF3FF; }
 </head>
 <body>
 <header>
-  <h1>Model 2 Arcade</h1>
-  <p>Sega Model 2 games in your browser, run by m2-hle2. Bring your own copy of the game: it stays on your computer.</p>
+  <h1 data-i18n="home.title">Model 2 Arcade</h1>
+  <p data-i18n="home.lead">Sega Model 2 games in your browser, run by m2-hle2. Bring your own copy of the game: it stays on your computer.</p>
 </header>
 <main>
   <ul id="games"></ul>
@@ -77,8 +77,10 @@ footer a { color: #CFF3FF; }
 </main>
 <footer>
   <span id="build">@M2HLE_VERSION@</span> &middot;
-  <a href="https://github.com/biggestsonicfan/m2-hle2" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+  <a href="https://github.com/biggestsonicfan/m2-hle2" target="_blank" rel="noopener noreferrer" data-i18n="site.source">Source on GitHub</a> &middot;
+  <span id="langs"><span data-i18n="site.language">Language</span>:</span>
 </footer>
+<script src="m2hle-lang.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-games.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-home.js?v=@M2HLE_VERSION@"></script>
 </body>

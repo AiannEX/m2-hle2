@@ -12,9 +12,14 @@
  * game (sfight.html, srallyc.html: web/stamp-site.cmake) or a host named for
  * one (play.*, srally.*: the old sites, now aliases) picks it, and any other
  * query (?follow=, ?rom=, ...) is Sonic the Fighters, as it was before there
- * was a front page. A bare visit, or an unknown ?game=, is the front page.
+ * was a front page. A bare visit, one with only ?lang=, or an unknown ?game=,
+ * is the front page.
  *
  * Each game's profiles must be in the web build (registry.h, M2HLE_WEB).
+ *
+ * A game's words are English; `i18n` holds another language's (m2hle-lang.js,
+ * ?lang=), any of title, blurb, romHint, labels, and a profile's name and about
+ * by its id. What a language leaves out stays English. text() merges them.
  */
 'use strict';
 
@@ -30,6 +35,15 @@ const m2hleGames = (() => {
       ],
       romHint: 'A merged <code>sfight.zip</code> or <code>schamp.zip</code>',
       labels: {},
+      i18n: {
+        ja: {
+          title: 'ソニック・ザ・ファイターズ',
+          blurb: 'ソニックたちがデスエッグで大乱闘。RPCN と GGPO でオンライン対戦。',
+          profiles: { sfight_console: { name: 'コンソール', about: 'PS3 版：メニュー付き、フリープレイ' },
+                      sfight: { name: 'アーケード', about: '筐体そのまま' } },
+          romHint: 'マージ済みの <code>sfight.zip</code> または <code>schamp.zip</code>',
+        },
+      },
     },
     srallyc: {
       title: 'Sega Rally Championship',
@@ -50,6 +64,53 @@ const m2hleGames = (() => {
       /* No replay format of its own: a replay is always the buttons from the
        * game's start (src/core/replay.h, replay__saves_inputs). */
       ownReplay: false,
+      i18n: {
+        ja: {
+          title: 'セガラリーチャンピオンシップ',
+          blurb: 'デザート、フォレスト、マウンテン、レイクサイド。すべてはここから始まった。',
+          profiles: { srallyc: { about: 'ツイン/DX、リビジョン C' }, srallycb: { about: 'ツイン/DX、リビジョン B' },
+                      srallycc: { about: 'ツイン/DX、リビジョン A' },
+                      srallycdx: { about: 'DX（シングル筐体）、リビジョン A' }, srallycdxa: { about: 'DX（シングル筐体）' } },
+          romHint: 'お持ちの <code>srallyc.zip</code>（セガラリーチャンピオンシップ ツイン/DX）',
+          labels: { up: 'シフトアップ', down: 'シフトダウン', left: '左ハンドル', right: '右ハンドル',
+                    b1: 'アクセル', b2: 'ブレーキ', b3: 'ビューチェンジ', b4: '未使用' },
+        },
+      },
+    },
+    vonj: {
+      title: 'Cyber Troopers Virtual-On',
+      year: 1995, board: 'Model 2B-CRX', colors: ['#2a9d8f', '#0b3d3a'],
+      blurb: 'Giant robots, two sticks each, one arena. The Japanese release.',
+      profiles: [
+        { id: 'vonj', name: 'Japan', about: 'Twin, Revision B (Japan)' },
+        { id: 'von', name: 'Export', about: 'Twin (Export)', soon: true },
+        { id: 'vonu', name: 'USA', about: 'Twin (USA, Revision B)', soon: true },
+        { id: 'vonr', name: 'Relay', about: 'Relay (Japan)', soon: true },
+      ],
+      /* The page takes one zip, and vonj is a clone: its files and von's in one. */
+      romHint: 'A merged <code>vonj.zip</code>: the Japanese files and those of its parent, <code>von.zip</code>, in one zip',
+      /* src/profiles/vonj.h: the left lever is UP/DOWN/LEFT/RIGHT, B1 its
+       * trigger, B2 its dash; B3 both triggers, B4 both dashes. The right lever
+       * is player 2's directions and B1 / B2. */
+      labels: { up: 'Left lever up', down: 'Left lever down', left: 'Left lever left', right: 'Left lever right',
+                b1: 'Left shot', b2: 'Left dash', b3: 'Both shots', b4: 'Both dashes' },
+      ownReplay: false,
+      /* No shared board or ranking for it (arcade/games.mjs); its save is kept
+       * in the browser (m2hle-page.js, web_backup_keep). */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: '電脳戦機バーチャロン',
+          blurb: '巨大ロボット、ツインスティック、ひとつの戦場。日本版。',
+          profiles: { vonj: { name: '日本', about: 'ツイン、リビジョン B（日本）' },
+                      von: { name: '海外', about: 'ツイン（海外）' },
+                      vonu: { name: '北米', about: 'ツイン（北米、リビジョン B）' },
+                      vonr: { name: 'リレー', about: 'リレー（日本）' } },
+          romHint: 'マージ済みの <code>vonj.zip</code>（日本版のファイルと親セット <code>von.zip</code> のファイルをひとつの zip に）',
+          labels: { up: '左レバー上', down: '左レバー下', left: '左レバー左', right: '左レバー右',
+                    b1: '左ショット', b2: '左ダッシュ', b3: '両ショット', b4: '両ダッシュ' },
+        },
+      },
     },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
@@ -63,18 +124,31 @@ const m2hleGames = (() => {
     if (q.has('game')) id = GAMES[q.get('game')] ? q.get('game') : null;
     else if (GAMES[page]) id = page;
     else if (HOSTS[host]) id = HOSTS[host];
-    else if (loc.search.length > 1) id = 'sfight';
+    else if ([...q.keys()].some((k) => k !== 'lang')) id = 'sfight';
     if (!id) return null;
     const profiles = GAMES[id].profiles;
     const profile = profiles.find((p) => p.id === q.get('profile') && !p.soon) || profiles[0];
     return { id, profile: profile.id };
   }
 
-  /* The link that plays a game, relative to the site's root. */
+  /* The link that plays a game, relative to the site's root, in this page's
+   * language. */
   function href(id, profile) {
     const q = new URLSearchParams({ game: id, profile: profile || GAMES[id].profiles[0].id });
-    return './?' + q;
+    return './?' + m2hleLang.keep(q);
   }
 
-  return { GAMES, pick, href, picked: pick(location) };
+  /* A game's entry in `lang` (this page's by default): its i18n words over the
+   * English ones, labels and profiles key by key. */
+  function text(id, lang) {
+    const g = GAMES[id];
+    const tr = (g.i18n || {})[lang || m2hleLang.lang] || {};
+    const own = tr.profiles || {};
+    return Object.assign({}, g, tr, {
+      labels: Object.assign({}, g.labels, tr.labels),
+      profiles: g.profiles.map((p) => Object.assign({}, p, own[p.id])),
+    });
+  }
+
+  return { GAMES, pick, href, text, picked: pick(location) };
 })();

@@ -21,8 +21,8 @@ endforeach()
 # A game's own page: index.html with that game's words in its head. m2hle-game.js
 # gives the page its game's title once it runs, but a link preview (Discord, a chat
 # app, a search engine) reads the page without running it, so a link that should
-# name its game points at sfight.html or srallyc.html (m2hle-games.js picks the game
-# from the file name; Pinboard #673, #881). The same text as m2hle-game.js sets.
+# name its game points at sfight.html, srallyc.html or vonj.html (m2hle-games.js picks the game
+# from the file name; Pinboard #673, #881, #935). The same text as m2hle-game.js sets.
 file(READ "${SITE}/index.html" text)
 set(site_title "<title>Model 2 Arcade</title>")
 set(site_desc "content=\"Play Sega Model 2 arcade games in your browser, with your own copy of the game.\"")
@@ -32,7 +32,8 @@ foreach(want site_title site_desc)
     message(FATAL_ERROR "stamp-site: index.html no longer has ${${want}}; update the game pages' words here")
   endif()
 endforeach()
-foreach(game "sfight|Sonic the Fighters" "srallyc|Sega Rally Championship")
+foreach(game "sfight|Sonic the Fighters" "srallyc|Sega Rally Championship"
+             "vonj|Cyber Troopers Virtual-On")
   string(REPLACE "|" ";" game "${game}")
   list(GET game 0 id)
   list(GET game 1 title)
