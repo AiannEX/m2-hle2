@@ -4,7 +4,7 @@ Code: `src/core/m2lua.h` (the runtime), `src/ui/m2lua_ui.h` (the desktop's Scrip
 menu and drawing), `src/ui/m2lua_mcp.h` (the bridge's `script_*`),
 `web/site/m2hle-cheats.js` with `web_cheats_*` in `src/main_web.c` (the web's
 Cheats tab), `lr_lua_*` and `retro_cheat_*` in `src/main_libretro.c` (the
-libretro core). Lua 5.5.1 is the `vendor/lua` submodule, built from `onelua.c`.
+libretro core), `scripts_*` in `src/main_sdl.c` (the handheld). Lua 5.5.1 is the `vendor/lua` submodule, built from `onelua.c`.
 Test: `m2lua_test`.
 
 ## What M2emulator did (read off EMULATOR.EXE with rea + Ghidra)
@@ -75,4 +75,21 @@ Test: `m2lua_test`.
   frames. Rewind and run-ahead savestates do not stop it.
 - PostDraw's text is drawn over the game with the PS3 menus' fonts
   (`ps3ui_text`, board pixels scaled to the frame, bold = the title font);
-  images are not. The sdl3 frontend has no scripts (no `vendor/lua` either).
+  images are not.
+
+## The handheld frontend (sdl3, Pinboard #972)
+
+- `src/main_sdl.c` (`scripts_*`) runs `<dir>/<set>.lua` like the desktop:
+  `--scripts DIR` (default `scripts/` in the working directory, else beside the
+  executable: `/storage/.local/share/m2hle/scripts` on ROCKNIX), `--no-scripts`.
+  It links `lua55` and needs `vendor/lua` like every other frontend.
+- No menu: `--script-option CODE` sets the options with the libretro core's
+  cheat codes (`m2lua_cheat_code`, `<key>=<value>`, `+` joins), applied once
+  after Init. The hooks are `m2lua_frame_hook` / `m2lua_reset_hook`, so the
+  RPCN hold-off is `emu_script_may_run()`, as on the desktop.
+- PostDraw's text is drawn with sokol's 8x8 debug font, scaled to the font's
+  size; images are not. At exit it prints `script <path>: N frames`.
+- Checked on srallyc with M2emulator 1.1a's `scripts` folder unmodified:
+  srallyc.lua's Init at load and Frame 1800 times in 1800 frames; daytona.lua
+  (required by a srallyc.lua that draws its state) with
+  `--script-option timecheat=1`: the runfunc held 0x5010D0 at 3200.

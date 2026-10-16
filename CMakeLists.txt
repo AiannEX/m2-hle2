@@ -160,8 +160,8 @@ elseif(M2HLE_LIBRETRO)
     set(M2HLE_SUBMODULE_PATHS vendor/sokol vendor/miniz vendor/stb vendor/lua)
     set(M2HLE_SUBMODULE_PROBES sokol/sokol_gfx.h miniz/miniz.c stb/stb_truetype.h lua/onelua.c)
 elseif(M2HLE_SDL3)
-    set(M2HLE_SUBMODULE_PATHS vendor/sokol vendor/miniz vendor/stb)
-    set(M2HLE_SUBMODULE_PROBES sokol/sokol_gfx.h miniz/miniz.c stb/stb_truetype.h)
+    set(M2HLE_SUBMODULE_PATHS vendor/sokol vendor/miniz vendor/stb vendor/lua)
+    set(M2HLE_SUBMODULE_PROBES sokol/sokol_gfx.h miniz/miniz.c stb/stb_truetype.h lua/onelua.c)
 else()
     set(M2HLE_SUBMODULE_PATHS vendor/imgui vendor/dear_bindings vendor/sokol vendor/miniz vendor/ImGuiFileDialog vendor/imgui_club vendor/stb vendor/lua)
     set(M2HLE_SUBMODULE_PROBES imgui/imgui.h dear_bindings/dear_bindings.py sokol/sokol_gfx.h miniz/miniz.c ImGuiFileDialog/ImGuiFileDialog.cpp stb/stb_truetype.h
@@ -226,21 +226,19 @@ target_include_directories(miniz PUBLIC ${VENDOR}/miniz ${MINIZ_GEN_DIR})
 
 # ---------------------------------------------------------------------------
 # Lua 5.5 (C), the game scripts' language (core/m2lua.h, Pinboard #958): the
-# library half of onelua.c, every core and standard library in one unit. The
-# desktop, the web (the page's scratchpad) and the libretro core link it; the
-# handheld frontend has no scripts, and its checkout no vendor/lua.
+# library half of onelua.c, every core and standard library in one unit.
+# Every frontend links it: the desktop, the web (the page's scratchpad), the
+# libretro core and the handheld (Pinboard #972).
 # ---------------------------------------------------------------------------
-if(NOT M2HLE_SDL3)
-    add_library(lua55 STATIC EXCLUDE_FROM_ALL ${VENDOR}/lua/onelua.c)
-    target_compile_definitions(lua55 PRIVATE MAKE_LIB)
-    if(MSVC)
-        target_compile_definitions(lua55 PRIVATE _CRT_SECURE_NO_WARNINGS)
-    elseif(NOT WIN32 AND NOT EMSCRIPTEN)
-        target_compile_definitions(lua55 PRIVATE LUA_USE_POSIX)   # mkstemp, popen
-        target_link_libraries(lua55 PUBLIC m)
-    endif()
-    target_include_directories(lua55 PUBLIC ${VENDOR}/lua)
+add_library(lua55 STATIC EXCLUDE_FROM_ALL ${VENDOR}/lua/onelua.c)
+target_compile_definitions(lua55 PRIVATE MAKE_LIB)
+if(MSVC)
+    target_compile_definitions(lua55 PRIVATE _CRT_SECURE_NO_WARNINGS)
+elseif(NOT WIN32 AND NOT EMSCRIPTEN)
+    target_compile_definitions(lua55 PRIVATE LUA_USE_POSIX)   # mkstemp, popen
+    target_link_libraries(lua55 PUBLIC m)
 endif()
+target_include_directories(lua55 PUBLIC ${VENDOR}/lua)
 
 # ---------------------------------------------------------------------------
 # sdl3 frontend: m2hle from src/main_sdl.c, then stop — nothing below (ImGui,
@@ -260,7 +258,7 @@ if(M2HLE_SDL3)
     # No debugger here to arm the board's breakpoint/watchpoint/capture hooks
     # (src/core/build_features.h).
     target_compile_definitions(m2hle PRIVATE M2HLE_DEV_TOOLS=0)
-    target_link_libraries(m2hle PRIVATE sokol_gfx miniz SDL3::SDL3 Threads::Threads m)
+    target_link_libraries(m2hle PRIVATE sokol_gfx miniz lua55 SDL3::SDL3 Threads::Threads m)
     target_include_directories(m2hle PRIVATE
         ${SRC}
         ${SRC}/board

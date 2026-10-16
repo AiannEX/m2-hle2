@@ -75,6 +75,13 @@
  *            rankings) in DIR/<set>/backup1 instead of the per-user
  *            ~/.config/m2hle2/nvram (core/backup_ram.h).
  * --no-nvram  boot with blank backup RAM every time and keep nothing.
+ * --scripts DIR  the game scripts' folder (M2emulator's Lua, core/m2lua.h):
+ *            <set>.lua there runs with the game. Default scripts/ in the
+ *            working directory, else beside the executable.
+ * --no-scripts  run no game script.
+ * --script-option CODE  set the script's options, in the libretro core's
+ *            cheat codes: <key>=<value> (the value's index or name), several
+ *            joined by '+'. May be given more than once.
  */
 #include <stdarg.h>
 #include <stdbool.h>
@@ -82,6 +89,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>    /* stat: is scripts/ a folder */
+#include <unistd.h>      /* readlink: scripts/ beside the executable */
 
 #include <SDL3/SDL.h>
 #include <GLES3/gl3.h>
@@ -107,12 +116,14 @@
 #include "input.h"
 #include "audio_out.h"   /* audio_out_cb: drains g_sound's ring (only its callback is used here) */
 #include "miniz.h"
+#include "m2lua.h"       /* M2emulator's game scripts (Pinboard #972) */
 
 /* registry.h is the single TU that defines g_profiles[] / g_profile_count /
  * g_active_profile and pulls in every per-game profile header. */
 #include "registry.h"
 
 #define MAX_SHOTS 16
+#define MAX_SCRIPT_OPTS 16
 
 static struct {
     memory_bus_t     bus;
@@ -150,8 +161,13 @@ static struct {
     bool        net_host;           /* host a room as soon as the sign-in completes */
     const char *net_room_pass;      /* the rooms hosted here are locked with it */
     int         net_delay;          /* 0 = the stored value */
+    const char *scripts_dir;        /* --scripts; NULL = the default */
+    bool        no_scripts;
+    int         script_opt_count;
+    const char *script_opt[MAX_SCRIPT_OPTS];   /* --script-option codes */
 } opt = { .render_fps = 30.0, .render_scale = 1, .linear = true };
 
+static bool g_sdtx_on;              /* sokol's debug text is set up: --osd, the lobby or a script's text */
 static bool g_sound_on;             /* the sound board is attached (sound_start succeeded) */
 
 /* ---- Gamepad ------------------------------------------------------------- */
@@ -358,6 +374,86 @@ static bool load_rom(const char *zip) {
     input_reset();
     input_attach(&state.bus);
     return true;
+}
+
+/* ---- Game scripts (core/m2lua.h, Pinboard #972) ------------------------------
+ *
+ * The desktop's and the libretro core's: <dir>/<set>.lua runs with the game,
+ * through the emu thread's hooks, and never while a netplay session has the
+ * board (emu_script_may_run). Its options are set from the command line in the
+ * libretro core's cheat codes; PostDraw's text is drawn with sokol's 8x8 font. */
+
+static bool scripts_is_dir(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+/* scripts/ in the working directory, else beside the executable (main.c's). */
+static void scripts_default_dir(char *out, size_t cap) {
+    snprintf(out, cap, "scripts");
+    if (scripts_is_dir(out)) return;
+    char exe[512] = "";
+    long n = (long)readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (n <= 0) return;
+    exe[n] = 0;
+    char *slash = strrchr(exe, '/');
+    if (slash) snprintf(out, cap, "%.*s/scripts", (int)(slash - exe), exe);
+}
+
+/* --script-option codes onto the options; before the emu thread runs. */
+static void scripts_apply_options(void) {
+    static int want[M2LUA_OPTION_MAX];
+    m2lua_cheat_defaults(want);
+    for (int i = 0; i < opt.script_opt_count; i++)
+        if (!m2lua_cheat_code(opt.script_opt[i], want))
+            fprintf(stderr, "m2hle: --script-option %s: no such option or value\n", opt.script_opt[i]);
+    m2lua_cheat_apply(want);
+}
+
+/* After load_rom, before the emu thread: the game's script, Init and all. */
+static void scripts_load(void) {
+    char dir[512];
+    if (opt.scripts_dir) snprintf(dir, sizeof dir, "%s", opt.scripts_dir);
+    else                 scripts_default_dir(dir, sizeof dir);
+    m2lua_set_dir(dir);
+    g_m2lua.disabled   = opt.no_scripts;
+    g_emu_script_frame = m2lua_frame_hook;
+    g_emu_script_reset = m2lua_reset_hook;
+    if (!m2lua_load(profile_rom_set(g_active_profile), &state.bus, &state.romset)) {
+        if (g_m2lua.error[0]) fprintf(stderr, "m2hle: script not run: %s\n", g_m2lua.error);
+        return;
+    }
+    scripts_apply_options();
+    printf("m2hle: script %s (%d option%s)\n", g_m2lua.path, g_m2lua.noptions,
+           g_m2lua.noptions == 1 ? "" : "s");
+}
+
+/* PostDraw's text over the picture at (ox, oy, w, h): board pixels scaled with
+ * it, each string in its font's size (sdtx's cell is 8 pixels). Images are not
+ * drawn. Before the frame's one sdtx_draw. */
+static void scripts_draw(int fb_w, int fb_h, int ox, int oy, int w, int h) {
+    static m2lua_draw_t list[M2LUA_DRAW_MAX];
+    int n = 0;
+    if (!g_m2lua.loaded) return;
+    m2lua_take_draw(list, &n);
+    if (n == 0) return;
+    float k = (float)h / (float)VIDEO_HEIGHT;
+    sg_apply_viewport(0, 0, fb_w, fb_h, true);
+    sg_apply_scissor_rect(0, 0, fb_w, fb_h, true);
+    for (int i = 0; i < n; i++) {
+        const m2lua_draw_t *d = &list[i];
+        if (d->kind != M2LUA_DRAW_TEXT) continue;
+        bool font = d->font >= 0 && g_m2lua.fonts[d->font].used;
+        float cell = (font ? g_m2lua.fonts[d->font].size : M2LUA_TEXT_SIZE) * k;
+        if (cell < 4.0f) cell = 4.0f;
+        float s = cell / 8.0f;
+        sdtx_canvas((float)fb_w / s, (float)fb_h / s);
+        sdtx_origin(0.0f, 0.0f);
+        sdtx_pos(((float)ox + d->x * (float)w / (float)VIDEO_WIDTH) / cell, ((float)oy + d->y * k) / cell);
+        sdtx_color4b((uint8_t)(d->color >> 16), (uint8_t)(d->color >> 8), (uint8_t)d->color,
+                     (uint8_t)(d->color >> 24));
+        sdtx_puts(d->text);
+    }
 }
 
 /* The last lines of the in-memory log, for a failure with file logging off. */
@@ -640,6 +736,10 @@ static bool parse_args(int argc, char **argv) {
             else if (!strcmp(f, "nearest")) opt.linear = false;
             else return false;
         }
+        else if (!strcmp(a, "--scripts") && more)    opt.scripts_dir = argv[++i];
+        else if (!strcmp(a, "--no-scripts"))         opt.no_scripts = true;
+        else if (!strcmp(a, "--script-option") && more && opt.script_opt_count < MAX_SCRIPT_OPTS)
+            opt.script_opt[opt.script_opt_count++] = argv[++i];
         else if (!strcmp(a, "--max-temp") && more)   opt.max_temp = atof(argv[++i]);
         else if (!strcmp(a, "--shot") && more && opt.shot_count < MAX_SHOTS) {
             char *spec = argv[++i], *colon = strchr(spec, ':');
@@ -925,7 +1025,8 @@ static int gfx_start(void) {
     });
     if (!sg_isvalid()) { fprintf(stderr, "m2hle: sokol_gfx setup failed\n"); return 1; }
     if (opt.stats) { sg_enable_stats(); g_game_frame_gl_counts = true; }   /* the "gl per render" line */
-    if (opt.osd || opt.netplay)
+    g_sdtx_on = opt.osd || opt.netplay || g_m2lua.loaded;
+    if (g_sdtx_on)
         sdtx_setup(&(sdtx_desc_t){ .fonts[0] = sdtx_font_cpc(), .logger.func = slog_func });
     g_video_force_cpu_tiles = opt.cpu_tiles;
     if (opt.verify_fill && opt.render_scale <= 0) {
@@ -1154,12 +1255,13 @@ static void render_frame(void) {
         game_render_draw_target(g_rt.texture, opt.linear, ox, oy, w, h);
     else if (show_game)
         game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){ox, oy, w, h}, lerp_t);
+    if (show_game) scripts_draw(fb_w, fb_h, ox, oy, w, h);
     if (opt.osd) {
         osd_update(SDL_GetTicksNS());
         osd_draw(fb_w, fb_h);
     }
     if (opt.netplay) lobby_draw(fb_w, fb_h, SDL_GetTicksNS());
-    if (opt.osd || opt.netplay) sdtx_draw();
+    if (g_sdtx_on) sdtx_draw();
     int pzone = hprof_enter(HPROF_PRESENT);   /* host_prof.h */
     sg_end_pass();
     sg_commit();
@@ -1232,7 +1334,8 @@ int main(int argc, char **argv) {
     if (!parse_args(argc, argv)) {
         fprintf(stderr, "usage: m2hle [--rom] <set.zip> [--render-fps N] [--window WxH] [--stats] [--osd]\n"
                         "             [--log FILE] [--log-level SPEC] [--pad-map LIST] [--shot FRAME:FILE] [--exit-after N]\n"
-                        "             [--netplay] [--net-config FILE] [--net-delay N]\n");
+                        "             [--netplay] [--net-config FILE] [--net-delay N]\n"
+                        "             [--scripts DIR] [--no-scripts] [--script-option KEY=VALUE]\n");
         return 2;
     }
     if (opt.pad_map && !apply_pad_map(opt.pad_map)) return 2;
@@ -1251,6 +1354,7 @@ int main(int argc, char **argv) {
     bp_init();
     wp_init();
     if (!load_rom(opt.rom)) { dump_log_tail(12); return 1; }
+    scripts_load();
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "m2hle: SDL_Init: %s\n", SDL_GetError());
@@ -1269,6 +1373,10 @@ int main(int argc, char **argv) {
     rc = run_loop(audio != NULL);
 
     emu_thread_shutdown(&state.emu);
+    if (g_m2lua.loaded)
+        printf("m2hle: script %s: %llu frames%s%s\n", g_m2lua.path, (unsigned long long)g_m2lua.frames,
+               g_m2lua.error[0] ? ", last error: " : "", g_m2lua.error);
+    m2lua_unload();       /* End(), and the script's ROM patches off */
     backup_ram_flush();   /* the board has stopped: what it holds now is final */
     if (opt.netplay) netplay_shutdown();   /* after the emu thread: it is the only thing that pumps it */
     if (audio) SDL_DestroyAudioStream(audio);   /* after the emu thread: no more ring writes */
@@ -1279,7 +1387,7 @@ int main(int argc, char **argv) {
         printf("verify-gpu-tiles: %llu composed frames checked, %llu differed\n",
                (unsigned long long)g_vt.frames, (unsigned long long)g_vt.bad_frames);
     game_target_destroy();
-    if (opt.osd || opt.netplay) sdtx_shutdown();
+    if (g_sdtx_on) sdtx_shutdown();
     game_render_shutdown();
     video_shutdown(&state.video);
     sg_shutdown();
