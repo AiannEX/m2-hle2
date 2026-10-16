@@ -46,37 +46,59 @@ $('canvas').addEventListener('webglcontextlost', (e) => {
 });
 
 /* What a failed load means, in words a player can act on. The emulator matches
- * files by checksum, so it knows exactly which ones the zip does not hold. */
+ * files by checksum, so it knows exactly which ones the zips do not hold. A
+ * clone set (vonj, sfight) can come split, its parent's files in their own zip
+ * (von.zip, schamp.zip): the page then holds on to what it has and asks for the
+ * parent (`held`, below). */
 function explainMissing(missing) {
   const names = missing.split(' ').filter(Boolean);
+  const parent = Module.UTF8ToString(Module._web_rom_parent());
+  if (m2hleGame.id !== 'sfight' && names.length > 0 && parent && held.length > 0) {
+    return m2hleLang.t(held.length > 1 ? 'rom.missing.more' : 'rom.missing.parent',
+                       { file: names[0], parent: parent });
+  }
   if (m2hleGame.id !== 'sfight') {
     return names.length === 0
       ? 'That file could not be read as a zip. Choose your ' + m2hleGame.id + '.zip.'
       : 'This zip is missing ' + names[0] + ', which ' + m2hleGame.title + ' needs.';
   }
   if (names.length === 0) {
-    return 'That file could not be read as a zip. Choose your merged sfight.zip or schamp.zip.';
+    return 'That file could not be read as a zip. Choose your merged sfight.zip or schamp.zip, ' +
+           'or sfight.zip and schamp.zip together.';
   }
   const first = names[0];
   if (/^epr-1900[12]\./.test(first)) {
     return 'This zip does not have the Sonic the Fighters program files (' + first + '). ' +
-           'It looks like a split "schamp" set. You need a merged set: one zip that holds ' +
-           'both sfight and schamp.';
+           'It looks like a split "schamp" set: add sfight.zip too, or choose a merged set.';
   }
   return 'This zip is missing ' + first + ', which the game needs. It looks like a split ' +
-         '"sfight" set, which keeps those files in a separate schamp.zip. You need a merged ' +
-         'set: one zip that holds both.';
+         '"sfight" set, which keeps those files in a separate schamp.zip: add schamp.zip too, ' +
+         'or choose a merged set.';
 }
 
-function loadZip(bytes) {
+/* The zips the page can give the emulator at once (RL_MEM_ZIPS, rom_loader.h). */
+const MAX_ZIPS = 4;
+/* The zips of a load that missed files, kept for the next pick: one set split in
+ * two zips can be picked one at a time. */
+let held = [];
+
+/* `zips`: the bytes of each zip, one set's files across them. */
+function loadZip(zips) {
   show('step-busy');
   /* ?follow= names the leader's profile before the game loads (m2hle-follow.js), and
    * the arcade (stf-arcade.mjs, if it loaded) puts the shared board in localStorage. */
   followReady.then(() => window.stfArcade && window.stfArcade.ready)
-    .then(() => loadZipNow(bytes), (e) => romError('Cannot follow: ' + e.message));
+    .then(() => loadZipNow(zips), (e) => romError('Cannot follow: ' + e.message));
 }
 
-function loadZipNow(bytes) {
+/* A malloc'd copy of `bytes` in the emulator's heap, or 0. */
+function heapCopy(bytes) {
+  const ptr = Module._malloc(bytes.length);
+  if (ptr) Module.HEAPU8.set(bytes, ptr);   /* HEAPU8 read AFTER malloc: growth replaces the view */
+  return ptr;
+}
+
+function loadZipNow(zips) {
   /* Let the "reading" text paint before the (synchronous) extraction runs. */
   requestAnimationFrame(() => setTimeout(() => {
     /* ?script= and ?pause= : a run whose inputs are keyed to game frames, so it is
@@ -90,15 +112,23 @@ function loadZipNow(bytes) {
     }
     if (params.get('pause')) Module._web_pause_at(Number(params.get('pause')) >>> 0);
 
-    const ptr = Module._malloc(bytes.length);
-    if (!ptr) { romError('Not enough memory to read that file.'); return; }
-    Module.HEAPU8.set(bytes, ptr);           /* HEAPU8 read AFTER malloc: growth replaces the view */
+    /* The first zip is web_rom_load's, the others go before it (web_rom_extra);
+     * both take the buffers over. */
+    const ptrs = zips.map(heapCopy);
+    if (ptrs.includes(0)) {
+      ptrs.forEach((p) => p && Module._free(p));
+      romError('Not enough memory to read that file.');
+      return;
+    }
+    ptrs.slice(1).forEach((p, i) => Module._web_rom_extra(p, zips[i + 1].length));
+    const ptr = ptrs[0];
     /* Keep this game's save in localStorage, or not: the arcade asks (Sega Rally asks
      * first; without the arcade, Sonic the Fighters' is kept, as before, and a game
      * that says keepSave in m2hle-games.js). */
     Module._web_backup_keep(window.stfArcade ? (window.stfArcade.keepSave() ? 1 : 0)
                                              : (m2hleGame.id === 'sfight' || m2hleGame.keepSave ? 1 : 0));
-    const rc = Module._web_rom_load(ptr, bytes.length);   /* takes ownership of ptr */
+    const rc = Module._web_rom_load(ptr, zips[0].length);   /* takes ownership of ptr */
+    held = rc !== 0 && zips.length < MAX_ZIPS ? zips : [];
     if (rc !== 0) {
       romError(explainMissing(Module.UTF8ToString(Module._web_rom_missing())));
       return;
@@ -150,11 +180,14 @@ function romError(text) {
   show('step-rom');
 }
 
-function readFile(file) {
-  if (!file) return;
+/* The picked or dropped files, after the zips a failed load left (`held`). */
+function readFiles(files) {
+  files = Array.from(files || []).slice(0, MAX_ZIPS);
+  if (files.length === 0) return;
   $('rom-error').hidden = true;
-  file.arrayBuffer().then((buf) => loadZip(new Uint8Array(buf)),
-                          () => romError('That file could not be read.'));
+  Promise.all(files.map((f) => f.arrayBuffer()))
+    .then((bufs) => loadZip(held.concat(bufs.map((b) => new Uint8Array(b))).slice(-MAX_ZIPS)),
+          () => romError('That file could not be read.'));
 }
 
 /* ---- Sound ------------------------------------------------------------------
@@ -370,16 +403,16 @@ var Module = {
     m2hlePad.onReady();
     debugStart();
     /* Development only: ?rom=<path> loads a zip from THIS site, so a headless
-     * browser can boot the game with no file dialog. A production site hosts no
-     * ROMs, so there is nothing for it to find; other origins are refused. */
-    const dev = new URLSearchParams(location.search).get('rom');
-    if (dev) {
-      const url = new URL(dev, location.href);
-      if (url.origin === location.origin) {
-        fetch(url).then((r) => r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status)))
-                  .then((buf) => loadZip(new Uint8Array(buf)))
-                  .catch((e) => romError('Could not fetch ' + url.pathname + ' (' + e.message + ').'));
-      }
+     * browser can boot the game with no file dialog; a split set gives one per
+     * zip (?rom=vonj.zip&rom=von.zip). A production site hosts no ROMs, so there
+     * is nothing for it to find; other origins are refused. */
+    const urls = new URLSearchParams(location.search).getAll('rom')
+      .map((dev) => new URL(dev, location.href)).filter((url) => url.origin === location.origin);
+    if (urls.length > 0) {
+      Promise.all(urls.map((url) => fetch(url)
+        .then((r) => r.ok ? r.arrayBuffer() : Promise.reject(new Error(url.pathname + ': ' + r.status)))))
+        .then((bufs) => loadZip(bufs.map((b) => new Uint8Array(b))))
+        .catch((e) => romError('Could not fetch ' + e.message + '.'));
     }
   },
 };
@@ -390,7 +423,7 @@ if (typeof WebAssembly !== 'object') {
 
 /* ---- The file picker and the drop zone ------------------------------------- */
 
-$('file').addEventListener('change', (e) => readFile(e.target.files[0]));
+$('file').addEventListener('change', (e) => { readFiles(e.target.files); e.target.value = ''; });
 
 const drop = $('drop');
 for (const type of ['dragenter', 'dragover']) {
@@ -400,9 +433,9 @@ for (const type of ['dragleave', 'drop']) {
   window.addEventListener(type, (e) => { e.preventDefault(); drop.classList.remove('over'); });
 }
 window.addEventListener('drop', (e) => {
-  const file = e.dataTransfer && e.dataTransfer.files[0];
-  if (!$('step-rom').hidden) readFile(file);
-  else if ($('panel').hidden) m2hleReport.loadFile(file);   /* a savestate, or a report's zip (m2hle-report.js) */
+  const files = e.dataTransfer ? e.dataTransfer.files : [];
+  if (!$('step-rom').hidden) readFiles(files);
+  else if ($('panel').hidden) m2hleReport.loadFile(files[0]);   /* a savestate, or a report's zip (m2hle-report.js) */
 });
 
 /* ---- The menu ----------------------------------------------------------------
