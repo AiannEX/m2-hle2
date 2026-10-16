@@ -19,7 +19,7 @@ const m2hleGame = (() => {
   const id = picked.id;
   const game = Object.assign({ id, profile: picked.profile }, m2hleGames.text(id),
                              { args: ['--profile=' + picked.profile] });
-  game.args.push('--region=' + ({ en: 'usa', ja: 'japan' }[m2hleLang.lang] || 'export'));
+  game.args.push('--region=' + ({ en: 'usa', ja: 'japan' }[m2hleLang.asked] || 'export'));
 
   if (id === 'srallyc') {
     const w = (params.get('wheel') || '').split(',').map((v) => v.trim());
