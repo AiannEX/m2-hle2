@@ -81,8 +81,14 @@ const m2hleLang = (() => {
   const LANGS = { en: { name: 'English', strings: en }, ja: { name: '日本語', strings: ja } };
   const DEFAULT = 'en';
 
+  /* Other names a visit may give a language: ?lang=jp is Japanese. */
+  const ALIASES = { jp: 'ja' };
+
   const q = new URLSearchParams(location.search);
-  const lang = LANGS[q.get('lang')] ? q.get('lang') : DEFAULT;
+  /* The language the visit asked for, even one the site has no words in: the
+   * board's country follows it (m2hle-game.js), ?lang=fr is Export in English. */
+  const asked = ALIASES[q.get('lang')] || q.get('lang') || DEFAULT;
+  const lang = LANGS[asked] ? asked : DEFAULT;
 
   /* The string for `key` in this page's language, {name}s filled from `vars`. */
   function t(key, vars) {
@@ -133,5 +139,5 @@ const m2hleLang = (() => {
     document.addEventListener('DOMContentLoaded', () => { if (!applied) apply(document); });
   else apply(document);
 
-  return { LANGS, DEFAULT, lang, t, add, apply, keep, query };
+  return { LANGS, DEFAULT, lang, asked, t, add, apply, keep, query };
 })();

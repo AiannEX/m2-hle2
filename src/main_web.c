@@ -994,6 +994,23 @@ static void event(const sapp_event *ev) {
     if (ev->type == SAPP_EVENTTYPE_UNFOCUSED) { input_reset(); g_web_pad = 0; }
 }
 
+/* The page's switches that carry a value (--name=value). */
+static void web_value_arg(const char *a) {
+    if (!strncmp(a, "--profile=", 10)) snprintf(g_web_profile_arg, sizeof g_web_profile_arg, "%s", a + 10);
+    /* --region=usa|japan|export, from the page's ?lang= (m2hle-game.js,
+     * Pinboard #942): the board's country, over a saved one too. */
+    else if (!strncmp(a, "--region=", 9)) {
+        int r = game_region_parse(a + 9);
+        if (r >= 0) { g_region = r; g_region_over_saved = 1; }
+    }
+    /* --wheel-center=N, --wheel-range=N, --wheel-speed=N (board/io_5649.h). */
+    else if (!strncmp(a, "--wheel-", 8) && strchr(a, '=')) {
+        char opt[32];
+        size_t n = (size_t)(strchr(a, '=') - a);
+        if (n < sizeof opt) { memcpy(opt, a, n); opt[n] = 0; io5649_wheel_option(opt, a + n + 1); }
+    }
+}
+
 sapp_desc sokol_main(int argc, char *argv[]) {
     /* The page passes ?args=a,b,c through as argv (web/site/m2hle-page.js). These
      * are main_sdl.c's switches for the render work that came from arc-s, each of
@@ -1014,13 +1031,7 @@ sapp_desc sokol_main(int argc, char *argv[]) {
          * the interpolated ones), --pictures-all never gives them up. */
         else if (!strcmp(a, "--pictures-board-rate")) g_web_pictures = WEB_PICTURES_BOARD_RATE;
         else if (!strcmp(a, "--pictures-all"))        g_web_pictures = WEB_PICTURES_ALL;
-        else if (!strncmp(a, "--profile=", 10))       snprintf(g_web_profile_arg, sizeof g_web_profile_arg, "%s", a + 10);
-        /* --wheel-center=N, --wheel-range=N, --wheel-speed=N (board/io_5649.h). */
-        else if (!strncmp(a, "--wheel-", 8) && strchr(a, '=')) {
-            char opt[32];
-            size_t n = (size_t)(strchr(a, '=') - a);
-            if (n < sizeof opt) { memcpy(opt, a, n); opt[n] = 0; io5649_wheel_option(opt, a + n + 1); }
-        }
+        else web_value_arg(a);
     }
     return (sapp_desc){
         .init_cb      = init,

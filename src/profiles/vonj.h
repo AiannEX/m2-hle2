@@ -158,6 +158,10 @@ static const game_profile_t vonj_profile = {
         .enable_68k_sound = true,
         .irq_vectors      = true,
         .board_vblank     = true,
+        /* vonj is the Japanese program: its test menu has no country, and
+         * MAME's von and vonu (the other countries) are other program ROMs, not a setting. */
+        .region           = { .kind = REGION_PROGRAM_ROM,
+                              .why  = "the program ROM is Japan's (von, vonu are other sets)" },
     },
 };
 

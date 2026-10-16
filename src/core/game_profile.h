@@ -81,6 +81,41 @@ typedef struct {
 
 /* ---- Quirks -------------------------------------------------------------- */
 
+/*
+ * What a profile does with the region (game_quirks_t.region, Pinboard #942/#948).
+ *
+ * REGION_HOOKED takes two hooks, both named in the profile's hook table, at
+ * two different addresses:
+ *   factory_default  puts g_region in the factory default of the country
+ *                    setting (a cold boot, blank or failed backup RAM / EEPROM);
+ *   over_saved       runs once the game has accepted a saved settings block,
+ *                    and with g_region_over_saved up puts g_region in the
+ *                    working copy's country, which country() returns.
+ * A game keeps its country in backup RAM or an EEPROM, so a factory-default
+ * hook alone would let a kept save ignore the web page's ?lang=. region_test
+ * runs every over_saved hook on a bare bus: a saved country stays with the
+ * flag down and becomes g_region with it up, for every region.
+ *
+ * The others say why there is no hook; `why` is that reason, in words. Only
+ * the profiles region_test lists may take them, each as its listed kind, so a
+ * new game can skip the hooks only by editing that test.
+ */
+typedef enum {
+    REGION_UNDECLARED = 0,  /* region_test fails it */
+    REGION_HOOKED,
+    REGION_PROGRAM_ROM,     /* the country is the program ROM's (another set is another country) */
+    REGION_HOMEBREW,        /* no country setting at all */
+    REGION_TODO,
+} game_region_kind_t;
+
+typedef struct {
+    game_region_kind_t kind;
+    const char *factory_default;                     /* hook name (REGION_HOOKED) */
+    const char *over_saved;                          /* hook name (REGION_HOOKED) */
+    uint32_t  (*country)(struct memory_bus *bus);    /* the working copy's country byte */
+    const char *why;                                 /* the other kinds */
+} game_region_use_t;
+
 /* See game_quirks_t.attract_replay. */
 typedef struct {
     uint32_t step_addr;
@@ -123,6 +158,11 @@ typedef struct {
      * in. Netplay continues a session across that rematch only for a profile
      * that says so; any other board would keep the winner on against the CPU. */
     bool     vs_rematch;
+
+    /* The region (hle_hooks.h g_region; ?lang= on the web, Pinboard #942).
+     * Every game the emulator runs honours it, or says why it cannot: see
+     * game_region_use_t. tests/region_test.c fails a profile that does neither. */
+    game_region_use_t region;
 
     /* The profile carries a hook that honours g_enemy_rank (hle_hooks.h): the
      * CPU opponent's AI table, including STF's two unused ones. The desktop's

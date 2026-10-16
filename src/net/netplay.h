@@ -184,8 +184,11 @@
  * 20: the sound UART's TxRDY interrupt is the board's for every game, not only
  *    one with STF's queue address, so Fighting Vipers takes it too (and
  *    Virtual-On sends its sound commands; Pinboard #935).
+ * 21: Sega Rally puts the session's region in its COUNTRY setting
+ *    (srallyc_hook_country_default), where it always booted Japan; USA, the
+ *    default, and Export boards differ from the first boot (Pinboard #942).
  */
-#define NETPLAY_PROTO_REV 20
+#define NETPLAY_PROTO_REV 21
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.

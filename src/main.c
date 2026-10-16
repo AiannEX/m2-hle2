@@ -1701,6 +1701,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             int r = game_region_parse(argv[++i]);   /* japan | usa | export */
             if (r < 0) LOG_WARN("--region %s: expected japan, usa or export; keeping usa", argv[i]);
             else       g_region = r;
+        } else if (strcmp(argv[i], "--region-over-saved") == 0) {
+            g_region_over_saved = 1;  /* the region wins over saved settings too, as on the web */
         } else if (strcmp(argv[i], "--export-roms") == 0 && i + 1 < argc) {
             strncpy(g_export_roms, argv[++i], sizeof(g_export_roms) - 1);
         } else if (strcmp(argv[i], "--no-nvram") == 0) {

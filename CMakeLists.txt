@@ -654,6 +654,10 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     # the bytes, the backup RAM CRC, the defaults. No ROM.
     add_executable(sfight_settings_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/sfight_settings_test.c)
     target_link_libraries(sfight_settings_test PRIVATE miniz sokol)
+    # The region (core/hle_hooks.h g_region): every profile says what it does
+    # with it, and the hooks that put it in the games' settings. No ROM.
+    add_executable(region_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/region_test.c)
+    target_link_libraries(region_test PRIVATE miniz sokol)
     # Not a ctest: replays a MAME capture of the COP conversation (needs a capture file).
     add_executable(cop_replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/cop_replay.c)
     target_include_directories(cop_replay PRIVATE ${TEST_INCLUDES})
@@ -725,7 +729,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     target_link_libraries(audio_out_test PRIVATE sokol)
 
     foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test input_test net_test ps3net_test tile_test heat_test audio_out_test
-              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test sharc_cpu_test sfight_settings_test retro_shader_test ra_info_cache_test)
+              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test sharc_cpu_test sfight_settings_test region_test retro_shader_test ra_info_cache_test)
         target_include_directories(${t} PRIVATE ${TEST_INCLUDES})
         if(MSVC)
             target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -738,7 +742,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(NOT WIN32)
         foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test
                   input_test net_test ps3net_test tile_test heat_test audio_out_test scsp_dsp_test scsp_dsp_test_masks
-                  scsp_lazy_test tgp_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test ps3ui_render)
+                  scsp_lazy_test tgp_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test ps3ui_render)
             target_link_libraries(${t} PRIVATE m)
         endforeach()
     endif()

@@ -91,6 +91,21 @@ static inline void hle_game_frame_edge(memory_bus_t *bus) {
 typedef enum { GAME_REGION_JAPAN = 0, GAME_REGION_USA = 1, GAME_REGION_EXPORT = 2 } game_region_t;
 static volatile int g_region = GAME_REGION_USA;
 
+/* The region wins over saved backup RAM too: a profile that keeps its settings
+ * there (STF) puts g_region in the working copy once the game has loaded them,
+ * so the board plays in that region whatever the save says, and leaves the
+ * saved block itself alone. The web page sets it with --region (from ?lang=,
+ * Pinboard #942): the arcade's shared board and a player's kept save play in
+ * the page's language's region. Off everywhere else, where a saved region is
+ * the player's choice. A netplay session's board has no backup RAM, so the
+ * default hook has put g_region there already and this changes nothing.
+ *
+ * Every profile says what it does with g_region (game_quirks_t.region,
+ * game_region_use_t); a hooked one names the hook that honours this flag
+ * (region.over_saved), and
+ * region_test runs it. */
+static volatile int g_region_over_saved = 0;
+
 /* Versus mode: the cabinet setting Sega's console emulator calls VS mode. When
  * a two-player match is decided the board goes straight back to character
  * select with both players still in, rather than keeping the winner on against
