@@ -8,22 +8,38 @@
  */
 'use strict';
 
+/* The words (m2hle-lang.js): crt.group.* the headings, crt.<label> the pots. */
+m2hleLang.add({
+  en: {
+    'crt.group.gain': 'Drive (gain)', 'crt.group.bias': 'Cutoff (bias)', 'crt.group.geometry': 'Geometry',
+    'crt.red': 'Red', 'crt.green': 'Green', 'crt.blue': 'Blue',
+    'crt.hPos': 'H position', 'crt.vPos': 'V position', 'crt.hSize': 'H size', 'crt.vSize': 'V size',
+    'crt.aria': '{group}: {pot}',
+  },
+  ja: {
+    'crt.group.gain': 'ドライブ（ゲイン）', 'crt.group.bias': 'カットオフ（バイアス）', 'crt.group.geometry': '画面位置・サイズ',
+    'crt.red': '赤', 'crt.green': '緑', 'crt.blue': '青',
+    'crt.hPos': '水平位置', 'crt.vPos': '垂直位置', 'crt.hSize': '水平サイズ', 'crt.vSize': '垂直サイズ',
+    'crt.aria': '{group}：{pot}',
+  },
+});
+
 const m2hleCrt = (() => {
   const $ = (id) => document.getElementById(id);
   const KEY = 'm2hle.crtPots';
 
   /* In CRT_POT_* order; `id` is the index the emulator knows them by. */
   const POTS = [
-    { key: 'gainR', group: 'Drive (gain)', label: 'Red', lo: 0, hi: 2, centre: 1, step: 0.01 },
-    { key: 'gainG', label: 'Green', lo: 0, hi: 2, centre: 1, step: 0.01 },
-    { key: 'gainB', label: 'Blue', lo: 0, hi: 2, centre: 1, step: 0.01 },
-    { key: 'biasR', group: 'Cutoff (bias)', label: 'Red', lo: -0.5, hi: 0.5, centre: 0, step: 0.005 },
-    { key: 'biasG', label: 'Green', lo: -0.5, hi: 0.5, centre: 0, step: 0.005 },
-    { key: 'biasB', label: 'Blue', lo: -0.5, hi: 0.5, centre: 0, step: 0.005 },
-    { key: 'hPos', group: 'Geometry', label: 'H position', lo: -0.25, hi: 0.25, centre: 0, step: 0.0025 },
-    { key: 'vPos', label: 'V position', lo: -0.25, hi: 0.25, centre: 0, step: 0.0025 },
-    { key: 'hSize', label: 'H size', lo: 0.5, hi: 1.5, centre: 1, step: 0.005 },
-    { key: 'vSize', label: 'V size', lo: 0.5, hi: 1.5, centre: 1, step: 0.005 },
+    { key: 'gainR', group: 'gain', label: 'red', lo: 0, hi: 2, centre: 1, step: 0.01 },
+    { key: 'gainG', label: 'green', lo: 0, hi: 2, centre: 1, step: 0.01 },
+    { key: 'gainB', label: 'blue', lo: 0, hi: 2, centre: 1, step: 0.01 },
+    { key: 'biasR', group: 'bias', label: 'red', lo: -0.5, hi: 0.5, centre: 0, step: 0.005 },
+    { key: 'biasG', label: 'green', lo: -0.5, hi: 0.5, centre: 0, step: 0.005 },
+    { key: 'biasB', label: 'blue', lo: -0.5, hi: 0.5, centre: 0, step: 0.005 },
+    { key: 'hPos', group: 'geometry', label: 'hPos', lo: -0.25, hi: 0.25, centre: 0, step: 0.0025 },
+    { key: 'vPos', label: 'vPos', lo: -0.25, hi: 0.25, centre: 0, step: 0.0025 },
+    { key: 'hSize', label: 'hSize', lo: 0.5, hi: 1.5, centre: 1, step: 0.005 },
+    { key: 'vSize', label: 'vSize', lo: 0.5, hi: 1.5, centre: 1, step: 0.005 },
   ];
 
   let ready = false;
@@ -55,16 +71,16 @@ const m2hleCrt = (() => {
     let group = '';
     POTS.forEach((p, i) => {
       if (p.group) {
-        group = p.group;
+        group = m2hleLang.t('crt.group.' + p.group);
         const h = document.createElement('p');
         h.className = 'crt-group';
-        h.textContent = p.group;
+        h.textContent = group;
         box.appendChild(h);
       }
       const row = document.createElement('label');
       row.className = 'shader-param';
       const name = document.createElement('span');
-      name.textContent = p.label;
+      name.textContent = m2hleLang.t('crt.' + p.label);
       const input = document.createElement('input');
       input.type = 'range';
       input.min = String(p.lo);
@@ -72,7 +88,7 @@ const m2hleCrt = (() => {
       input.step = String(p.step);
       const v = Number(mine[p.key]);
       input.value = String(Number.isFinite(v) ? v : p.centre);
-      input.setAttribute('aria-label', group + ': ' + p.label);
+      input.setAttribute('aria-label', m2hleLang.t('crt.aria', { group, pot: name.textContent }));
       const out = document.createElement('output');
       out.textContent = fmt(p, Number(input.value));
       input.addEventListener('input', () => {

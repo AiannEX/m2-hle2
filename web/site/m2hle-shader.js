@@ -23,6 +23,43 @@
  */
 'use strict';
 
+/* The words (m2hle-lang.js). What the emulator says about a shader that will not
+ * load (web_shader_error) stays as it says it. */
+m2hleLang.add({
+  en: {
+    'shader.custom.on': 'Your shader: {name}',
+    'shader.custom.off': 'Your shader (load one below)',
+    'shader.loading': 'Loading {file}…',
+    'shader.unreadable': 'Could not read the files: {error}',
+    'shader.on': '{name} is on.',
+    'shader.unkept': '{name} is on, but this browser would not keep it for next time ({error}).',
+    'shader.slang': 'Those are slang shaders (.slangp), which need a compiler a browser does not have. '
+                    + 'Pick the GLSL version (.glslp or .glsl) from libretro\'s glsl-shaders.',
+    'shader.none': 'No .glslp or .glsl file in what you picked.',
+    'shader.choose': 'Choose one of {n} shaders…',
+    'shader.pick': 'Pick which shader to use.',
+    'shader.forgotten': 'Forgotten.',
+    'shader.restore.bad': 'Your saved shader did not load: {error}',
+    'shader.restore.ok': '{name} is loaded.',
+  },
+  ja: {
+    'shader.custom.on': 'カスタムシェーダー：{name}',
+    'shader.custom.off': 'カスタムシェーダー（下で読み込み）',
+    'shader.loading': '{file} を読み込み中…',
+    'shader.unreadable': 'ファイルを読み込めませんでした：{error}',
+    'shader.on': '{name} を適用しました。',
+    'shader.unkept': '{name} を適用しましたが、このブラウザでは次回のために保存できませんでした（{error}）。',
+    'shader.slang': 'これは slang シェーダー（.slangp）で、ブラウザにはないコンパイラーが必要です。'
+                    + 'libretro の glsl-shaders から GLSL 版（.glslp または .glsl）を選んでください。',
+    'shader.none': '選んだファイルに .glslp も .glsl もありません。',
+    'shader.choose': '{n} 個のシェーダーから選んでください…',
+    'shader.pick': '使うシェーダーを選んでください。',
+    'shader.forgotten': '削除しました。',
+    'shader.restore.bad': '保存したシェーダーを読み込めませんでした：{error}',
+    'shader.restore.ok': '{name} を読み込みました。',
+  },
+});
+
 const m2hleShader = (() => {
   const $ = (id) => document.getElementById(id);
   const MODE_OFF = 0, MODE_CRT = 1, MODE_CUSTOM = 2;
@@ -131,7 +168,7 @@ const m2hleShader = (() => {
   function refreshCustom() {
     const opt = $('shader-mode-custom');
     opt.disabled = !loadedName;
-    opt.textContent = loadedName ? 'Your shader: ' + loadedName : 'Your shader (load one below)';
+    opt.textContent = loadedName ? m2hleLang.t('shader.custom.on', { name: loadedName }) : m2hleLang.t('shader.custom.off');
     $('shader-forget').hidden = !loadedName;
   }
 
@@ -262,24 +299,24 @@ const m2hleShader = (() => {
 
   async function usePreset(presetPath) {
     if (!presetPath) return;
-    status('Loading ' + base(presetPath) + '…');
+    status(m2hleLang.t('shader.loading', { file: base(presetPath) }));
     let files;
     try {
       files = await filesFor(presetPath);
     } catch (e) {
-      status('Could not read the files: ' + e.message, 'bad');
+      status(m2hleLang.t('shader.unreadable', { error: e.message }), 'bad');
       return;
     }
     if (!loadInto(presetPath, files)) return;
     setMode(MODE_CUSTOM);
-    status(loadedName + ' is on.', 'good');
+    status(m2hleLang.t('shader.on', { name: loadedName }), 'good');
     /* Keep what it read, and nothing else the pick carried. */
     const used = new Set(Module.UTF8ToString(Module._web_shader_used()).split('\n').filter(Boolean));
     const keep = files.filter((f) => used.has(f.path.replace(/\\/g, '/')) || used.has(normalize(f.path)));
     try {
       await idbPut({ preset: presetPath, name: loadedName, files: keep });
     } catch (e) {
-      status(loadedName + ' is on, but this browser would not keep it for next time (' + e.message + ').', 'warn');
+      status(m2hleLang.t('shader.unkept', { name: loadedName, error: e.message }), 'warn');
     }
   }
 
@@ -308,9 +345,7 @@ const m2hleShader = (() => {
     sel.textContent = '';
     if (!presets.length) {
       sel.hidden = true;
-      status(slang ? 'Those are slang shaders (.slangp), which need a compiler a browser does not have. '
-                     + 'Pick the GLSL version (.glslp or .glsl) from libretro\'s glsl-shaders.'
-                   : 'No .glslp or .glsl file in what you picked.', 'bad');
+      status(m2hleLang.t(slang ? 'shader.slang' : 'shader.none'), 'bad');
       return;
     }
     /* One preset, or one .glsl and nothing else to choose between: use it. */
@@ -322,7 +357,7 @@ const m2hleShader = (() => {
     }
     const hint = document.createElement('option');
     hint.value = '';
-    hint.textContent = 'Choose one of ' + presets.length + ' shaders…';
+    hint.textContent = m2hleLang.t('shader.choose', { n: presets.length });
     sel.appendChild(hint);
     for (const f of presets) {
       const o = document.createElement('option');
@@ -332,7 +367,7 @@ const m2hleShader = (() => {
     }
     sel.hidden = false;
     sel.focus();
-    status('Pick which shader to use.');
+    status(m2hleLang.t('shader.pick'));
   }
 
   async function forget() {
@@ -343,7 +378,7 @@ const m2hleShader = (() => {
     buildParams();
     if (Number($('shader-mode').value) === MODE_CUSTOM) setMode(MODE_OFF);
     try { await idbDelete(); } catch (e) { /* nothing kept */ }
-    status('Forgotten.');
+    status(m2hleLang.t('shader.forgotten'));
   }
 
   /* On the next visit: the kept shader, then the Arcade and the filter that were on. */
@@ -359,8 +394,8 @@ const m2hleShader = (() => {
     let rec = null;
     try { rec = await idbGet(); } catch (e) { /* no IndexedDB here */ }
     if (rec && rec.preset && Array.isArray(rec.files)) {
-      if (!loadInto(rec.preset, rec.files)) status('Your saved shader did not load: ' + $('shader-status').textContent, 'bad');
-      else status(loadedName + ' is loaded.');
+      if (!loadInto(rec.preset, rec.files)) status(m2hleLang.t('shader.restore.bad', { error: $('shader-status').textContent }), 'bad');
+      else status(m2hleLang.t('shader.restore.ok', { name: loadedName }));
     }
     setArcade(arcade, false);
     setPixelDepth(store.get(KEY_PIXDEPTH) === '1', false);

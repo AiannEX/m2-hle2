@@ -22,6 +22,26 @@
  */
 'use strict';
 
+/* The words (m2hle-lang.js). The buttons' names are m2hle-keys.js's keys.act.*. */
+m2hleLang.add({
+  en: {
+    'touch.dpad': 'D-pad',
+    'touch.landscape': 'This is the layout for holding it sideways.',
+    'touch.portrait': 'This is the layout for holding it upright.',
+    'touch.pick': 'Tap a button',
+    'touch.show': 'Show',
+    'touch.hide': 'Hide',
+  },
+  ja: {
+    'touch.dpad': '十字キー',
+    'touch.landscape': 'これは横向きで持つときの配置です。',
+    'touch.portrait': 'これは縦向きで持つときの配置です。',
+    'touch.pick': 'ボタンをタップしてください',
+    'touch.show': '表示',
+    'touch.hide': '非表示',
+  },
+});
+
 const m2hleTouch = (() => {
   const $ = (id) => document.getElementById(id);
   const STORE = 'm2hle.touch';
@@ -30,18 +50,19 @@ const m2hleTouch = (() => {
    * m2hle-pad.js's ACTIONS), `acts` a macro's: one button that holds several.
    * `base` is the diameter in CSS pixels at 100%. */
   const CONTROLS = [
-    { id: 'dpad',  label: 'D-pad',    base: 150 },
-    { id: 'b1',    label: 'Punch',    act: 4, base: 68 },
-    { id: 'b2',    label: 'Kick',     act: 5, base: 68 },
-    { id: 'b3',    label: 'Barrier',  act: 6, base: 68 },
-    { id: 'b4',    label: 'Button 4', act: 7, base: 68, text: '4' },
-    { id: 'start', label: 'Start',    act: 8, base: 50 },
-    { id: 'coin',  label: 'Coin',     act: 9, base: 50 },
+    { id: 'dpad',  label: m2hleLang.t('touch.dpad'), base: 150 },
+    { id: 'b1',    act: 4, base: 68 },
+    { id: 'b2',    act: 5, base: 68 },
+    { id: 'b3',    act: 6, base: 68 },
+    { id: 'b4',    act: 7, base: 68, text: '4' },
+    { id: 'start', act: 8, base: 50 },
+    { id: 'coin',  act: 9, base: 50 },
     { id: 'pk',    label: 'P + K',     acts: [4, 5],    base: 56, text: 'P+K' },
     { id: 'pb',    label: 'P + B',     acts: [4, 6],    base: 56, text: 'P+B' },
     { id: 'kb',    label: 'K + B',     acts: [5, 6],    base: 56, text: 'K+B' },
     { id: 'pkb',   label: 'P + K + B', acts: [4, 5, 6], base: 56, text: 'PKB' },
   ];
+  for (const c of CONTROLS) if (!c.label) c.label = m2hleLang.t('keys.act.' + c.id);
   for (const c of CONTROLS) c.mask = (c.acts || (c.act === undefined ? [] : [c.act])).reduce((m, i) => m | (1 << i), 0);
   const UP = 1 << 0, DOWN = 1 << 1, LEFT = 1 << 2, RIGHT = 1 << 3;
   /* 45-degree sectors from atan2 with y pointing down: right, down-right, down, ... */
@@ -301,15 +322,14 @@ const m2hleTouch = (() => {
 
   function renderEditor() {
     const c = CONTROLS.find((k) => k.id === selected);
-    $('te-orient').textContent = orient() === 'landscape' ? 'This is the layout for holding it sideways.'
-                                                          : 'This is the layout for holding it upright.';
+    $('te-orient').textContent = m2hleLang.t('touch.' + orient());
     $('te-size').value = Math.round(cfg.size * 100);
     $('te-opacity').value = Math.round(cfg.opacity * 100);
     $('te-outline').checked = cfg.outline;
-    $('te-sel').textContent = c ? c.label : 'Tap a button';
+    $('te-sel').textContent = c ? c.label : m2hleLang.t('touch.pick');
     $('te-one').disabled = $('te-hide').disabled = !c;
     $('te-one').value = c ? Math.round(layout()[c.id].s * 100) : 100;
-    $('te-hide').textContent = c && !layout()[c.id].on ? 'Show' : 'Hide';
+    $('te-hide').textContent = m2hleLang.t(c && !layout()[c.id].on ? 'touch.show' : 'touch.hide');
   }
 
   function edit(on) {
