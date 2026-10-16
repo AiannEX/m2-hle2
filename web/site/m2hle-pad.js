@@ -43,6 +43,7 @@ m2hleLang.add({
     'pad.status.p2': 'Player 2: {name}',
     'pad.status.also': 'Also player 1: {name}',
     'pad.status.odd': '{pads} (unrecognised layout: buttons are shown by number)',
+    'pad.status.twin': '{pads} (Saturn Twin Stick layout, through the Bliss-Box)',
   },
   ja: {
     'pad.std.0': 'A / ×', 'pad.std.1': 'B / ○', 'pad.std.2': 'X / □', 'pad.std.3': 'Y / △',
@@ -68,22 +69,38 @@ m2hleLang.add({
     'pad.status.p2': 'プレイヤー2：{name}',
     'pad.status.also': 'こちらもプレイヤー1：{name}',
     'pad.status.odd': '{pads}（未対応の配置のため、ボタンは番号で表示しています）',
+    'pad.status.twin': '{pads}（Bliss-Box 経由のセガサターン ツインスティック配置）',
   },
 });
 
 const m2hlePad = (() => {
   const $ = (id) => document.getElementById(id);
-  const STORE = 'm2hle.pad';
+
+  /* A twin-stick game (Virtual-On, m2hle-games.js `twin`) is one cabinet with two
+   * levers, and the right lever is player 2's port (src/profiles/vonj.h). One pad
+   * then plays both levers: the right lever and its trigger and dash are rows of
+   * their own, a second pad plays the same cabinet, and there are no macros. Its
+   * bindings are kept apart from the fighting games' ('m2hle.pad.vonj'), which
+   * mean something else by every button. */
+  const TWIN = !!m2hleGame.twin;
+  const STORE = TWIN ? 'm2hle.pad.' + m2hleGame.id : 'm2hle.pad';
 
   /* The rows of the panel. `act` is the GAME_INPUT_* index for player 1
    * (src/core/game_profile.h), `acts` a macro's; player 2's is 10 further on. */
-  const ACTIONS = [
+  const ALL = [
     { id: 'up',    act: 0 },
     { id: 'down',  act: 1 },
     { id: 'left',  act: 2 },
     { id: 'right', act: 3 },
+    /* A twin-stick game's right lever: player 2's directions, B1 and B2. */
+    { id: 'rup',    act: 10, twin: true },
+    { id: 'rdown',  act: 11, twin: true },
+    { id: 'rleft',  act: 12, twin: true },
+    { id: 'rright', act: 13, twin: true },
     { id: 'b1',    act: 4 },
     { id: 'b2',    act: 5 },
+    { id: 'rshot', act: 14, twin: true },
+    { id: 'rdash', act: 15, twin: true },
     { id: 'b3',    act: 6 },
     { id: 'b4',    act: 7 },
     { id: 'start', act: 8 },
@@ -98,6 +115,7 @@ const m2hlePad = (() => {
      * Unbound until the player binds it, as every standard button has a job. */
     { id: 'pause', acts: [],        page: true },
   ];
+  const ACTIONS = ALL.filter((a) => (TWIN ? !a.macro : !a.twin));
   for (const a of ACTIONS) a.mask = (a.acts || [a.act]).reduce((m, i) => m | (1 << i), 0);
   for (const a of ACTIONS) a.label = m2hleGame.labels[a.id] || a.label || m2hleLang.t('keys.act.' + a.id);
   const P2_OFFSET = 10;
@@ -118,13 +136,74 @@ const m2hlePad = (() => {
     coin:  [{ b: 8 }],
     pk: [], pb: [], kb: [], pkb: [], pause: [],
   };
+
+  /* A twin-stick game on a standard pad, as YAMP's full set does it: the d-pad and
+   * left stick are the left lever, the face buttons (where they sit, Y up, A down)
+   * and the right stick the right lever, the triggers shoot and the bumpers dash. */
+  const TWIN_DEFAULTS = {
+    up:     [{ b: 12 }, { a: 1, d: -1 }],
+    down:   [{ b: 13 }, { a: 1, d: 1 }],
+    left:   [{ b: 14 }, { a: 0, d: -1 }],
+    right:  [{ b: 15 }, { a: 0, d: 1 }],
+    rup:    [{ b: 3 }, { a: 3, d: -1 }],
+    rdown:  [{ b: 0 }, { a: 3, d: 1 }],
+    rleft:  [{ b: 2 }, { a: 2, d: -1 }],
+    rright: [{ b: 1 }, { a: 2, d: 1 }],
+    b1:     [{ b: 6 }],
+    b2:     [{ b: 4 }],
+    rshot:  [{ b: 7 }],
+    rdash:  [{ b: 5 }],
+    b3: [], b4: [],
+    start:  [{ b: 9 }],
+    coin:   [{ b: 8 }],
+    pause: [],
+  };
+
+  /* Sega's Saturn Twin Stick (HSS-0151) through a Bliss-Box adapter, which the
+   * browser reports with no standard layout: HID button n is buttons[n - 1]. The
+   * stick is a Saturn pad inside, so the left lever is the d-pad, which the adapter
+   * puts on the X / Y axes (y low = up), and the right lever is four face buttons:
+   * up Y (HID 4), down B (2), left X (3), right Z (7). The right trigger is A (1),
+   * its thumb button C (8), the left trigger L (9), its thumb R (10), Start 6.
+   * Measured on a stick by YAMP (rokuYAMP docs/von-twin-stick.md); the adapter
+   * cannot tell the Twin Stick from a Saturn pad, which this maps the same way.
+   * Its hat is left alone: one firmware rests it at 0, which reads as up. */
+  const BLISSBOX_DEFAULTS = {
+    up:     [{ a: 1, d: -1 }],
+    down:   [{ a: 1, d: 1 }],
+    left:   [{ a: 0, d: -1 }],
+    right:  [{ a: 0, d: 1 }],
+    rup:    [{ b: 3 }],
+    rdown:  [{ b: 1 }],
+    rleft:  [{ b: 2 }],
+    rright: [{ b: 6 }],
+    b1:     [{ b: 8 }],
+    b2:     [{ b: 9 }],
+    rshot:  [{ b: 0 }],
+    rdash:  [{ b: 7 }],
+    b3: [], b4: [],
+    start:  [{ b: 5 }],
+    coin: [], pause: [],
+  };
+
+  /* Bliss-Box: vendor 16d0, product 0d04 and up, one per port. Chrome names a pad
+   * "... (Vendor: 16d0 Product: 0d04)", Firefox "16d0-0d04-...". A layout the browser
+   * already maps to "standard" is a standard pad. */
+  const isBlissBox = (pad) => pad.mapping !== 'standard' &&
+    (/bliss-?box/i.test(pad.id) || /\b16d0\b.{0,12}\b0d0[0-9a-f]\b/i.test(pad.id));
+
+  /* Which set of bindings plays a pad: a twin-stick game keeps one for the Twin
+   * Stick and one for every other pad. */
+  const layoutOf = (pad) => (TWIN && pad && isBlissBox(pad) ? 'blissbox' : 'std');
+  const defaultSets = () => (TWIN ? { std: clone(TWIN_DEFAULTS), blissbox: clone(BLISSBOX_DEFAULTS) }
+                                  : { std: clone(DEFAULTS) });
   const MAX_BINDS = 4;
   const PRESS = 0.5;          /* a button counts as held past this (analogue triggers) */
   const DEAD = 0.5;           /* an axis counts as held past this */
   const GRAB = 0.6;           /* ...and must move this far from rest to be captured */
 
   const clone = (o) => JSON.parse(JSON.stringify(o));
-  let binds = clone(DEFAULTS);
+  let sets = defaultSets();   /* bindings per layout (layoutOf) */
   let secondIsP2 = true;
   let ready = false;          /* the emulator's exports exist */
   let listening = null;       /* {id, rest: {buttons, axes} per pad index} while capturing */
@@ -138,16 +217,22 @@ const m2hlePad = (() => {
     try {
       const s = JSON.parse(localStorage.getItem(STORE) || 'null');
       if (!s || s.v !== 1) return;
-      for (const a of ACTIONS) {
-        const list = s.binds && s.binds[a.id];
-        if (Array.isArray(list)) binds[a.id] = list.filter(valid).slice(0, MAX_BINDS);
-      }
+      loadSet(sets.std, s.binds);
+      if (TWIN) loadSet(sets.blissbox, s.blissbox);
       if (typeof s.secondIsP2 === 'boolean') secondIsP2 = s.secondIsP2;
     } catch (e) { /* private mode, or a value from somewhere else: keep the defaults */ }
   }
 
+  function loadSet(binds, saved) {
+    for (const a of ACTIONS) {
+      const list = saved && saved[a.id];
+      if (Array.isArray(list)) binds[a.id] = list.filter(valid).slice(0, MAX_BINDS);
+    }
+  }
+
   function save() {
-    try { localStorage.setItem(STORE, JSON.stringify({ v: 1, binds, secondIsP2 })); } catch (e) { /* private mode */ }
+    const s = TWIN ? { v: 1, binds: sets.std, blissbox: sets.blissbox } : { v: 1, binds: sets.std, secondIsP2 };
+    try { localStorage.setItem(STORE, JSON.stringify(s)); } catch (e) { /* private mode */ }
   }
 
   function valid(x) {
@@ -162,8 +247,21 @@ const m2hlePad = (() => {
   /* The "standard" layout's buttons and stick axes have names (pad.std.*, pad.axis.*). */
   const STD_BUTTONS = 17, STD_AXES = 4;
 
-  function bindName(x, standard) {
+  /* A Bliss-Box's buttons as the Saturn pad (or Twin Stick) on it names them, by
+   * the vendor's HID numbering (BLISSBOX_DEFAULTS); its X / Y axes are the d-pad. */
+  const SATURN = ['A', 'B', 'X', 'Y', '', 'Start', 'Z', 'C', 'L', 'R'];
+
+  function saturnName(x) {
+    if (x.b !== undefined) return SATURN[x.b] ? 'Saturn ' + SATURN[x.b] : null;
+    if (x.a > 1) return null;
+    const dpad = x.a === 1 ? (x.d < 0 ? 12 : 13) : (x.d < 0 ? 14 : 15);
+    return m2hleLang.t('pad.std.' + dpad);
+  }
+
+  function bindName(x, standard, layout) {
     const t = m2hleLang.t;
+    const saturn = layout === 'blissbox' && saturnName(x);
+    if (saturn) return saturn;
     if (x.b !== undefined) return standard && x.b < STD_BUTTONS ? t('pad.std.' + x.b) : t('pad.button', { n: x.b });
     if (standard && x.a < STD_AXES) return t('pad.axis.' + x.a + (x.d > 0 ? '+' : '-'));
     return t('pad.axis', { n: x.a, dir: x.d > 0 ? '+' : '−' });
@@ -190,6 +288,7 @@ const m2hlePad = (() => {
   /* The rows this pad holds, one bit per ACTIONS index. */
   function padRows(pad) {
     let r = 0;
+    const binds = sets[layoutOf(pad)];
     ACTIONS.forEach((a, i) => { if (binds[a.id].some((x) => held(pad, x))) r |= 1 << i; });
     return r;
   }
@@ -209,7 +308,7 @@ const m2hlePad = (() => {
     let mask = 0, pause = false;
     list.forEach((pad, i) => {
       const r = padRows(pad), m = rowActions(r);
-      mask |= (i === 1 && secondIsP2) ? m << P2_OFFSET : m;
+      mask |= (i === 1 && secondIsP2 && !TWIN) ? m << P2_OFFSET : m;
       pause = pause || !!(r & PAUSE_ROW);
       if (i === 0) showHeld(r);
     });
@@ -284,6 +383,8 @@ const m2hlePad = (() => {
         });
       }
       if (got) {
+        /* It binds on the layout of the pad that pressed it. */
+        const binds = sets[layoutOf(p)];
         /* A button is the game's or Pause's, not both: binding it to one takes it
          * off the other, so Select can move from Coin to Pause in one step. */
         for (const a of ACTIONS) {
@@ -307,6 +408,9 @@ const m2hlePad = (() => {
     if (!rows) return;
     const list = pads();
     const standard = list.length === 0 || list[0].mapping === 'standard';
+    /* The panel shows and edits the first pad's layout. */
+    const layout = layoutOf(list[0]);
+    const binds = sets[layout];
     rows.textContent = '';
     for (const a of ACTIONS) {
       if (a.macro && a === ACTIONS.find((x) => x.macro)) {
@@ -342,8 +446,8 @@ const m2hlePad = (() => {
         chip.className = 'pad-chip';
         chip.type = 'button';
         chip.title = m2hleLang.t('pad.remove');
-        chip.setAttribute('aria-label', m2hleLang.t('pad.remove.from', { button: bindName(x, standard), action: a.label }));
-        chip.textContent = bindName(x, standard) + ' ×';
+        chip.setAttribute('aria-label', m2hleLang.t('pad.remove.from', { button: bindName(x, standard, layout), action: a.label }));
+        chip.textContent = bindName(x, standard, layout) + ' ×';
         chip.addEventListener('click', () => { binds[a.id].splice(i, 1); save(); render(); });
         chips.appendChild(chip);
       });
@@ -360,6 +464,7 @@ const m2hlePad = (() => {
       rows.appendChild(tr);
     }
     $('pad-p2').checked = secondIsP2;
+    $('pad-p2').parentElement.hidden = TWIN;
     status(list);
   }
 
@@ -370,10 +475,11 @@ const m2hlePad = (() => {
       el.textContent = m2hleLang.t('pad.status.none');
       return;
     }
-    const names = list.map((p, i) => m2hleLang.t(i === 0 ? 'pad.status.p1' : (i === 1 && secondIsP2 ? 'pad.status.p2' : 'pad.status.also'),
+    const names = list.map((p, i) => m2hleLang.t(i === 0 ? 'pad.status.p1' : (i === 1 && secondIsP2 && !TWIN ? 'pad.status.p2' : 'pad.status.also'),
                                                  { name: p.id.replace(/\s*\(.*?Vendor.*?\)\s*/i, ' ').trim() }));
     const pads = names.join(' · ');
-    el.textContent = list[0].mapping === 'standard' ? pads : m2hleLang.t('pad.status.odd', { pads });
+    el.textContent = list[0].mapping === 'standard' ? pads
+      : m2hleLang.t(layoutOf(list[0]) === 'blissbox' ? 'pad.status.twin' : 'pad.status.odd', { pads });
   }
 
   /* The rows light up while the first pad holds them: the quickest way to check a mapping. */
@@ -405,7 +511,7 @@ const m2hlePad = (() => {
     $('btn-controls').addEventListener('click', () => toggle());
     $('pad-close').addEventListener('click', () => toggle(false));
     $('btn-online').addEventListener('click', () => toggle(false));
-    $('pad-reset').addEventListener('click', () => { binds = clone(DEFAULTS); secondIsP2 = true; save(); stopListening(); });
+    $('pad-reset').addEventListener('click', () => { sets = defaultSets(); secondIsP2 = true; save(); stopListening(); });
     $('pad-p2').addEventListener('change', (e) => { secondIsP2 = e.target.checked; save(); render(); });
     $('controls').addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { if (listening) stopListening(); else toggle(false); }
@@ -426,5 +532,5 @@ const m2hlePad = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { onReady, toggle, setTouch, setKeys, get binds() { return clone(binds); } };
+  return { onReady, toggle, setTouch, setKeys, get binds() { return clone(sets.std); }, get sets() { return clone(sets); } };
 })();
