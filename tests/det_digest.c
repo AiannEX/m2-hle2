@@ -69,6 +69,11 @@
  * 20AAC0). --i960-timing table|board charges the i960 MAME's table or the
  * board's timing (i960_timing.h) whatever the profile says.
  *
+ * --m2comm-phantom links the comm board (board/m2comm.h) to a second cabinet
+ * in this process that answers with the board's own window, so a linked
+ * game's ring comes up and its packets come back; a split set (vonj) takes
+ * its parent zip from beside the one named.
+ *
  * Two builds of it, one from each configuration, so each has exactly its
  * frontend's compiler flags:
  *   native  --target det_digest in a desktop build tree (not a ctest: it needs a ROM)
@@ -95,6 +100,7 @@
 #include "input.h"
 #include "registry.h"
 #include "gems.h"
+#include "m2comm_loop.h"
 
 static memory_bus_t     bus;
 static i960_cpu_t       cpu;
@@ -176,6 +182,27 @@ static uint8_t *read_file(const char *path, size_t *len) {
     return p;
 }
 
+/* The web build's load: the zip read whole, strict by CRC, and a split set's
+ * parent (vonj's von.zip) from the same folder, as the page fetches both. */
+static int load_zip_set(const char *path) {
+    size_t len = 0, plen = 0;
+    uint8_t *zip = read_file(path, &len), *pzip = NULL;
+    if (!zip) { fprintf(stderr, "cannot read %s\n", path); return -1; }
+    rl_mem_zip_set(zip, len, true);
+    const char *parent = g_active_profile->parent_zip_name, *slash = strrchr(path, '/');
+    if (parent && parent[0]) {
+        char ppath[1024];
+        snprintf(ppath, sizeof ppath, "%.*s%s", slash ? (int)(slash - path + 1) : 0, path, parent);
+        if ((pzip = read_file(ppath, &plen)) != NULL) rl_mem_zip_add(pzip, plen);
+    }
+    int rc = g_active_profile->load_fn(&romset, NULL, NULL);
+    rl_mem_zip_clear();
+    free(zip);
+    free(pzip);
+    if (rc != 0) fprintf(stderr, "ROM load failed; missing: %s\n", g_rl_mem_zip.missing_names);
+    return rc;
+}
+
 /* The follower's side: one segment's state and feed, the feed handed over a
  * piece at a time as a page would fetch it. */
 static struct { char dir[900]; uint32_t seg; uint8_t *feed; size_t len, at; uint32_t segs, checks; } fol;
@@ -216,6 +243,11 @@ static bool follow_next_ready(emu_thread_ctx_t *emu) {
         fol.at += n;
     }
 }
+
+/* --m2comm-phantom: the comm board linked to a second cabinet that sends the
+ * board's own window back (m2comm_loop.h). The game's cabinet role has to say
+ * MASTER (Virtual-On: --poke F:1D00028:01). */
+static bool m2comm_phantom;
 
 static const char *load_path;
 static uint32_t    save_frame;
@@ -537,6 +569,7 @@ int main(int argc, char **argv) {
         }
         else if (!strcmp(argv[i], "--profile") && i + 1 < argc) profile_id = argv[++i];
         else if (!strcmp(argv[i], "--mem")) state_mem = true;
+        else if (!strcmp(argv[i], "--m2comm-phantom")) m2comm_phantom = true;
         else if (!strcmp(argv[i], "--gems-i960"))   g_gems_i960 = true;
         else if (!strcmp(argv[i], "--gems-cop"))    g_gems_cop = true;
         else if (!strcmp(argv[i], "--gems-verify")) g_gems_verify = true;
@@ -580,20 +613,8 @@ int main(int argc, char **argv) {
      * the web build's load: one zip, read whole, strict by CRC. */
     if (romset_is_dir(argv[1])) {
         if (romset_load_dir(&romset, argv[1]) != 0) return 2;
-    } else {
-        FILE *f = fopen(argv[1], "rb");
-        if (!f) { fprintf(stderr, "cannot open %s\n", argv[1]); return 2; }
-        fseek(f, 0, SEEK_END);
-        long len = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        uint8_t *zip = (uint8_t *)malloc((size_t)len);
-        if (!zip || fread(zip, 1, (size_t)len, f) != (size_t)len) { fprintf(stderr, "cannot read %s\n", argv[1]); return 2; }
-        fclose(f);
-        rl_mem_zip_set(zip, (size_t)len, true);
-        int rc = g_active_profile->load_fn(&romset, NULL, NULL);
-        rl_mem_zip_clear();
-        free(zip);
-        if (rc != 0) { fprintf(stderr, "ROM load failed; missing: %s\n", g_rl_mem_zip.missing_names); return 2; }
+    } else if (load_zip_set(argv[1]) != 0) {
+        return 2;
     }
 
     /* main_web.c web_install_board, which is also what a netplay reset runs. */
@@ -609,6 +630,7 @@ int main(int argc, char **argv) {
     input_reset();
     input_attach(&bus);
     emu_board_reset_state();
+    if (m2comm_phantom) m2comm_phantom_attach(0x700u);
     emu_ctx_init(&emu, &cpu, &bus);
     emu_run(&emu);
     sound_set_tap(snd_out_tap, NULL);

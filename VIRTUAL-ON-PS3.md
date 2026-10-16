@@ -91,7 +91,7 @@ m2-hle2's one board:
   frame. A board that reads less often than the peer writes misses it, and the
   two load different stages.
 - The comm board itself is MAME's m2comm.cpp with a peer: ring up, node id from
-  the role, node count 2. m2comm.h today is the "nobody on the link" half.
+  the role, node count 2. m2comm.h has had both halves since #959 (step 1).
 
 What that means here:
 - The link is not a `netplay.h` lockstep session. It is a raw datagram channel
@@ -102,8 +102,15 @@ What that means here:
 - It needs its own `NETPLAY_PROTO_REV`.
 
 Steps:
-1. Port MAME's linked m2comm (ring, node id, node count) behind a peer
-   interface in m2comm.h.
+1. Done (#959). Port MAME's linked m2comm (ring, node id, node count) behind a peer
+   interface in m2comm.h. `m2comm_set_peer` takes a datagram send/recv
+   pair; with none (the default) the board is what it was, bit for bit
+   (det_digest, 6000 frames with sound). `tests/m2comm_test.c` links two
+   boards in one process. `det_digest --m2comm-phantom` links the real ROM to
+   a slave that echoes its window: with a MASTER backup (role byte 1, the
+   ROM's CRC at 0x3120, over bytes 0x16..0x37, stored at 0x14) the ring comes
+   up node 1 of 2, `net_flag` is 1, and `cRecn+4` takes the echoed packets
+   (0xFF -> 0x00 -> 0x10, attract) from frame 590.
 2. Add a packet channel to the RPCN P2P socket (`net/`) carrying the window.
 3. Set the role from the room.
 4. Pace the board to 60 Hz while linked.
