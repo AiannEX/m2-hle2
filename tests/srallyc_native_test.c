@@ -95,7 +95,7 @@ static void check_play(void) {
     CHECK(g_native_play.total == 2 * SRN_REEL_FRAMES, "championship 1: both courses' credits counted");
     run_ending("championship 2", 0);
     CHECK(mem_read32(&bus, SRN_COUNT + 4u) == 0 && mem_read8(&bus, srn_clip_addr(0) + 3) == (uint8_t)(0x80 + 3),
-          "championship 2: its forest clip in, course 1 empty");
+          "championship 2: its desert clip in, course 1 empty");
     CHECK(!g_native_play.ended, "championship 2: the practice run still to play");
     run_ending("practice", 0);
     CHECK(mem_read32(&bus, SRN_COUNT) == 0 && mem_read8(&bus, srn_clip_addr(1) + 3) == (uint8_t)(0xC0 + 3),
@@ -110,7 +110,7 @@ int main(void) {
     i960_reset(&cpu);
     race(0, 0, 750, 0x10, false);
     race(1, 1, 500, 0x40, false);
-    race(2, 0, 250, 0x80, false);   /* a new game: the forest again */
+    race(2, 0, 250, 0x80, false);   /* a new game: the desert again */
     race(3, 1, 750, 0xC0, true);    /* practice on course 1: alone, though its course climbs */
     check_put();
     check_play();

@@ -5,7 +5,7 @@
  * the format in full.
  *
  * The game records a clip of every course it races into a buffer of its own,
- * 0x9AB0 bytes at 0x556420 + course * 0x9AB0 (forest, desert, mountain,
+ * 0x9AB0 bytes at 0x556420 + course * 0x9AB0 (desert, forest, mountain,
  * lakeside), with the frames recorded in 0x217260[course]. Each record is the
  * 0x58-byte car block (0x213B40 is the player's) taken every 4 frames: records
  * 0..224 are the player's car, 225..449 the nearest rival's. 0x5E50E8 clears
@@ -17,7 +17,7 @@
  *
  * The championship's ending (sub-state 5's states 5 and 6, 0x5E7CB0 and
  * 0x5E78B0, after the lakeside is won) is the game's replay: the podium, then
- * the staff credits over each course's clip, forest to lakeside, from
+ * the staff credits over each course's clip, desert to lakeside, from
  * 0x5E7E80. A course never raced plays as an empty road, as on the board.
  *
  * Recording: at the championship's race end (0x5BAE40, sub-state 5 state 4,
@@ -59,7 +59,7 @@
 #define SRN_SUB        0x0020209Cu   /* 5 the championship, 7 practice */
 #define SRN_STATE      0x002020ACu   /* the sub-state's state */
 #define SRN_PASSED     0x002020B0u   /* the race was won */
-#define SRN_COURSE     0x00214354u   /* 0 forest .. 3 lakeside */
+#define SRN_COURSE     0x00214354u   /* 0 desert .. 3 lakeside */
 #define SRN_CAR        0x0020A8C4u
 #define SRN_CLIP       0x00556420u
 #define SRN_CLIP_LEN   0x9AB0u

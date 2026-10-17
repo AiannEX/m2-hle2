@@ -312,7 +312,7 @@ Its native rounds are those clips.
 ### What the game keeps
 
 - **The clips.** Each course has a buffer of `0x9AB0` bytes at `0x556420 + course * 0x9AB0`
-  (forest, desert, mountain, lakeside), and its count of frames at `0x217260[course]`.
+  (desert, forest, mountain, lakeside), and its count of frames at `0x217260[course]`.
   - A record is the `0x58`-byte car block (`0x213B40` is the player's), taken every 4 frames.
     Records 0-224 are the player's car, 225-449 the nearest rival's.
   - `0x5E50E8` clears the count at the race start. At each of the course's three points
@@ -322,7 +322,7 @@ Its native rounds are those clips.
     rival's from 900, interpolating between records.
 - **The ending.** Sub-state 5 (the championship) states 5 and 6 (`0x5E7CB0`, `0x5E78B0`),
   reached when the lakeside is won. Its own state is `0x218C50`: the podium, then state 3,
-  the credits over each course's clip, forest to lakeside (`0x5E7E40`, which moves the course
+  the credits over each course's clip, desert to lakeside (`0x5E7E40`, which moves the course
   on), then the name entry. Each course plays for 679 frames. A course never raced plays as
   an empty road, as on the board.
 
@@ -348,7 +348,7 @@ for 679 frames of the credits.
 ### Playback
 
 The rounds are grouped into championships, each a run of rounds whose courses climb (a new
-game starts again at the forest). A practice round is a championship of its own: it plays
+game starts again at the desert). A practice round is a championship of its own: it plays
 alone, its one course's clip in the credits and the other courses as an empty road. The board cold-boots; at the main loop's mode dispatch
 (`0x5A2200`), on attract's first frame:
 
