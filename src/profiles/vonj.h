@@ -214,6 +214,53 @@ static inline bool vonj_link_role(memory_bus_t *bus, game_link_role_t role) {
 #define VONJ_R_SHOT 0x00010000u
 #define VONJ_R_DASH 0x00020000u
 
+/* The game's state, for replays (core/replay.h). Names are the PS3 build's
+ * symbol table (rokuYAMP docs/von-rom-symbols.md). MainMode indexes
+ * __mainloop__'s table at ROM 0x18680: 1 Advertize (attract), 3 InitGameMain,
+ * 4 GameMain (select, the rounds, continue), 5 test. SubMode 10 is a round on
+ * (Pinboard #995, watched over the bridge). machine_P / machine_E are the
+ * player's machine and the other side's, in the order of the name table at ROM
+ * 0x181F0. NumOfSets is MATCH COUNT, rounds to win - 1. */
+#define VONJ_MAIN_MODE   0x005039F4u
+#define VONJ_SUB_MODE    0x00503A00u
+#define VONJ_SET_WIN     0x00503A6Cu
+#define VONJ_SET_LOSE    0x00503A70u
+#define VONJ_NUM_OF_SETS 0x00503A78u
+#define VONJ_VERSUS_MODE 0x00503A7Cu
+#define VONJ_MACHINE_P   0x00503A98u
+#define VONJ_MACHINE_E   0x00503A9Cu
+#define VONJ_FIELD_NO    0x005770F0u
+
+static inline bool vonj_in_play(memory_bus_t *bus) {
+    uint32_t mode = mem_read32(bus, VONJ_MAIN_MODE);
+    return mode == 3 || mode == 4;
+}
+
+static inline void vonj_match_info(memory_bus_t *bus, game_match_info_t *out) {
+    static const char *const machines[10] = {
+        "Temjin", "Viper II", "Belgdor", "Raiden", "Dorkas",
+        "Fei-Yen", "Apharmd", "Bal-Bas-Bow", "Jaguarandi", "Z-Gradt",
+    };
+    static const char *const difficulty[4] = { "Normal", "Hard", "Very Hard", "Easy" };
+    uint32_t side[2] = { mem_read32(bus, VONJ_MACHINE_P), mem_read32(bus, VONJ_MACHINE_E) };
+    bool versus = mem_read32(bus, VONJ_VERSUS_MODE) != 0;
+    uint8_t d   = mem_read8(bus, VONJ_BACKUP_DIFFICULTY);
+    out->fighting = mem_read32(bus, VONJ_MAIN_MODE) == 4 && mem_read32(bus, VONJ_SUB_MODE) == 10;
+    out->players  = 2;
+    for (int i = 0; i < 2; i++) {
+        out->chara[i]      = side[i] < 10 ? (int)side[i] : -1;
+        out->chara_name[i] = side[i] < 10 ? machines[side[i]] : NULL;
+        out->cpu[i]        = i == 1 && !versus;
+    }
+    out->difficulty      = versus || d > 3 ? -1 : d;
+    out->difficulty_name = versus || d > 3 ? NULL : difficulty[d];
+    out->stage           = (int)mem_read32(bus, VONJ_FIELD_NO);
+    out->stage_name      = NULL;
+    out->rounds[0]       = (int)mem_read32(bus, VONJ_SET_WIN);
+    out->rounds[1]       = (int)mem_read32(bus, VONJ_SET_LOSE);
+    out->rounds_to_win   = (int)mem_read32(bus, VONJ_NUM_OF_SETS) + 1;
+}
+
 static const game_profile_t vonj_profile = {
     .id              = "vonj",
     .display_name    = "Cyber Troopers Virtual-On (Japan, Rev B)",
@@ -223,6 +270,8 @@ static const game_profile_t vonj_profile = {
     .install_fn      = vonj_install,
     .hook_count      = 0,
     .link_role       = vonj_link_role,
+    .match_info      = vonj_match_info,
+    .in_play         = vonj_in_play,
     .input = {
         .bits = {
             [GAME_INPUT_P1_COIN]  = 0x00000001,

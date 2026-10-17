@@ -254,6 +254,7 @@ static inline void hle_ret(i960_cpu_t *cpu) {
     if (cpu->frame_depth > 0) {
         uint32_t ret_ip = cpu->locals.rip;
         cpu->frame_depth--;
+        if (cpu->frame_flushed > cpu->frame_depth) cpu->frame_flushed = cpu->frame_depth;
         cpu->locals = cpu->frame_stack[cpu->frame_depth];
         if (cpu->frame_irq[cpu->frame_depth]) {   /* interrupt return, as `ret` */
             cpu->sfr.ac = cpu->frame_irq_ac[cpu->frame_depth];
@@ -272,11 +273,12 @@ static inline void hle_ret(i960_cpu_t *cpu) {
 /* Inject a call to target: push current frame with rip = ret_ip, redirect IP.
  * When target executes `ret`, it returns to ret_ip and the saved frame is restored. */
 static inline void hle_call(i960_cpu_t *cpu, uint32_t target, uint32_t ret_ip) {
-    if (cpu->frame_depth < FRAME_STACK_DEPTH) {
+    if (i960_frame_room(cpu)) {
         cpu->frame_stack[cpu->frame_depth] = cpu->locals;
         cpu->frame_irq[cpu->frame_depth] = 0;
         cpu->frame_fp[cpu->frame_depth] = cpu->globals.fp;
         cpu->locals.rip = ret_ip;
+        cpu->locals.pfp = cpu->globals.fp;   /* same FP: a flushed ret finds it */
         cpu->frame_depth++;
     } else {
         LOG_WARN("hle_call: frame stack full at IP=0x%08X", cpu->sfr.ip);

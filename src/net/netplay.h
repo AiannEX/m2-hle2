@@ -195,8 +195,11 @@
  * 23: a Virtual-On match in a room links the two cabinets' comm boards
  *    (netplay_comm_open, Pinboard #983): the i960 reads the other cabinet's
  *    packets, which a board before it never sends.
+ * 24: the board's 93C46 EEPROM answers on port A, so Sega Rally and
+ *    Virtual-On wait out its write cycles; flushreg puts the i960's frames in
+ *    memory, and call puts the real caller FP in pfp (Pinboard #965).
  */
-#define NETPLAY_PROTO_REV 23
+#define NETPLAY_PROTO_REV 24
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.

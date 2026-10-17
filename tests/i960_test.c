@@ -213,7 +213,7 @@ int main(void) {
     CHECK(cpu.sfr.ip == CODE + 0x80, "call branches to IP+disp");
     CHECK(cpu.frame_depth == 1, "call pushes a frame");
     CHECK(cpu.locals.rip == CODE + 4, "call saves return IP in rip");
-    CHECK(cpu.locals.pfp == 0x0000AAAA, "call preserves pfp into new frame");
+    CHECK(cpu.locals.pfp == 0x00000FC0, "call puts the caller's FP in pfp");
     CHECK(cpu.globals.fp == 0x1040, "call: g15/fp is SP aligned up to 64 bytes (0x1010 -> 0x1040)");
     CHECK(cpu.locals.sp == 0x1080, "call: SP starts a frame (64 bytes) above FP");
     CHECK(cpu.locals.r[7] == 0, "call zeroes new frame locals");
