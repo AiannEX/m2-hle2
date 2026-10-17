@@ -72,7 +72,7 @@ const m2hleGames = (() => {
                       srallycc: { about: 'ツイン/DX、リビジョン A' },
                       srallycdx: { about: 'DX（シングル筐体）、リビジョン A' }, srallycdxa: { about: 'DX（シングル筐体）' } },
           romHint: 'お持ちの <code>srallyc.zip</code>（セガラリーチャンピオンシップ ツイン/DX）',
-          labels: { up: 'シフトアップ', down: 'シフトダウン', left: '左ハンドル', right: '右ハンドル',
+          labels: { up: 'シフトアップ', down: 'シフトダウン', left: 'ハンドル左', right: 'ハンドル右',
                     b1: 'アクセル', b2: 'ブレーキ', b3: 'ビューチェンジ', b4: '未使用' },
         },
       },
