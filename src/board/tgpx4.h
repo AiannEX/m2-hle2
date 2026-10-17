@@ -752,6 +752,33 @@ static inline uint32_t tgx_pop_pc(void)    { g_tgx.pcp = (g_tgx.pcp - 1u) & 3u; 
 
 static inline void tgx_jump(uint32_t to) { g_tgx.delay_slot = true; g_tgx.delay_pc = to & 0xFFFu; }
 
+/* The branch ops, 0x10 to 0x1B: a delayed jump when the condition holds, and
+ * for DCcc and DCALL the return address pushed. */
+static inline void tgx_branch(uint64_t op, uint32_t cop, uint32_t ef1) {
+    switch (cop) {
+    case 0x10: { bool r = tgx_cond(ef1); tgx_note_wait(ef1, r);  if (r)  tgx_jump(tgx_ctl_dst(op)); break; }  /* DBcc */
+    case 0x11: { bool r = tgx_cond(ef1); tgx_note_wait(ef1, !r); if (!r) tgx_jump(tgx_ctl_dst(op)); break; }  /* DBNcc */
+    case 0x12: tgx_jump(tgx_ctl_dst(op)); break;                        /* DJMP */
+    case 0x13:                                                          /* DBLP */
+        if (g_tgx.st & TGX_LP) tgx_jump(g_tgx.pc + ((uint32_t)op & 0xFFFu));
+        if (--g_tgx.lpc == 1u) g_tgx.st &= ~(uint32_t)TGX_LP;
+        break;
+    case 0x14: case 0x15: {                                             /* DBBC DBBS */
+        bool set = (g_tgx.ar[(op >> 13) & 7u] >> ((op >> 16) & 0xFu)) & 1u;
+        if (set == (cop == 0x15u)) tgx_jump(g_tgx.pc + ((uint32_t)op & 0xFFFu));
+        break;
+    }
+    case 0x18: case 0x19: {                                             /* DCcc DCNcc */
+        bool r = tgx_cond(ef1);
+        if (cop == 0x19u) r = !r;
+        if (r) { tgx_jump(tgx_ctl_dst(op)); tgx_push_pc(g_tgx.pc + 1u); }
+        break;
+    }
+    case 0x1A: tgx_jump(tgx_ctl_dst(op)); tgx_push_pc(g_tgx.pc + 1u); break;   /* DCALL */
+    case 0x1B: tgx_jump(tgx_pop_pc()); break;                           /* DRET */
+    }
+}
+
 static inline void tgx_control(uint64_t op) {
     uint32_t cop = (uint32_t)(op >> 22) & 0x1Fu;
     uint32_t ef1 = (uint32_t)(op >> 16) & 0x3Fu;
@@ -779,26 +806,8 @@ static inline void tgx_control(uint64_t op) {
     case 0x0B: g_tgx.mod = (g_tgx.mod & ~0x0080u) | ef2; break;         /* SETMRF */
     case 0x0C: g_tgx.mod = (g_tgx.mod & ~0x0010u) | ef2; break;         /* SETMRDY */
     case 0x0D: g_tgx.mod = (g_tgx.mod & ~0x0007u) | ef2; break;         /* SETMWAIT */
-    case 0x10: { bool r = tgx_cond(ef1); tgx_note_wait(ef1, r);  if (r)  tgx_jump(tgx_ctl_dst(op)); break; }  /* DBcc */
-    case 0x11: { bool r = tgx_cond(ef1); tgx_note_wait(ef1, !r); if (!r) tgx_jump(tgx_ctl_dst(op)); break; }  /* DBNcc */
-    case 0x12: tgx_jump(tgx_ctl_dst(op)); break;                        /* DJMP */
-    case 0x13:                                                          /* DBLP */
-        if (g_tgx.st & TGX_LP) tgx_jump(g_tgx.pc + ((uint32_t)op & 0xFFFu));
-        if (--g_tgx.lpc == 1u) g_tgx.st &= ~(uint32_t)TGX_LP;
-        break;
-    case 0x14: case 0x15: {                                             /* DBBC DBBS */
-        bool set = (g_tgx.ar[(op >> 13) & 7u] >> ((op >> 16) & 0xFu)) & 1u;
-        if (set == (cop == 0x15u)) tgx_jump(g_tgx.pc + ((uint32_t)op & 0xFFFu));
-        break;
-    }
-    case 0x18: case 0x19: {                                             /* DCcc DCNcc */
-        bool r = tgx_cond(ef1);
-        if (cop == 0x19u) r = !r;
-        if (r) { tgx_jump(tgx_ctl_dst(op)); tgx_push_pc(g_tgx.pc + 1u); }
-        break;
-    }
-    case 0x1A: tgx_jump(tgx_ctl_dst(op)); tgx_push_pc(g_tgx.pc + 1u); break;   /* DCALL */
-    case 0x1B: tgx_jump(tgx_pop_pc()); break;                           /* DRET */
+    case 0x10: case 0x11: case 0x12: case 0x13: case 0x14: case 0x15:   /* branches */
+    case 0x18: case 0x19: case 0x1A: case 0x1B: tgx_branch(op, cop, ef1); break;
     default: tgx_bad("control op", cop); break;
     }
     if ((op >> 63) & 1u) tgx_alu1(op); else tgx_alu2(op);
