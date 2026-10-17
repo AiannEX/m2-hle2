@@ -62,7 +62,7 @@ jobs:
         run: >
           git submodule update --init
           vendor/imgui vendor/dear_bindings vendor/sokol vendor/miniz vendor/stb vendor/ImGuiFileDialog
-          vendor/imgui_club vendor/ggpo
+          vendor/imgui_club vendor/ggpo vendor/lua
 
       # cimgui is generated from vendor/imgui by vendor/dear_bindings at build time.
       # One pinned interpreter for both pip and CMake: left to itself,
@@ -166,7 +166,7 @@ jobs:
       # The libretro frontend's submodule list: no ImGui, so no dear_bindings
       # and no Python.
       - name: Fetch build submodules
-        run: git submodule update --init vendor/sokol vendor/miniz vendor/stb vendor/ggpo
+        run: git submodule update --init vendor/sokol vendor/miniz vendor/stb vendor/ggpo vendor/lua
 
       - name: Install Linux deps
         if: matrix.name == 'linux-x64'
@@ -284,7 +284,7 @@ jobs:
       - name: Fetch build submodules
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git submodule update --init vendor/sokol vendor/miniz vendor/stb vendor/ggpo
+          git submodule update --init vendor/sokol vendor/miniz vendor/stb vendor/ggpo vendor/lua
 
       - name: Stamp version
         id: ver
@@ -354,7 +354,7 @@ jobs:
 
       # Tracks pages.yml, which tracks M2HLE_SUBMODULE_PATHS for M2HLE_WEB.
       - name: Fetch build submodules
-        run: git submodule update --init vendor/sokol vendor/miniz vendor/stb vendor/ggpo
+        run: git submodule update --init vendor/sokol vendor/miniz vendor/stb vendor/ggpo vendor/lua
 
       # The same pin as pages.yml, for the same reason (WEB-PORT.md, "Determinism").
       - uses: emscripten-core/setup-emsdk@v16
