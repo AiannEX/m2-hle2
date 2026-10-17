@@ -9,9 +9,9 @@ its hook table patches match vonj's (0x18AB4 `ld 0x5039F4`, 0x1871C
 
 What came of it: the libretro core's PS3 shell runs for `vonj` with the PS3's
 Arcade settings (`ps3ui_rules_von`, `vonj_apply_menu_settings`). Online Battle
-opens the RPCN lobby, and a room's match links two cabinets (step 6). The
-shell's Versus row is refused, for the reason below; on the desktop (SDL3),
-`--versus` plays a Versus as two m2hle on one machine (step 7).
+opens the RPCN lobby, and a room's match links two cabinets (step 6). On the
+desktop (SDL3), `--versus` plays a Versus as two m2hle on one machine (step 7).
+The shell's Versus row is refused on purpose, for the reason below.
 
 ## Landmarks in the EBOOT (addresses as Ghidra loads it)
 
@@ -58,7 +58,7 @@ is enough; no reset is needed. This was checked headless: 0x1D00016 = 5 gave a
 **Versus menu** (Update 0x11B5F0): two rows, a record with match count and
 play time, then `init(1)` on the board API and GameMode_Set(1).
 
-## Why Versus is refused here (and was, at first, Online)
+## Why the libretro shell's Versus is refused (and Online was, at first)
 
 A Virtual-On board is one cabinet: one player and the CPU. A versus is two
 cabinets linked by their comm boards (a "Twin"). The PS3 runs **both boards in
@@ -68,8 +68,9 @@ one process**:
 - Online, it sends the pads (lockstep) and each PS3 runs both boards.
 
 m2-hle2 runs one board: its state is in globals (g_m2bc, g_shc, g_m2comm,
-g_sound, ...). So Offline Versus needs a two-board core first, or two
-processes: step 7 does the second on the desktop.
+g_sound, ...), and RetroArch runs one core in one process. So the shell's
+Versus row stays refused, by design: it is not a step to do. The desktop
+Versus is two processes instead (step 7, done).
 
 ## RPCN: the plan (from YAMP's notes)
 
@@ -251,8 +252,8 @@ Steps:
    Windows path (it builds the child's command line by CommandLineToArgvW's
    rules; checked on Linux, not compiled).
 
-Still to do: the libretro shell's Versus row still refuses (RetroArch runs one
-core, one board).
+All seven steps are done. Nothing is left to do: the libretro shell's Versus
+row is refused on purpose (see "Why the libretro shell's Versus is refused").
 
 ## GGPO: not for Virtual-On
 
