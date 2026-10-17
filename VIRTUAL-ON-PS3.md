@@ -8,8 +8,9 @@ its hook table patches match vonj's (0x18AB4 `ld 0x5039F4`, 0x1871C
 `st -> 0x5024D4`).
 
 What came of it: the libretro core's PS3 shell runs for `vonj` with the PS3's
-Arcade settings (`ps3ui_rules_von`, `vonj_apply_menu_settings`). Versus and
-Online Battle are refused, for the reason below.
+Arcade settings (`ps3ui_rules_von`, `vonj_apply_menu_settings`). Online Battle
+opens the RPCN lobby, and a room's match links two cabinets (step 6). Versus is
+refused, for the reason below.
 
 ## Landmarks in the EBOOT (addresses as Ghidra loads it)
 
@@ -56,7 +57,7 @@ is enough; no reset is needed. This was checked headless: 0x1D00016 = 5 gave a
 **Versus menu** (Update 0x11B5F0): two rows, a record with match count and
 play time, then `init(1)` on the board API and GameMode_Set(1).
 
-## Why Versus and Online are refused here
+## Why Versus is refused here (and was, at first, Online)
 
 A Virtual-On board is one cabinet: one player and the CPU. A versus is two
 cabinets linked by their comm boards (a "Twin"). The PS3 runs **both boards in
@@ -203,8 +204,26 @@ Steps:
    and the libretro shell's Arcade launch (Hard, 2 rounds, 60 s) writes the
    same settings to backup RAM as 42c6e58's.
 
-Still to do: the shell's Online Battle row opens the lobby for vonj
-(`no_online` = NULL); it and Versus still refuse.
+6. Done (#985). The libretro shell's Online Battle row opens the lobby for vonj
+   (`ps3ui_rules_von.no_online` = NULL). With `online_arcade` set, the row
+   first writes the Arcade rows (`ps3ui_sh_apply_online`): each cabinet keeps
+   its own settings and free play, which the boot into the link's role keeps
+   (backup RAM with a fresh CRC). They are not exchanged: a linked pair is two
+   cabinets, as in the arcade. While the link is open (`st.comm.open`) the room
+   is NETPLAY_IN_ROOM, not PLAYING, so the lobby gives the game the screen
+   itself (`ps3ui_follow_link`), and SELECT asks "Do you want to exit this
+   session?" over the room (`ps3ui_app_ask_leave_link`); Yes leaves the room,
+   which ends the match for the other side too. The core shows
+   "Cabinet linked to <name>'s, as the MASTER/SLAVE" once
+   (`lr_rpcn_report_link`). UI only: no board path changes, proto stays 23.
+   Tested with two RetroArch instances (Xvfb) on the container's RPCN: owner
+   Create Match, guest Quick Match, both ready; owner MASTER, guest SLAVE,
+   "after 0 frames alone"; both show FREEPLAY, pick machines and fight on one
+   arena with their clocks in step (81/81, 73/72, 64/63 s), each seeing its
+   own machine; guest SELECT, No goes back to the fight, Yes leaves, and the
+   owner gets "match 1 called off" and waits for an opponent again.
+
+Still to do: Versus (two boards in one process) still refuses.
 
 ## GGPO: not for Virtual-On
 

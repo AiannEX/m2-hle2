@@ -808,6 +808,23 @@ static void lr_rpcn_report_state(const netplay_status_t *st) {
     }
 }
 
+/* A linked match (Virtual-On's two cabinets, netplay_member_start_link) keeps
+ * the room's lobby state, so lr_rpcn_report_state never sees it start: said
+ * when the link opens, with the shell's way out of it. */
+static void lr_rpcn_report_link(const netplay_status_t *st) {
+    static bool was_open;
+    char msg[400];
+    if (st->comm.open == was_open) return;
+    was_open = st->comm.open;
+    if (!was_open) return;
+    const char *peer = "?";
+    for (uint32_t i = 0; i < st->member_count; i++)
+        if (st->members[i].side == (st->local_player ^ 1)) peer = st->members[i].npid;
+    snprintf(msg, sizeof msg, "Cabinet linked to %s's, as the %s%s", peer,
+             st->comm.role == GAME_LINK_MASTER ? "MASTER" : "SLAVE", g_shell_on ? ". SELECT: leave the match" : "");
+    lr_notify(msg, 5000);
+}
+
 /* The room emptied with the board still in its VS mode
  * (netplay_empty_room_pump). Said again every few seconds while it holds,
  * short enough each time that it is gone soon after the restart. */
@@ -845,6 +862,7 @@ static void lr_rpcn_report(void) {
     if (!g_ps3ui_app.be.get_status) return;   /* no session behind the lobby yet */
     lr_rpcn_report_log(st);
     lr_rpcn_report_state(st);
+    lr_rpcn_report_link(st);
     lr_rpcn_report_empty(st);
     lr_rpcn_report_desync(st);
 }

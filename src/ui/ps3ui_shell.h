@@ -87,7 +87,9 @@ static const uint8_t ps3ui_set_versus_def[PS3UI_SETS] = { 1, 1, 1, 1, 4, 0 };
  * GameMode_Set one (8 bytes): s[0] row 0, s[1] 1 (!trial), s[2] 0, then s[3 +
  * k] = row rec[k] -- STF's order is time, rounds, attack, barriers, type.
  * versus_first rows are left out of VERSUS (STF: Difficulty). no_versus /
- * no_online: why the mode cannot run for this game, or NULL. */
+ * no_online: why the mode cannot run for this game, or NULL. online_arcade:
+ * Online Battle writes the ARCADE rows first (Virtual-On: each cabinet's own
+ * settings, free play with them, which the boot into the link's role keeps). */
 typedef struct {
     int n, versus_first;
     const char *const *label;
@@ -95,6 +97,7 @@ typedef struct {
     const uint8_t *max, *arcade_def, *versus_def;
     uint8_t rec[5];
     const char *no_versus, *no_online;
+    int online_arcade;
 } ps3ui_rules_t;
 
 static const ps3ui_rules_t ps3ui_rules_stf = {
@@ -103,8 +106,10 @@ static const ps3ui_rules_t ps3ui_rules_stf = {
 };
 
 /* Virtual-On (PS3 NPJB00321's Arcade menu; vonj_apply_menu_settings). The
- * PS3's versus and online modes run two boards in one process (its board API
- * at 0x4550E0, init(board_count)); this emulator runs one. */
+ * PS3's versus mode runs two boards in one process (its board API at
+ * 0x4550E0, init(board_count)); this emulator runs one. Online Battle opens
+ * the lobby: a room's match links this cabinet's comm board to the other
+ * player's (netplay_member_start_link, VIRTUAL-ON-PS3.md "RPCN"). */
 static const char *const ps3ui_von_label[3] = { "Difficulty", "Rounds to win", "Time limit" };
 static const char *const ps3ui_von_values[3][10] = {
     { "Easy", "Normal", "Hard", "Very Hard" },
@@ -117,7 +122,7 @@ static const ps3ui_rules_t ps3ui_rules_von = {
     3, 1, ps3ui_von_label, ps3ui_von_values, ps3ui_von_max, ps3ui_von_def, ps3ui_von_def,
     { 2, 1, 0xFF, 0xFF, 0xFF },
     "Versus needs both cabinets of a Twin: two boards, which this emulator does not run yet.",
-    "Online Battle for Virtual-On is not ready yet.",
+    NULL, 1,
 };
 
 static const char *const ps3ui_btn_names[PS3UI_BTN_CODES] = { "Unused", "P", "K", "G", "P+G", "P+K", "K+G", "P+K+G" };
@@ -319,6 +324,16 @@ static void ps3ui_shell_start_game(ps3ui_shell_t *sh, int versus)
     ps3ui_shell_go(sh, PS3UI_SH_GAME);
 }
 
+/* Online Battle's settings: the ARCADE rows, for a game whose cabinets each keep their own. */
+static void ps3ui_sh_apply_online(ps3ui_shell_t *sh)
+{
+    uint8_t s[8];
+    if (!sh->rules->online_arcade || !sh->host.apply_settings)
+        return;
+    ps3ui_shell_settings_bytes(sh->rules, sh->arcade, s);
+    sh->host.apply_settings(sh->host.user, s, 0);
+}
+
 /* ---- update --------------------------------------------------------------------- */
 
 static const char *const ps3ui_main_rows[4] = { "Arcade", "Offline Versus", "Online Battle", "Help & Options" };
@@ -417,6 +432,7 @@ static void ps3ui_sh_update_main(ps3ui_shell_t *sh)
         if (sh->cursor == 0) ps3ui_shell_go(sh, PS3UI_SH_ARCADE);
         if (sh->cursor == 1) ps3ui_shell_go(sh, PS3UI_SH_VERSUS);
         if (sh->cursor == 2) {
+            ps3ui_sh_apply_online(sh);
             ps3ui_shell_go(sh, PS3UI_SH_ONLINE);
             ps3ui_app_open(sh->online);
         }
@@ -468,23 +484,27 @@ static void ps3ui_sh_update_pause(ps3ui_shell_t *sh)
     }
 }
 
-/* The pad this frame: the dialog's if one is up, else the screen's. */
-static void ps3ui_sh_update(ps3ui_shell_t *sh)
+/* Online Battle: the lobby has the screen until it is left. */
+static void ps3ui_sh_update_online(ps3ui_shell_t *sh)
 {
-    /* the online task's VS prompt is on screen and has the pad */
-    if (sh->scr != PS3UI_SH_ONLINE && ps3ui_app_view(sh->online) == PS3UI_VIEW_OVERLAY)
-        return;
+    if (!sh->online->open)
+        ps3ui_shell_go(sh, PS3UI_SH_MAIN);
+    else if (ps3ui_sh_hit(sh, PS3UI_PAD_SELECT))
+        ps3ui_app_ask_leave_link(sh->online);   /* a linked match has no result to leave at */
+}
 
-    if (ps3ui_dialog_showing(&sh->dlg)) {
-        int r = ps3ui_dialog_update(&sh->dlg, sh->pressed);
-        if (r == 0 && sh->dlg_kind == PS3UI_SHDLG_EXIT_GAME) {
-            if (sh->host.reset_board)
-                sh->host.reset_board(sh->host.user);
-            ps3ui_shell_go(sh, PS3UI_SH_MAIN);
-        }
-        return;
+static void ps3ui_sh_update_dialog(ps3ui_shell_t *sh)
+{
+    int r = ps3ui_dialog_update(&sh->dlg, sh->pressed);
+    if (r == 0 && sh->dlg_kind == PS3UI_SHDLG_EXIT_GAME) {
+        if (sh->host.reset_board)
+            sh->host.reset_board(sh->host.user);
+        ps3ui_shell_go(sh, PS3UI_SH_MAIN);
     }
+}
 
+static void ps3ui_sh_update_screen(ps3ui_shell_t *sh)
+{
     switch (sh->scr) {
     case PS3UI_SH_TITLE:
         if (ps3ui_sh_hit(sh, PS3UI_PAD_START | PS3UI_PAD_CROSS))
@@ -497,10 +517,7 @@ static void ps3ui_sh_update(ps3ui_shell_t *sh)
     case PS3UI_SH_CONTROLS: ps3ui_sh_update_controls(sh); break;
     case PS3UI_SH_SETTINGS: ps3ui_sh_update_volume(sh); break;
     case PS3UI_SH_CREDITS: ps3ui_sh_update_credits(sh); break;
-    case PS3UI_SH_ONLINE:
-        if (!sh->online->open)
-            ps3ui_shell_go(sh, PS3UI_SH_MAIN);   /* the lobby was left */
-        break;
+    case PS3UI_SH_ONLINE: ps3ui_sh_update_online(sh); break;
     case PS3UI_SH_GAME:
         if (!sh->netplay && ps3ui_sh_hit(sh, PS3UI_PAD_SELECT)) {
             ps3ui_shell_go(sh, PS3UI_SH_PAUSE);  /* SELECT pauses; START is the arcade's */
@@ -509,6 +526,18 @@ static void ps3ui_sh_update(ps3ui_shell_t *sh)
         break;
     case PS3UI_SH_PAUSE: ps3ui_sh_update_pause(sh); break;
     }
+}
+
+/* The pad this frame: the dialog's if one is up, else the screen's. */
+static void ps3ui_sh_update(ps3ui_shell_t *sh)
+{
+    /* the online task's VS prompt is on screen and has the pad */
+    if (sh->scr != PS3UI_SH_ONLINE && ps3ui_app_view(sh->online) == PS3UI_VIEW_OVERLAY)
+        return;
+    if (ps3ui_dialog_showing(&sh->dlg))
+        ps3ui_sh_update_dialog(sh);
+    else
+        ps3ui_sh_update_screen(sh);
 }
 
 /* choice_win_0N, the menu window with room for n rows (2..6) */
