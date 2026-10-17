@@ -683,6 +683,8 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     add_executable(scsp_lazy_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/scsp_lazy_test.c)
     # the Model 2A TGP: a float op and a transfer into d in one instruction
     add_executable(tgp_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/tgp_test.c)
+    # the Model 2C TGPx4: the empty-FIFO stall, the IFE wait, the ALU's corners
+    add_executable(tgpx4_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/tgpx4_test.c)
     add_executable(sharc_cpu_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/sharc_cpu_test.c)
     # Netplay: the lockstep engine, the protobuf codec and the ComId standard.
     # No server; part (G) opens loopback sockets — see the header of tests/net_test.c.
@@ -814,7 +816,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     target_link_libraries(audio_out_test PRIVATE sokol)
 
     foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test input_test net_test ps3net_test tile_test heat_test audio_out_test
-              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test sharc_cpu_test sfight_settings_test region_test srallyc_native_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
+              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test tgpx4_test sharc_cpu_test sfight_settings_test region_test srallyc_native_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
         target_include_directories(${t} PRIVATE ${TEST_INCLUDES})
         if(MSVC)
             target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -827,7 +829,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(NOT WIN32)
         foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test
                   input_test net_test ps3net_test tile_test heat_test audio_out_test scsp_dsp_test scsp_dsp_test_masks
-                  scsp_lazy_test tgp_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay sharc_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
+                  scsp_lazy_test tgp_test tgpx4_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay sharc_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
             target_link_libraries(${t} PRIVATE m)
         endforeach()
     endif()
