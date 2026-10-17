@@ -265,6 +265,7 @@ if(M2HLE_SDL3)
         ${SRC}/core
         ${SRC}/ui
         ${SRC}/profiles
+        ${VENDOR}/stb    # stb_image: a script's PostDraw PNGs
     )
     install(TARGETS m2hle RUNTIME DESTINATION bin)
     return()

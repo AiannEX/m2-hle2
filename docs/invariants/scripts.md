@@ -88,7 +88,15 @@ Test: `m2lua_test`.
   after Init. The hooks are `m2lua_frame_hook` / `m2lua_reset_hook`, so the
   RPCN hold-off is `emu_script_may_run()`, as on the desktop.
 - PostDraw's text is drawn with sokol's 8x8 debug font, scaled to the font's
-  size; images are not. At exit it prints `script <path>: N frames`.
+  size. Its images (`Video_CreateSurfaceFromFile`, PNG through
+  `vendor/stb`'s stb_image) are sokol_gl quads with the image's alpha, at the
+  image's size in board pixels scaled with the picture, under the text
+  (`scripts_draw`, Pinboard #974). At exit it prints `script <path>: N frames`.
+- No script in M2emulator 1.1a draws an image; checked with its srallyc.lua
+  plus a 96x48 PNG drawn at board (20, 20): at attract frames 600 and 1200 in
+  a 1280x720 window it covers window pixels (212, 38)-(391, 127), with the
+  game showing through its transparent part, and is absent with
+  `--no-scripts`; the widescreen widths (1278 vs 930) are unchanged.
 - Checked on srallyc with M2emulator 1.1a's `scripts` folder unmodified:
   srallyc.lua's Init at load and Frame 1800 times in 1800 frames; daytona.lua
   (required by a srallyc.lua that draws its state) with

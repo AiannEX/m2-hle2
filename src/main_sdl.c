@@ -98,6 +98,7 @@
 #include "sokol_gfx.h"
 #include "sokol_log.h"
 #include "sokol_debugtext.h"
+#include "sokol_gl.h"        /* a script's PostDraw images (scripts_draw) */
 
 #include "constants.h"
 #include "log.h"
@@ -117,6 +118,16 @@
 #include "audio_out.h"   /* audio_out_cb: drains g_sound's ring (only its callback is used here) */
 #include "miniz.h"
 #include "m2lua.h"       /* M2emulator's game scripts (Pinboard #972) */
+/* Video_CreateSurfaceFromFile's PNGs (M2emulator loads only PNG). Static, from
+ * memory: m2lua.h reads the file. */
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_NO_STDIO
+#define STBI_ONLY_PNG
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#include "stb_image.h"
+#pragma GCC diagnostic pop
 
 /* registry.h is the single TU that defines g_profiles[] / g_profile_count /
  * g_active_profile and pulls in every per-game profile header. */
@@ -381,7 +392,8 @@ static bool load_rom(const char *zip) {
  * The desktop's and the libretro core's: <dir>/<set>.lua runs with the game,
  * through the emu thread's hooks, and never while a netplay session has the
  * board (emu_script_may_run). Its options are set from the command line in the
- * libretro core's cheat codes; PostDraw's text is drawn with sokol's 8x8 font,
+ * libretro core's cheat codes; PostDraw's text is drawn with sokol's 8x8 font
+ * and its PNGs with sokol_gl,
  * and Model2_SetWideScreen and the stretches shape the picture (scripts_wide). */
 
 static bool scripts_is_dir(const char *path) {
@@ -411,12 +423,18 @@ static void scripts_apply_options(void) {
     m2lua_cheat_apply(want);
 }
 
+static uint8_t *scripts_decode(const uint8_t *buf, int len, int *w, int *h) {
+    int comp;
+    return stbi_load_from_memory(buf, len, w, h, &comp, 4);
+}
+
 /* After load_rom, before the emu thread: the game's script, Init and all. */
 static void scripts_load(void) {
     char dir[512];
     if (opt.scripts_dir) snprintf(dir, sizeof dir, "%s", opt.scripts_dir);
     else                 scripts_default_dir(dir, sizeof dir);
     m2lua_set_dir(dir);
+    g_m2lua_decode_image = scripts_decode;   /* Init may load its images */
     g_m2lua.disabled   = opt.no_scripts;
     g_emu_script_frame = m2lua_frame_hook;
     g_emu_script_reset = m2lua_reset_hook;
@@ -448,32 +466,123 @@ static bool scripts_wide(void) {
     return changed;
 }
 
-/* PostDraw's text over the picture at (ox, oy, w, h): board pixels scaled with
- * it, each string in its font's size (sdtx's cell is 8 pixels). Images are not
- * drawn. Before the frame's one sdtx_draw. */
+/* PostDraw's images: one texture per loaded surface, made again when the
+ * script loads another into its slot (gen), let go when it releases it. Drawn
+ * as sokol_gl quads with the image's alpha, under the text. */
+static struct {
+    bool         ready;
+    sgl_pipeline pip;
+    sg_sampler   smp;
+    sg_image     img[M2LUA_SURFACE_MAX];
+    sg_view      view[M2LUA_SURFACE_MAX];
+    uint32_t     gen[M2LUA_SURFACE_MAX];
+} g_script_img;
+
+static void scripts_images_setup(void) {
+    sgl_setup(&(sgl_desc_t){ .logger.func = slog_func });
+    sg_pipeline_desc pd = { 0 };
+    pd.colors[0].blend = (sg_blend_state){
+        .enabled = true,
+        .src_factor_rgb = SG_BLENDFACTOR_SRC_ALPHA, .dst_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        .src_factor_alpha = SG_BLENDFACTOR_ZERO,    .dst_factor_alpha = SG_BLENDFACTOR_ONE };
+    g_script_img.pip = sgl_make_pipeline(&pd);
+    g_script_img.smp = sg_make_sampler(&(sg_sampler_desc){
+        .min_filter = SG_FILTER_LINEAR, .mag_filter = SG_FILTER_LINEAR,
+        .wrap_u = SG_WRAP_CLAMP_TO_EDGE, .wrap_v = SG_WRAP_CLAMP_TO_EDGE });
+    g_script_img.ready = true;
+}
+
+static void scripts_image_drop(int i) {
+    if (g_script_img.view[i].id) sg_destroy_view(g_script_img.view[i]);
+    if (g_script_img.img[i].id)  sg_destroy_image(g_script_img.img[i]);
+    g_script_img.view[i].id = g_script_img.img[i].id = 0;
+    g_script_img.gen[i] = 0;
+}
+
+/* Upload what the script loaded since the last frame, free what it released. */
+static void scripts_images_sync(void) {
+    emu_mutex_lock(&g_m2lua.draw_mutex);
+    for (int i = 0; i < M2LUA_SURFACE_MAX; i++) {
+        m2lua_surface_t *s = &g_m2lua.surfaces[i];
+        if (!s->used) {
+            free(s->rgba);
+            s->rgba = NULL;
+            if (g_script_img.img[i].id) scripts_image_drop(i);
+            continue;
+        }
+        if (g_script_img.gen[i] == s->gen) continue;
+        scripts_image_drop(i);
+        g_script_img.img[i] = sg_make_image(&(sg_image_desc){
+            .width = s->w, .height = s->h, .pixel_format = SG_PIXELFORMAT_RGBA8,
+            .data.mip_levels[0] = { s->rgba, (size_t)s->w * (size_t)s->h * 4u },
+            .label = "script-surface" });
+        g_script_img.view[i] = sg_make_view(&(sg_view_desc){ .texture.image = g_script_img.img[i] });
+        g_script_img.gen[i] = s->gen;
+    }
+    emu_mutex_unlock(&g_m2lua.draw_mutex);
+}
+
+static void scripts_images_shutdown(void) {
+    if (!g_script_img.ready) return;
+    for (int i = 0; i < M2LUA_SURFACE_MAX; i++) scripts_image_drop(i);
+    sgl_shutdown();
+}
+
+/* One image at board (x, y), its own size times k (as M2emulator, which drew
+ * it 1:1 on a 496 x 384 screen), recorded for sgl_draw. */
+static void scripts_image(const m2lua_draw_t *d, float x, float y, float k) {
+    int i = d->surface;
+    if (i < 0 || i >= M2LUA_SURFACE_MAX || !g_script_img.view[i].id) return;
+    float x1 = x + (float)g_m2lua.surfaces[i].w * k, y1 = y + (float)g_m2lua.surfaces[i].h * k;
+    sgl_texture(g_script_img.view[i], g_script_img.smp);
+    sgl_begin_quads();
+    sgl_v2f_t2f(x,  y,  0.0f, 0.0f);
+    sgl_v2f_t2f(x1, y,  1.0f, 0.0f);
+    sgl_v2f_t2f(x1, y1, 1.0f, 1.0f);
+    sgl_v2f_t2f(x,  y1, 0.0f, 1.0f);
+    sgl_end();
+}
+
+/* One string at window (x, y), in its font's size (sdtx's cell is 8 pixels). */
+static void scripts_text(const m2lua_draw_t *d, int fb_w, int fb_h, float x, float y, float k) {
+    bool font = d->font >= 0 && g_m2lua.fonts[d->font].used;
+    float cell = (font ? g_m2lua.fonts[d->font].size : M2LUA_TEXT_SIZE) * k;
+    if (cell < 4.0f) cell = 4.0f;
+    float s = cell / 8.0f;
+    sdtx_canvas((float)fb_w / s, (float)fb_h / s);
+    sdtx_origin(0.0f, 0.0f);
+    sdtx_pos(x / cell, y / cell);
+    sdtx_color4b((uint8_t)(d->color >> 16), (uint8_t)(d->color >> 8), (uint8_t)d->color,
+                 (uint8_t)(d->color >> 24));
+    sdtx_puts(d->text);
+}
+
+/* PostDraw's list over the picture at (ox, oy, w, h): board pixels scaled with
+ * it. Images first (sgl_draw here), then the text, before the frame's one
+ * sdtx_draw. */
 static void scripts_draw(int fb_w, int fb_h, int ox, int oy, int w, int h) {
     static m2lua_draw_t list[M2LUA_DRAW_MAX];
     int n = 0;
     if (!g_m2lua.loaded) return;
+    if (!g_script_img.ready) scripts_images_setup();
+    scripts_images_sync();
     m2lua_take_draw(list, &n);
     if (n == 0) return;
-    float k = (float)h / (float)VIDEO_HEIGHT;
+    float k = (float)h / (float)VIDEO_HEIGHT, kx = (float)w / (float)VIDEO_WIDTH;
     sg_apply_viewport(0, 0, fb_w, fb_h, true);
     sg_apply_scissor_rect(0, 0, fb_w, fb_h, true);
+    sgl_defaults();
+    sgl_enable_texture();
+    sgl_load_pipeline(g_script_img.pip);
+    sgl_matrix_mode_projection();
+    sgl_ortho(0.0f, (float)fb_w, (float)fb_h, 0.0f, -1.0f, 1.0f);
     for (int i = 0; i < n; i++) {
         const m2lua_draw_t *d = &list[i];
-        if (d->kind != M2LUA_DRAW_TEXT) continue;
-        bool font = d->font >= 0 && g_m2lua.fonts[d->font].used;
-        float cell = (font ? g_m2lua.fonts[d->font].size : M2LUA_TEXT_SIZE) * k;
-        if (cell < 4.0f) cell = 4.0f;
-        float s = cell / 8.0f;
-        sdtx_canvas((float)fb_w / s, (float)fb_h / s);
-        sdtx_origin(0.0f, 0.0f);
-        sdtx_pos(((float)ox + d->x * (float)w / (float)VIDEO_WIDTH) / cell, ((float)oy + d->y * k) / cell);
-        sdtx_color4b((uint8_t)(d->color >> 16), (uint8_t)(d->color >> 8), (uint8_t)d->color,
-                     (uint8_t)(d->color >> 24));
-        sdtx_puts(d->text);
+        float x = (float)ox + d->x * kx, y = (float)oy + d->y * k;
+        if (d->kind == M2LUA_DRAW_SURFACE) scripts_image(d, x, y, k);
+        else                               scripts_text(d, fb_w, fb_h, x, y, k);
     }
+    sgl_draw();
 }
 
 /* The last lines of the in-memory log, for a failure with file logging off. */
@@ -1419,6 +1528,7 @@ int main(int argc, char **argv) {
         printf("verify-gpu-tiles: %llu composed frames checked, %llu differed\n",
                (unsigned long long)g_vt.frames, (unsigned long long)g_vt.bad_frames);
     game_target_destroy();
+    scripts_images_shutdown();
     if (g_sdtx_on) sdtx_shutdown();
     game_render_shutdown();
     video_shutdown(&state.video);
