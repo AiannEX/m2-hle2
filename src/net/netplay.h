@@ -198,8 +198,11 @@
  * 24: the board's 93C46 EEPROM answers on port A, so Sega Rally and
  *    Virtual-On wait out its write cycles; flushreg puts the i960's frames in
  *    memory, and call puts the real caller FP in pfp (Pinboard #965).
+ * 25: the sound 68000 decodes AND Dn,<ea> (word/long) instead of EXG and
+ *    runs ABCD/SBCD/NBCD/TAS/CHK, so Dynamite Cop's sound driver no longer
+ *    derails and its UART answers differ (Pinboard #1006).
  */
-#define NETPLAY_PROTO_REV 24
+#define NETPLAY_PROTO_REV 25
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.
