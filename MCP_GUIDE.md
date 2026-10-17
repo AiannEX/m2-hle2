@@ -327,6 +327,15 @@ P1 Down, `"0x0"` releases everything. It replaces the whole mask
 (`g_input.held`, the same one the window's keyboard drives). Returns `held`. This is the only safe way to drive a
 netplay session (see below).
 
+**`set_gun(player: int = 0, x: float = 0.5, y: float = 0.5, offscreen: int = 0, on: int = 1)`**
+On a light-gun profile (The House of the Dead), aim a gun as the window's
+mouse would: `x` and `y` run 0..1 across and down the picture, `offscreen: 1`
+points it off the picture (a shot there reloads), `on: 0` hands it back to the
+pad's walk. Fire with `set_input` (P1 trigger `0x100`, reload `0x400`; P2
+`0x200` / `0x800`). Ignored by a board in a session, a follow or a replay,
+whose guns follow the pad word. Returns `ad_x` / `ad_y`, where the board's gun
+pointed at its last read (the A/D values the game sees).
+
 ### Breakpoints
 
 **`set_breakpoint(addr: str, label: str = "")`**
