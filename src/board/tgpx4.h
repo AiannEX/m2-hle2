@@ -268,7 +268,21 @@ static inline double tgx_ln(double x) {
     return 2.0 * sum + (double)e * 0.69314718055994530942;
 }
 
-static inline void tgx_aluop(uint32_t op, uint32_t s1, uint32_t s2, uint32_t imm, uint32_t dst) {
+/* CFIB: a float to a byte, with AU below 0, AZ at 0 and AV over 0xFF. */
+static inline void tgx_cfib(uint32_t s1, uint32_t dst) {
+    uint32_t *st = &g_tgx.st;
+    float f = tgp_u2f(s1);
+    /* uint32_t(f) on x86-64: NaN gives 0, 256 and up are over 0xFF. */
+    uint32_t res = f >= 0.0f && f < 256.0f ? (uint32_t)f : (f >= 256.0f ? 0x100u : 0u);
+    if (f < 0.0f) { *st |= TGX_AU; res = 0; }
+    *st &= ~(uint32_t)TGX_AZ;
+    if (res == 0) *st |= TGX_AZ;
+    if (res > 0xFFu) { *st |= TGX_AV; res = 0xFFu; }
+    tgx_setreg(dst, res);
+}
+
+/* The float half of the ALU, ops 0x00 to 0x0F. */
+static inline void tgx_aluop_float(uint32_t op, uint32_t s1, uint32_t s2, uint32_t imm, uint32_t dst) {
     uint32_t *st = &g_tgx.st;
     switch (op) {
     case 0x00: case 0x01: case 0x02: case 0x03: {          /* FADD FADDZ FSUB FSUBZ */
@@ -345,17 +359,14 @@ static inline void tgx_aluop(uint32_t op, uint32_t s1, uint32_t s2, uint32_t imm
         tgx_setreg(dst, v);
         break;
     }
-    case 0x0F: {                                            /* CFIB */
-        float f = tgp_u2f(s1);
-        /* uint32_t(f) on x86-64: NaN gives 0, 256 and up are over 0xFF. */
-        uint32_t res = f >= 0.0f && f < 256.0f ? (uint32_t)f : (f >= 256.0f ? 0x100u : 0u);
-        if (f < 0.0f) { *st |= TGX_AU; res = 0; }
-        *st &= ~(uint32_t)TGX_AZ;
-        if (res == 0) *st |= TGX_AZ;
-        if (res > 0xFFu) { *st |= TGX_AV; res = 0xFFu; }
-        tgx_setreg(dst, res);
-        break;
+    case 0x0F: tgx_cfib(s1, dst); break;                    /* CFIB */
     }
+}
+
+/* The integer half, ops 0x10 to 0x1F. */
+static inline void tgx_aluop_int(uint32_t op, uint32_t s1, uint32_t s2, uint32_t imm, uint32_t dst) {
+    uint32_t *st = &g_tgx.st;
+    switch (op) {
     case 0x10: case 0x11: case 0x12: case 0x13: {          /* ADD ADDZ SUB SUBZ */
         uint32_t r = (op & 2u) ? s2 - s1 : s1 + s2;
         if (op & 1u) {
@@ -389,6 +400,11 @@ static inline void tgx_aluop(uint32_t op, uint32_t s1, uint32_t s2, uint32_t imm
         break;
     }
     }
+}
+
+static inline void tgx_aluop(uint32_t op, uint32_t s1, uint32_t s2, uint32_t imm, uint32_t dst) {
+    if (op & 0x10u) tgx_aluop_int(op, s1, s2, imm, dst);
+    else            tgx_aluop_float(op, s1, s2, imm, dst);
 }
 
 static inline void tgx_mulop(bool fmul, uint32_t s1, uint32_t s2, uint32_t dst) {
