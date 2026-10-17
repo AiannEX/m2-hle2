@@ -47,8 +47,9 @@
  * touch buttons (web/site/m2hle-touch.js). --taps then presses them by name at
  * given seconds, with real touch events on the page: "b1@20:300" holds Punch
  * for 300 ms at t=20 s (120 ms if no hold is given). The names are the controls'
- * ids -- dpad, b1..b4, start, coin -- and dpad-up/-down/-left/-right/-up-left/...
- * press the d-pad two thirds of the way out that way. Each tap prints the mask
+ * ids -- dpad, b1..b4, start, coin; a twin-stick game's rpad, rshot, rdash -- and
+ * dpad-up/-down/-left/-right/-up-left/... (rpad-...) press a d-pad two thirds of
+ * the way out that way. Each tap prints the mask
  * the touch layer held, so a tap that missed says so.
  *
  * --hide T:N covers the game with a new foreground tab at t=T s for N s, which
