@@ -213,6 +213,16 @@ typedef struct {
     bool     model1_io;
     uint32_t model1_io_vr4;
 
+    /* Two light guns on the 315-5649's second serial channel (lightgun.h):
+     * input_attach serves their positions, off-screen bits and triggers. Each
+     * gun's held bits (its pad walks it; reload is the shot off the screen)
+     * and its A/D range, MAME's PORT_MINMAX and default. */
+    bool     lightgun;
+    struct {
+        uint32_t up, down, left, right, trigger, reload;
+        int      x_min, x_max, x_rest, y_min, y_max, y_rest;
+    } gun[2];
+
     /* Charge the i960 what the board's caches and wait states cost on top of
      * MAME's per-opcode table (i960_timing.h). The timers and the vblank count
      * these cycles, so a game that budgets its work by a timer sees the

@@ -18,8 +18,8 @@
  * as a link of one. The sound board is MAME's segam1audio: a 68000, two
  * MultiPCMs and a YM3438 whose timers run but whose FM voices are not made
  * (the game keys none on in attract or a race; a key-on is logged). What it
- * lacks (`preliminary`): the drive board's force feedback and a second
- * cabinet on the link. The comm board's Z80 program (epr-16726) and
+ * lacks: the drive board's force feedback and a second cabinet on the link.
+ * The web build still lists it as prepared (`preliminary`): not built there yet. The comm board's Z80 program (epr-16726) and
  * the drive board's ROM are not loaded: nothing here would run them.
  */
 #ifndef PROFILES_DAYTONA_H
@@ -201,8 +201,9 @@ static const game_profile_t daytona_profile = {
             [GAME_INPUT_P1_LEFT]  = 0x00008000,
         },
     },
-    .preliminary  = "the drive board's force feedback, a second cabinet on the "
-                    "M2COMM link, the YM3438's FM voices",
+#ifdef M2HLE_WEB
+    .preliminary  = "a web build (it runs on the desktop builds and the libretro core)",
+#endif
     .quirks = {
         .irq_vectors       = true,
         .enable_68k_sound  = true,

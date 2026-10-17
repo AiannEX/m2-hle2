@@ -86,6 +86,7 @@
 /* registry.h is the single TU that defines g_profiles[] / g_active_profile. */
 #include "registry.h"
 #include "m2lua.h"         /* M2emulator's game scripts, their options as RetroArch cheats */
+#include "lightgun_host.h" /* a port's light gun (The House of the Dead) */
 
 /* The largest picture the frontend's framebuffer is made for: it allocates this
  * much once, colour and depth. Full screen draws at the output's size, up to it. */
@@ -571,6 +572,42 @@ static bool lr_btn(unsigned port, unsigned id) {
     return input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, id) != 0;
 }
 
+/* What each port is: the RetroPad, or RetroArch's light gun (the mouse, or a
+ * real gun) for a profile with quirks.lightgun (retro_set_controller_port_device). */
+static unsigned g_lr_port_device[2] = { RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD };
+static bool lr_in_session(void);
+
+/* A port's light gun (lightgun_host.h): it aims that player's gun, its trigger
+ * is B1 and its reload B2; start and select are the player's. RetroArch gives
+ * the position from -0x7FFF to 0x7FFF across the core's picture, which is the
+ * whole frame here. In a session the pointer stays out (each board must aim
+ * from the words on the wire), and the gun's buttons still count. */
+static uint32_t lr_port_gun(unsigned port) {
+    if (port > 1 || g_lr_port_device[port] != RETRO_DEVICE_LIGHTGUN || !lightgun_host_on()) return 0;
+    const game_input_map_t *in = &g_active_profile->input;
+    int p = (int)port;
+    if (lr_in_session()) {
+        lightgun_host_release_aim(p);
+    } else {
+        int x = input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X);
+        int y = input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y);
+        bool off = input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN) != 0
+                || x <= -0x8000 || y <= -0x8000;
+        if (off) lightgun_host_aim_away(p);
+        else     lightgun_host_aim(p, (float)x, (float)y, -32767.0f, -32767.0f, 65534.0f, 65534.0f);
+    }
+    static const struct { unsigned id; int act[2]; } binds[] = {
+        { RETRO_DEVICE_ID_LIGHTGUN_TRIGGER, { GAME_INPUT_P1_B1,    GAME_INPUT_P2_B1    } },
+        { RETRO_DEVICE_ID_LIGHTGUN_RELOAD,  { GAME_INPUT_P1_B2,    GAME_INPUT_P2_B2    } },
+        { RETRO_DEVICE_ID_LIGHTGUN_START,   { GAME_INPUT_P1_START, GAME_INPUT_P2_START } },
+        { RETRO_DEVICE_ID_LIGHTGUN_SELECT,  { GAME_INPUT_P1_COIN,  GAME_INPUT_P2_COIN  } },
+    };
+    uint32_t held = 0;
+    for (size_t i = 0; i < sizeof binds / sizeof binds[0]; i++)
+        if (input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, binds[i].id)) held |= in->bits[binds[i].act[p]];
+    return held;
+}
+
 /* One port's pad as the board's held mask, the d-pad and left stick both steering. */
 static uint32_t lr_port_held(unsigned port) {
     const game_input_map_t *in = &g_active_profile->input;
@@ -588,7 +625,7 @@ static uint32_t lr_port_held(unsigned port) {
         if (lr_binds[i].id == RETRO_DEVICE_ID_JOYPAD_RIGHT) on |= ax >  dead;
         if (on) held |= in->bits[act];
     }
-    return held;
+    return held | lr_port_gun(port);
 }
 
 /* A held mask as netplay.h's canonical word (NP_BIT_*): either side's bits count
@@ -1618,6 +1655,21 @@ static bool lr_lua_draw(ps3ui_canvas_t *cv, int w, int h) {
     return drew;
 }
 
+/* The light guns' crosshairs (lightgun_host.h) over the w x h frame, recorded
+ * on the canvas. True when it drew. */
+static bool lr_gun_draw(ps3ui_canvas_t *cv, int w, int h) {
+    lightgun_host_bar_t bars[LIGHTGUN_HOST_BARS];
+    int n = lightgun_host_crosshairs(0.0f, 0.0f, (float)w, (float)h, bars);
+    for (int i = 0; i < n; i++) {
+        float c[3];
+        ps3ui_rgb_hex(bars[i].rgb, c);
+        int x0 = (int)bars[i].x0, y0 = (int)bars[i].y0, x1 = (int)bars[i].x1, y1 = (int)bars[i].y1;
+        ps3ui_fill_px(cv, x0 < 0 ? 0 : x0, y0 < 0 ? 0 : y0, x1 > w ? w : x1, y1 > h ? h : y1, c, bars[i].a,
+                      PS3UI_BLEND_NORMAL);
+    }
+    return n > 0;
+}
+
 /* A new frame size goes to the frontend before the frame does. */
 static void lr_draw_geometry(int w, int h, bool lobby) {
     if (w == g_geom_w && h == g_geom_h) return;
@@ -1671,6 +1723,7 @@ static void lr_draw(bool ran) {
     static ps3ui_canvas_t lobby_cv;
     ps3ui_gpu_record(&lobby_cv, w, h);
     bool text = !lobby && lr_lua_draw(&lobby_cv, w, h);
+    if (!lobby && lr_gun_draw(&lobby_cv, w, h)) text = true;
     if (lobby || overlay) lr_draw_record_lobby(&lobby_cv);
 
     lr_draw_pass(w, h, lobby, overlay || text, &lobby_cv);
@@ -2144,11 +2197,14 @@ RETRO_API void retro_set_environment(retro_environment_t cb) {
     struct retro_log_callback logging;
     if (cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &logging)) log_cb = logging.log;
     lr_set_options();
+    /* The light gun aims a gun in The House of the Dead (lr_port_gun); in
+     * any other game it is the RetroPad. */
     static const struct retro_controller_description pads[] = {
         { "RetroPad", RETRO_DEVICE_JOYPAD },
+        { "Light gun", RETRO_DEVICE_LIGHTGUN },
     };
     static const struct retro_controller_info ports[] = {
-        { pads, 1 }, { pads, 1 }, { NULL, 0 },
+        { pads, 2 }, { pads, 2 }, { NULL, 0 },
     };
     cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void *)ports);
 }
@@ -2158,7 +2214,13 @@ RETRO_API void retro_set_audio_sample(retro_audio_sample_t cb)             { (vo
 RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_cb = cb; }
 RETRO_API void retro_set_input_poll(retro_input_poll_t cb)                 { input_poll_cb = cb; }
 RETRO_API void retro_set_input_state(retro_input_state_t cb)               { input_state_cb = cb; }
-RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device) { (void)port; (void)device; }
+RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device) {
+    if (port > 1) return;
+    g_lr_port_device[port] = device == RETRO_DEVICE_LIGHTGUN ? RETRO_DEVICE_LIGHTGUN : RETRO_DEVICE_JOYPAD;
+    if (g_lr_port_device[port] != RETRO_DEVICE_LIGHTGUN) {
+        lightgun_host_release_aim((int)port);
+    }
+}
 
 RETRO_API void retro_get_system_info(struct retro_system_info *info) {
     memset(info, 0, sizeof *info);

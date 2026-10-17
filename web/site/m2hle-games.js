@@ -152,6 +152,56 @@ const m2hleGames = (() => {
         },
       },
     },
+    fvipers: {
+      title: 'Fighting Vipers',
+      year: 1995, board: 'Model 2B-CRX', colors: ['#c81d6a', '#3d0b2a'],
+      blurb: 'Armoured street fighters in caged arenas: break the armour, then the walls.',
+      profiles: [
+        { id: 'fvipers', name: 'Rev D', about: 'Revision D' },
+        { id: 'fvipersb', name: 'Rev B', about: 'Revision B', soon: true },
+      ],
+      romHint: 'Your <code>fvipers.zip</code> (Fighting Vipers, Revision D)',
+      /* src/profiles/fvipers.h: MAME's INPUT_PORTS(vf2), B1 punch, B2 kick, B3 guard. */
+      labels: { b1: 'Punch', b2: 'Kick', b3: 'Guard', b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'ファイティングバイパーズ',
+          blurb: 'アーマーをまとった喧嘩屋たちが金網の中で激突。アーマーを砕き、壁をぶち破れ。',
+          profiles: { fvipers: { name: 'リビジョン D', about: 'リビジョン D' },
+                      fvipersb: { name: 'リビジョン B', about: 'リビジョン B' } },
+          romHint: 'お持ちの <code>fvipers.zip</code>（ファイティングバイパーズ、リビジョン D）',
+          labels: { b1: 'パンチ', b2: 'キック', b3: 'ガード', b4: '未使用' },
+        },
+      },
+    },
+    hotd: {
+      title: 'The House of the Dead',
+      year: 1996, board: 'Model 2C-CRX', colors: ['#8c1010', '#1c0606'],
+      blurb: 'Dr. Curien\'s mansion is overrun. Two agents, two guns, and the dead between them and the truth.',
+      /* src/profiles/hotd.h: Revision A or the first release (MAME's hotdo), one profile. */
+      profiles: [
+        { id: 'hotd', name: 'Rev A', about: 'Revision A, or the first release' },
+      ],
+      romHint: 'Your <code>hotd.zip</code> (The House of the Dead)',
+      /* A light gun on the mouse or a finger (main_web.c, web_gun_event); the
+       * pad's directions walk it, B1 fires, B2 reloads (board/lightgun.h). */
+      labels: { b1: 'Trigger', b2: 'Reload', b3: 'Unused', b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'ザ・ハウス・オブ・ザ・デッド',
+          blurb: 'キュリアン博士の館は死者であふれた。二人のエージェント、二丁の銃、そして真相を阻む死者たち。',
+          profiles: { hotd: { name: 'リビジョン A', about: 'リビジョン A または初期版' } },
+          romHint: 'お持ちの <code>hotd.zip</code>（ザ・ハウス・オブ・ザ・デッド）',
+          labels: { b1: 'トリガー', b2: 'リロード', b3: '未使用', b4: '未使用' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
 
