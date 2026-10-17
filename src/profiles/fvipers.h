@@ -30,6 +30,7 @@
 #define FVIPERS_HOOK_ADDR_FRAME_PACE        0x00011C80
 #define FVIPERS_HOOK_ADDR_COUNTRY_DEFAULT   0x0005E4D4
 #define FVIPERS_HOOK_ADDR_SETTINGS_LOADED   0x000046F4
+#define FVIPERS_HOOK_ADDR_VS_REMATCH        0x0000EAC0
 
 /* ---- ROM loader --------------------------------------------------------- */
 
@@ -256,14 +257,32 @@ static int fvipers_hook_settings_loaded(i960_cpu_t *cpu, memory_bus_t *bus) {
     return 1;
 }
 
+/*
+ * vs_rematch (0xEAC0, vs_game_continue_check_ex+0x18): VS mode's rematch, the
+ * twin of sfight.h's sfight_hook_vs_rematch. Sega's PC emulator for FV
+ * (fv-pxd-w64, YAMP's docs/fv-hle-hooks.md, its table index 36) traps this
+ * instruction, `ldob 0x500065, ...`, in VS mode: it ORs 5 into both players'
+ * flag words (0x500248 / 0x50024C, bits 0 and 2) and jumps to 0xF7BC, the
+ * ROM's own "both players continue" path, which sets the flags again and goes
+ * back to character select with both players in. With VS mode off the
+ * instruction runs as it always has, the winner stays on against the CPU.
+ */
+static int fvipers_hook_vs_rematch(i960_cpu_t *cpu, memory_bus_t *bus) {
+    if (!g_vs_mode) return 1;
+    mem_write8(bus, 0x00500248, (uint8_t)(mem_read8(bus, 0x00500248) | 5u));
+    mem_write8(bus, 0x0050024C, (uint8_t)(mem_read8(bus, 0x0050024C) | 5u));
+    cpu->sfr.ip = 0x0000F7BC;
+    return 0;
+}
+
 /* ---- Profile object ----------------------------------------------------- */
 
 /*
- * Active hooks: the frame edge and the region's two. STF's
+ * Active hooks: the frame edge, the region's two and VS mode's. STF's
  * co_processor_error_hang has no FV address yet; sfight.h has the handler to
  * port when it is found.
  */
-#define FVIPERS_HOOK_COUNT 3
+#define FVIPERS_HOOK_COUNT 4
 
 static const game_profile_t fvipers_profile = {
     .id               = "fvipers",
@@ -277,6 +296,7 @@ static const game_profile_t fvipers_profile = {
         { FVIPERS_HOOK_ADDR_FRAME_PACE,        fvipers_hook_frame_pace,       "frame_pace"           },
         { FVIPERS_HOOK_ADDR_COUNTRY_DEFAULT,   fvipers_hook_country_default,  "country_default"      },
         { FVIPERS_HOOK_ADDR_SETTINGS_LOADED,   fvipers_hook_settings_loaded,  "settings_loaded"      },
+        { FVIPERS_HOOK_ADDR_VS_REMATCH,        fvipers_hook_vs_rematch,       "vs_rematch"           },
     },
     .input = {
         /* read_sw (0x229C) copies the pad to INTERUPT_FLAGS_HELD (0x500700) and
@@ -323,6 +343,7 @@ static const game_profile_t fvipers_profile = {
         .camera_angle_addr  = 0x00515584,   /* yaw = high16 (g13+0x06); camera_control ldos/stos 6(g13) */
         .irq_vectors        = true,         /* handlers from the ROM's own table */
         .enable_68k_sound   = true,
+        .vs_rematch         = true,         /* fvipers_hook_vs_rematch */
         .region = { .kind = REGION_HOOKED, .factory_default = "country_default",
                     .over_saved = "settings_loaded", .country = fvipers_country },
     },
