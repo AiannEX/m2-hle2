@@ -329,21 +329,27 @@ Its native rounds are those clips.
 ### The parts of a round
 
 A round is a race, taken at the championship's race end (`0x5BAE40`, sub-state 5 state 4),
-which every race reaches, won or timed out. Practice (sub-state 7) is not recorded.
+which every race reaches, won or timed out.
+
+Practice (sub-state 7, Pinboard #1002) has no such end: its race is state 5 (`0x5BABA0`), and
+a timeout goes straight to game over (state 12, `0x5BAF50`) while a finish goes to state 6
+(`0x5B2820`). So the mode dispatch watches it, reading only: on the first frame of sub-state 7
+after state 5, the course's clip is taken as a round marked `"practice":1`.
 
 | Part | Board address | |
 |------|---------------|-|
 | `clip.bin` | `0x556420 + course * 0x9AB0` | the course's buffer, `0x9AB0` bytes |
 | `count.bin` | `0x217260 + course * 4` | its count of frames |
 
-`round.json` is `{"game":"srallyc","course","passed","car","clip_frames","keyed","key_frames"}`.
+`round.json` is `{"game":"srallyc","practice","course","passed","car","clip_frames","keyed","key_frames"}`.
 A round is keyed when its clip has 1-750 frames; `key_frames` is then 680, so a round plays
 for 679 frames of the credits.
 
 ### Playback
 
 The rounds are grouped into championships, each a run of rounds whose courses climb (a new
-game starts again at the forest). The board cold-boots; at the main loop's mode dispatch
+game starts again at the forest). A practice round is a championship of its own: it plays
+alone, its one course's clip in the credits and the other courses as an empty road. The board cold-boots; at the main loop's mode dispatch
 (`0x5A2200`), on attract's first frame:
 
 1. The four counts are zeroed and the championship's clips and counts go back in.
