@@ -118,6 +118,7 @@
 #include "audio_out.h"   /* audio_out_cb: drains g_sound's ring (only its callback is used here) */
 #include "miniz.h"
 #include "m2lua.h"       /* M2emulator's game scripts (Pinboard #972) */
+#include "m2lua_wide.h"  /* and the picture they ask for */
 /* Video_CreateSurfaceFromFile's PNGs (M2emulator loads only PNG). Static, from
  * memory: m2lua.h reads the file. */
 #define STB_IMAGE_STATIC
@@ -394,7 +395,7 @@ static bool load_rom(const char *zip) {
  * board (emu_script_may_run). Its options are set from the command line in the
  * libretro core's cheat codes; PostDraw's text is drawn with sokol's 8x8 font
  * and its PNGs with sokol_gl,
- * and Model2_SetWideScreen and the stretches shape the picture (scripts_wide). */
+ * and Model2_SetWideScreen and the stretches shape the picture (ui/m2lua_wide.h). */
 
 static bool scripts_is_dir(const char *path) {
     struct stat st;
@@ -445,25 +446,6 @@ static void scripts_load(void) {
     scripts_apply_options();
     printf("m2hle: script %s (%d option%s)\n", g_m2lua.path, g_m2lua.noptions,
            g_m2lua.noptions == 1 ? "" : "s");
-}
-
-/* The picture the script asks for (g_game_wide, ui/game_render.h): 16:9 with
- * the 3D widened while it has Model2_SetWideScreen on, the tile layers
- * stretched by the Stretch switches (A or B: the two chips' layers are drawn
- * as one). The board's 4:3 with no script, --no-scripts or a session holding
- * scripts off. True when the width changed. */
-static bool scripts_wide(void) {
-    const m2lua_video_flags_t *v = &g_m2lua.video;
-    bool on = g_m2lua.loaded && !g_m2lua.disabled && !g_m2lua.suspended && v->widescreen;
-    game_wide_t want = { 0 };
-    if (on) want = (game_wide_t){
-        .extra        = GAME_RENDER_WIDE_EXTRA,
-        .stretch_low  = v->stretch_a_low  || v->stretch_b_low,
-        .stretch_high = v->stretch_a_high || v->stretch_b_high,
-    };
-    bool changed = want.extra != g_game_wide.extra;
-    g_game_wide = want;
-    return changed;
 }
 
 /* PostDraw's images: one texture per loaded surface, made again when the
@@ -1295,7 +1277,7 @@ static void stats_report(Uint64 now, bool audio) {
 
 /* The target at the picture's width, after a script turned widescreen on or off. */
 static void game_target_fit(void) {
-    if (!scripts_wide()) return;
+    if (!m2lua_wide_apply()) return;
     game_target_destroy();
     game_target_make();
 }

@@ -45,9 +45,18 @@ Test: `m2lua_test`.
   tab's text goes in with `m2lua_load_source` and is kept in localStorage
   (`m2hle.cheats.<set>`, `.on`, `.opts`). Given during a session, the text waits,
   unrun, until the session ends.
+- `require("model2")` and `require("common")`, which every M2emulator 1.1a
+  script starts with, find built-in stand-ins (`m2lua_builtin_searcher`, the
+  last of `package.searchers`) when the scripts folder has no such file: the
+  memory-map constants, `HEX4`..`HEX32` and the `JOYn`/`JOY_*` numbers, written
+  here with M2emulator's names and values. A file in the folder wins. The web
+  has no folder and no `package.path`/`cpath`: Emscripten's `fopen` stub opens
+  any name and then fails the read (ENOSYS), and Lua's file searcher stops
+  require there instead of trying the next searcher (Pinboard #976: srallyc.lua
+  in the Cheats tab stopped at "cannot read scripts/model2.lua").
 - The web draws text only (`web_cheats_draw`, on a canvas over the picture);
   `Video_CreateSurfaceFromFile` has no file to read there.
-- `Model2_Set*` (widescreen, stretch): the sdl3 frontend draws them (`g_game_wide`, `ui/game_render.h`), the others keep and report them. Widescreen is 16:9 at 384 lines, 682 columns: the 3D is Hor+ (same focal lengths, 93 more columns each side; a window that spans the board spans the picture, a narrower one stays put), the tile layers stay 496 wide in the middle. The board composes both chips into one layer behind the 3D and one in front, so `StretchALow`/`BLow` stretch the one behind and `AHigh`/`BHigh` the one in front. Off with no script, `--no-scripts` or a session holding scripts off. Drawing only; the game culls by its own 4:3 view, so things can pop in at the sides, as in M2emulator.
+- `Model2_Set*` (widescreen, stretch): the sdl3 frontend and the web draw them (`m2lua_wide_apply`, `ui/m2lua_wide.h`, into `g_game_wide`), the others keep and report them. The web's letterbox, render-scale target and filter source take the picture's width (`web_picture_width`). Widescreen is 16:9 at 384 lines, 682 columns: the 3D is Hor+ (same focal lengths, 93 more columns each side; a window that spans the board spans the picture, a narrower one stays put), the tile layers stay 496 wide in the middle. The board composes both chips into one layer behind the 3D and one in front, so `StretchALow`/`BLow` stretch the one behind and `AHigh`/`BHigh` the one in front. Off with no script, `--no-scripts` or a session holding scripts off. Drawing only; the game culls by its own 4:3 view, so things can pop in at the sides, as in M2emulator.
 
 ## The libretro core (Pinboard #967)
 

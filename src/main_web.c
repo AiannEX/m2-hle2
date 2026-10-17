@@ -68,6 +68,7 @@
 #include "crt_pots.h"      /* the monitor's R/G/B and H/V pots, over the picture */
 #include "json_min.h"
 #include "m2lua.h"         /* the cheats scratchpad: a game script from the page */
+#include "m2lua_wide.h"    /* and the picture it asks for (Model2_SetWideScreen) */
 
 /* The single TU that defines g_profiles[] / g_active_profile. Under M2HLE_WEB it
  * registers sfight alone. */
@@ -140,12 +141,13 @@ static struct {
 static struct {
     int      scale;             /* in force */
     int      want;              /* asked for; applied at the top of the next frame */
+    int      cols;              /* the picture's width it was made for (game_render_wide_width) */
     sg_image color, depth;
     sg_view  color_att, depth_att, texture;
 } g_web_rt;
 
 static void web_rt_apply(void) {
-    if (g_web_rt.want == g_web_rt.scale) return;
+    if (g_web_rt.want == g_web_rt.scale && (g_web_rt.scale <= 0 || g_web_rt.cols == game_render_wide_width())) return;
     if (g_web_rt.scale > 0) {
         sg_destroy_view(g_web_rt.texture);
         sg_destroy_view(g_web_rt.depth_att);
@@ -155,7 +157,8 @@ static void web_rt_apply(void) {
     }
     g_web_rt.scale = g_web_rt.want;
     if (g_web_rt.scale <= 0) return;
-    const int w = VIDEO_WIDTH * g_web_rt.scale, h = VIDEO_HEIGHT * g_web_rt.scale;
+    g_web_rt.cols = game_render_wide_width();
+    const int w = g_web_rt.cols * g_web_rt.scale, h = VIDEO_HEIGHT * g_web_rt.scale;
     g_web_rt.color = sg_make_image(&(sg_image_desc){
         .usage = { .color_attachment = true }, .width = w, .height = h,
         .pixel_format = SG_PIXELFORMAT_RGBA8, .sample_count = 1, .label = "web-game-target" });
@@ -818,12 +821,18 @@ static bool web_keep_picture(bool have_game, bool lobby, bool overlay, bool affo
     return false;
 }
 
+/* The picture's width in board columns: a script's widescreen (ui/m2lua_wide.h),
+ * else the filter's (the Arcade's CRT is not square-pixelled). */
+static int web_picture_width(void) {
+    return g_game_wide.extra ? game_render_wide_width() : post_shader_picture_width();
+}
+
 /* Record the menus into `cv`: the lobby on its own, or the pause menu over the game. */
 static void web_record_menus(ps3ui_canvas_t *cv, bool overlay) {
     if (overlay) {
         /* over the game: the 16:9 layout fitted to the game's letterboxed picture */
         game_rect_t r = game_render_letterbox(sapp_width(), sapp_height(),
-                                              post_shader_picture_width(), VIDEO_HEIGHT);
+                                              web_picture_width(), VIDEO_HEIGHT);
         int ox = r.x, oy = r.y, gw = r.w, gh = r.h;
         ps3ui_gpu_record(cv, sapp_width(), sapp_height());
         ps3ui_canvas_size(cv, sapp_width(), sapp_height());
@@ -840,25 +849,25 @@ static void web_record_menus(ps3ui_canvas_t *cv, bool overlay) {
 }
 
 /* The game into the filter's own source target, at the render scale, for a
- * filter over the picture (post_shader.h); it only covers the game's 4:3
- * rectangle, gw x gh. */
+ * filter over the picture (post_shader.h); it only covers the game's
+ * rectangle, gw x gh (16:9 in a script's widescreen). */
 static void web_draw_post_source(int gw, int gh, float lerp_t) {
     int sw, sh;
-    post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, gw, gh, &sw, &sh);
+    post_shader_source_size(game_render_wide_width(), VIDEO_HEIGHT, gw, gh, &sw, &sh);
     post_shader_begin_source(sw, sh, &state.pass_action);
     game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){0, 0, sw, sh}, lerp_t);
     post_shader_end_source();
     post_shader_prepare(gw, gh);
 }
 
-/* The game offscreen at the render scale: N x 496x384. */
+/* The game offscreen at the render scale: N x 496x384 (682 wide in widescreen). */
 static void web_draw_offscreen(float lerp_t) {
     sg_begin_pass(&(sg_pass){
         .action = state.pass_action,
         .attachments = { .colors[0] = g_web_rt.color_att, .depth_stencil = g_web_rt.depth_att },
     });
     game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                    (game_rect_t){0, 0, VIDEO_WIDTH * g_web_rt.scale, VIDEO_HEIGHT * g_web_rt.scale},
+                    (game_rect_t){0, 0, g_web_rt.cols * g_web_rt.scale, VIDEO_HEIGHT * g_web_rt.scale},
                     lerp_t);
     sg_end_pass();
 }
@@ -945,6 +954,7 @@ static void frame(void) {
 
     const int64_t render_t0 = emu_now_us();
     if (g_web_perf.gpu_timing) EM_ASM({ Module.m2hleFrameBegin(); });
+    m2lua_wide_apply();
     web_rt_apply();
 
     static ps3ui_canvas_t lobby_cv;
@@ -956,9 +966,9 @@ static void frame(void) {
     }
 
     /* A filter over the picture (post_shader.h) reads the game from a target of
-     * its own, at the render scale, and only covers the game's 4:3 rectangle. */
+     * its own, at the render scale, and only covers the game's rectangle. */
     game_rect_t r = game_render_letterbox(sapp_width(), sapp_height(),
-                                          post_shader_picture_width(), VIDEO_HEIGHT);
+                                          web_picture_width(), VIDEO_HEIGHT);
     pic.ox = r.x; pic.oy = r.y; pic.w = r.w; pic.h = r.h;
     crt_pots_place(&pic.ox, &pic.oy, &pic.w, &pic.h);
     post_shader_set_input_scale(g_web_rt.want);

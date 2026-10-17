@@ -117,8 +117,8 @@ typedef struct {
     bool runfunc, changefunc;
 } m2lua_option_t;
 
-/* The Model2_Set* switches. The sdl3 frontend draws them (g_game_wide,
- * ui/game_render.h); the others keep and report them, so a script's view of
+/* The Model2_Set* switches. The sdl3 frontend and the web draw them
+ * (ui/m2lua_wide.h); the others keep and report them, so a script's view of
  * them holds. */
 typedef struct {
     bool widescreen;
@@ -607,12 +607,67 @@ static inline int m2lua_option_index(const char *key) {
 
 /* ---- Load, callbacks, unload -------------------------------------------- */
 
-/* package.path: the scripts folder first, so require("model2") finds it. */
+/* package.path: the scripts folder first, so require("model2") finds it. The
+ * web has no files, and its fopen stub opens any name and then fails the read
+ * (ENOSYS), which stops require at the first candidate: no paths there, so it
+ * goes on to the built-ins below. */
 static inline void m2lua_set_path(lua_State *L) {
     lua_getglobal(L, "package");
+#ifdef __EMSCRIPTEN__
+    lua_pushliteral(L, "");
+    lua_setfield(L, -2, "cpath");
+    lua_pushliteral(L, "");
+#else
     lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;./?.lua", g_m2lua.dir, g_m2lua.dir);
+#endif
     lua_setfield(L, -2, "path");
     lua_pop(L, 1);
+}
+
+/* M2emulator's scripts begin with require("model2"), which reads model2.lua and
+ * common.lua from its SCRIPTS folder: the board's memory map, the HEX helpers
+ * and the JOYn key numbers. The web has no folder, and the repo ships neither
+ * file, so these stand in for them (written here, same names and values) when
+ * the folder has no such file: a copy in the folder still wins. */
+static const char k_m2lua_common_lua[] =
+    "HEX2CHAR = \"0123456789ABCDEF\"\n"
+    "local function hex(v, n) return string.format(\"%0\" .. n .. \"X\", math.floor(v) & ((1 << (4 * n)) - 1)) end\n"
+    "function HEX4(v)  return hex(v, 1) end\n"
+    "function HEX8(v)  return hex(v, 2) end\n"
+    "function HEX16(v) return hex(v, 4) end\n"
+    "function HEX32(v) return hex(v, 8) end\n"
+    "JOY1, JOY2, JOY3, JOY4 = 0x100, 0x200, 0x300, 0x400\n"
+    "JOY_LEFT, JOY_RIGHT, JOY_UP, JOY_DOWN = 0x0, 0x1, 0x2, 0x3\n"
+    "JOY_LEFT2, JOY_RIGHT2, JOY_UP2, JOY_DOWN2 = 0x4, 0x5, 0x6, 0x7\n"
+    "JOY_LEFT3, JOY_RIGHT3, JOY_UP3, JOY_DOWN3 = 0x8, 0x9, 0xA, 0xB\n"
+    "for i = 1, 8 do _G[\"JOY_BUTTON\" .. i] = i << 4 end\n";
+
+static const char k_m2lua_model2_lua[] =
+    "require(\"common\")\n"
+    "ROMBASE, RAM2BASE, RAMBASE = 0x00000000, 0x00200000, 0x00500000\n"
+    "GEOBASE, COPBASE, DLISTBASE = 0x00800000, 0x00880000, 0x00900000\n"
+    "TMAPBASE, TMAPGFXBASE, COLORXLAT = 0x01000000, 0x01080000, 0x01810000\n"
+    "IOBASE, BACKUPBASE = 0x01C00000, 0x01D00000\n"
+    "DATAROMBASE, XTRADATABASE = 0x02000000, 0x06000000\n"
+    "TEX0BASE, TEX1BASE, LUMAXLAT, FRAMEBUFBASE = 0x11000000, 0x11200000, 0x11400000, 0x12C00000\n";
+
+/* package.searchers' last: the stand-ins above, after the folder's files. */
+static int m2lua_builtin_searcher(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    const char *src = !strcmp(name, "model2") ? k_m2lua_model2_lua
+                    : !strcmp(name, "common") ? k_m2lua_common_lua : NULL;
+    if (!src) { lua_pushfstring(L, "no built-in module '%s'", name); return 1; }
+    if (luaL_loadbuffer(L, src, strlen(src), name) != LUA_OK) return lua_error(L);
+    lua_pushliteral(L, ":built-in:");
+    return 2;
+}
+
+static inline void m2lua_add_builtins(lua_State *L) {
+    lua_getglobal(L, "package");
+    lua_getfield(L, -1, "searchers");
+    lua_pushcfunction(L, m2lua_builtin_searcher);
+    lua_rawseti(L, -2, (lua_Integer)lua_rawlen(L, -2) + 1);
+    lua_pop(L, 2);
 }
 
 static inline lua_State *m2lua_new_state(void) {
@@ -620,6 +675,7 @@ static inline lua_State *m2lua_new_state(void) {
     if (!L) return NULL;
     luaL_openlibs(L);
     m2lua_set_path(L);
+    m2lua_add_builtins(L);
     lua_pushglobaltable(L);
     luaL_setfuncs(L, k_m2lua_api, 0);
     lua_pop(L, 1);
