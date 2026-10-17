@@ -41,11 +41,11 @@ static hle_hook_fn hook_named(const game_profile_t *p, const char *name) {
  * truly has no country setting (homebrew, a one-country program ROM), never
  * for "not found yet". */
 static const struct { const char *id; game_region_kind_t kind; } g_region_unhooked[] = {
-    { "fvipers",         REGION_TODO },
     { "dynamcop",         REGION_TODO },
     { "dyndeka2",         REGION_TODO },
     { "dynamcopb",        REGION_TODO },
     { "dyndeka2b",        REGION_TODO },
+    { "dynamcopc",        REGION_TODO },
     { "vonj",            REGION_PROGRAM_ROM },
     { "m2snake",         REGION_HOMEBREW },
     { "sfight_homebrew", REGION_HOMEBREW },

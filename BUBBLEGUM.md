@@ -77,7 +77,7 @@ The first two are cheap: make them follow the file's NaN rule (`:76-104`), then 
 - **The 0x06000000 data window.** All three installers copy `main_data + 0x1000000` into `xtra_data` (`sfight.h:191-202`, `fvipers.h:166-177`, `srallyc.h:142-151`). That is MAME's `model2_base_mem`, a board rule. sfight.h calls it "STF-specific / found empirically". FV's comment says "from offset 0 (not 0x01000000 as in STF)", but its code uses 0x01000000.
 - **`enable_68k_sound`.** This is a profile switch for whether the board has a sound board (`game_profile.h:102`, off by default).
   - STF, m2snake, homebrew and Sega Rally set it.
-  - FV does not, so Fighting Vipers runs silent on the same 2B board.
+  - FV does not, so Fighting Vipers runs silent on the same 2B board. (Fixed in #1025: `enable_68k_sound`.)
   - HotD sets it false, though its comment says sound.h should take it as it is.
 
   It should follow from the board variant and an audio CPU ROM being present. Daytona and Virtua Cop have Model 1 sound, which is another board.
@@ -326,7 +326,7 @@ These are board-level and affect every game drawn by the board's walk: STF, FV, 
 
 ### 8.5 Input
 
-- **The service switch is on the wrong bit for STF, FV and m2snake.** `sfight.h:831`, `fvipers.h:257` and `m2snake.h:124` map `GAME_INPUT_SERVICE` to IN0 bit 0x04. In MAME, 0x04 is the test switch (`PORT_SERVICE_NO_TOGGLE`) and SERVICE1 is 0x08 (`model2.cpp:1960-1961`). `srallyc.h:182-183` follows MAME. `sfight_homebrew.h:284` takes STF's map. So "service" opens the test menu in those games, and no input can give a service credit.
+- **The service switch is on the wrong bit for STF, FV and m2snake.** `sfight.h:831`, `fvipers.h:257` and `m2snake.h:124` map `GAME_INPUT_SERVICE` to IN0 bit 0x04. In MAME, 0x04 is the test switch (`PORT_SERVICE_NO_TOGGLE`) and SERVICE1 is 0x08 (`model2.cpp:1960-1961`). `srallyc.h:182-183` follows MAME. `sfight_homebrew.h:284` takes STF's map. So "service" opens the test menu in those games, and no input can give a service credit. (FV fixed in #1025, with its coins and test switch.)
   - **Who it affects:** STF (both profiles), FV, m2snake and STF homebrew.
   - **Tag: netplay.** A frame does not move, but the bit is part of netplay's canonical input word, so a mixed-build session would read each other's service button differently. A bot or script that sends "service" to reach the test menu would also need the new name.
 
