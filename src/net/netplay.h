@@ -210,8 +210,10 @@
  * 28: Fighting Vipers runs its sound 68000 (the i960 reads the UART's
  *    answers) and puts the session's region in its COUNTRY setting, where it
  *    always booted Japan (Pinboard #1025).
+ * 29: Fighting Vipers honours VS mode (fvipers_hook_vs_rematch): a decided
+ *    versus match goes back to select with both players in (Pinboard #1031).
  */
-#define NETPLAY_PROTO_REV 28
+#define NETPLAY_PROTO_REV 29
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.
