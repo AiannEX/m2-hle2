@@ -8,7 +8,8 @@
  *   dyndeka2   Japan,  Model 2A   (board/tgp.h, board/model2a.h)
  *   dynamcopb  Export, Model 2B   SHARC running the uploaded program
  *   dyndeka2b  Japan,  Model 2B   (board/model2b_cop.h)
- *   dynamcopc  USA,    Model 2C   prepared: no core for its TGPx4
+ *   dynamcopc  USA,    Model 2C   TGPx4 running the uploaded program
+ *                                 (board/tgpx4.h, board/model2c_cop.h)
  *
  * Only the first program pair differs between them. Older MAME named three of
  * them dynmcopb, dyndek2b and dynmcopc (rom_set_old), and the dynmcopb dump
@@ -41,6 +42,7 @@
 #include "i960.h"
 #include "model2a.h"
 #include "model2b_cop.h"
+#include "model2c_cop.h"
 #include "crypt_5881.h"
 #include "savestate_reg.h"
 
@@ -169,6 +171,15 @@ static inline void dynamcop_install_2b(const romset_t *rs, i960_cpu_t *cpu, memo
     dynamcop_install_common(rs, cpu, bus);
 }
 
+static inline void dynamcop_install_2c(const romset_t *rs, i960_cpu_t *cpu, memory_bus_t *bus) {
+    if (!rs->loaded) { LOG_ERROR("dynamcop_install: romset not loaded"); return; }
+    i960_reset(cpu);
+    mem_init(bus, rs->maincpu, rs->maincpu_size);
+    model2c_cop_install(bus, rs->copro_data, rs->copro_data_size);
+    savestate_extra("dynamcop", "TGPX4", &g_tgx, sizeof g_tgx);
+    dynamcop_install_common(rs, cpu, bus);
+}
+
 #define DYNAMCOP_INPUT { .bits = { \
     [GAME_INPUT_P1_COIN]  = 0x00000001, [GAME_INPUT_P2_COIN]  = 0x00000002, \
     [GAME_INPUT_TEST]     = 0x00000004, [GAME_INPUT_SERVICE]  = 0x00000008, \
@@ -218,12 +229,10 @@ static const game_profile_t dyndeka2b_profile = {
     .board = BOARD_MODEL2B_CRX, .load_fn = dyndeka2b_load, .install_fn = dynamcop_install_2b,
     .input = DYNAMCOP_INPUT, .quirks = DYNAMCOP_QUIRKS,
 };
-/* Prepared, not runnable: the 2C's coprocessor. */
 static const game_profile_t dynamcopc_profile = {
     .id = "dynamcopc", .display_name = "Dynamite Cop (USA, Model 2C)",
     .rom_set_old = "dynmcopc", .parent_zip_name = "dynamcop.zip",
-    .board = BOARD_MODEL2C_CRX, .load_fn = dynamcopc_load,
-    .preliminary = "Model 2C board: no core for its MB86235 TGPx4 coprocessor",
+    .board = BOARD_MODEL2C_CRX, .load_fn = dynamcopc_load, .install_fn = dynamcop_install_2c,
     .input = DYNAMCOP_INPUT, .quirks = DYNAMCOP_QUIRKS,
 };
 

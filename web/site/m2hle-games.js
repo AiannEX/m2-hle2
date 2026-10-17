@@ -129,7 +129,7 @@ const m2hleGames = (() => {
         { id: 'dyndeka2b', name: 'Japan', about: 'Dynamite Deka 2, Model 2B (Japan)' },
         { id: 'dynamcop', name: 'Export 2A', about: 'Model 2A (Export)' },
         { id: 'dyndeka2', name: 'Japan 2A', about: 'Dynamite Deka 2, Model 2A (Japan)' },
-        { id: 'dynamcopc', name: 'USA 2C', about: 'Model 2C (USA)', soon: true },
+        { id: 'dynamcopc', name: 'USA 2C', about: 'Model 2C (USA)' },
       ],
       /* Every set but dynamcop is a clone of dynamcop.zip. */
       romHint: 'Your <code>dynmcopb.zip</code>, <code>dyndek2b.zip</code> or <code>dyndeka2.zip</code> and its parent <code>dynamcop.zip</code>, picked together, or <code>dynamcop.zip</code> alone',

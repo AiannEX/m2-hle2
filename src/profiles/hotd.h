@@ -8,8 +8,9 @@
  * offsets are MAME's (src/mame/sega/model2.cpp, ROM_START(hotd)).
  *
  * What the board lacks (`preliminary`): HOTD is a Model 2C. Its coprocessor is
- * the MB86235 TGPx4, whose program is copro_data here; there is no core for it
- * (the SHARC is 2B's, board/tgp.h the 2A's MB86234). The sound board is the
+ * the MB86235 TGPx4, whose program is copro_data here. board/tgpx4.h runs it
+ * for Dynamite Cop's 2C set (board/model2c_cop.h), which uploads its program;
+ * this set is not wired to it yet. The sound board is the
  * same SCSP + 68000 as STF's, so sound.h should take it as it is, and the
  * light guns go through the 2C's I/O.
  */
@@ -70,7 +71,7 @@ static const game_profile_t hotd_profile = {
     .display_name = "The House of the Dead (Rev A)",
     .board        = BOARD_MODEL2C_CRX,
     .load_fn      = hotd_load,
-    .preliminary  = "Model 2C board: no core for its MB86235 TGPx4 coprocessor, "
+    .preliminary  = "Model 2C board: its MB86235 TGPx4 is not wired for this set, "
                     "and no light-gun I/O",
     .quirks = {
         /* noclip games.js `hotd` / `hotdo`: 7477 entries of 16 bytes; the

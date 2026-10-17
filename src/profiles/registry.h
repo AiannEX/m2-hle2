@@ -43,6 +43,7 @@ const game_profile_t *const g_profiles[] = {
     &dyndeka2b_profile,
     &dynamcop_profile,
     &dyndeka2_profile,
+    &dynamcopc_profile,
 #ifndef M2HLE_WEB
     &fvipers_profile,
     &m2snake_profile,
@@ -58,7 +59,6 @@ const game_profile_t *const g_prepared_profiles[] = {
     &vcop_profile,
     &daytona_profile,
     &hotd_profile,
-    &dynamcopc_profile,
 };
 
 const size_t g_prepared_count = sizeof(g_prepared_profiles) / sizeof(g_prepared_profiles[0]);
