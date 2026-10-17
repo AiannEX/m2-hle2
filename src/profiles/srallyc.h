@@ -10,7 +10,8 @@
  * textures loaded. Interrupts go through the program's own table (irq_vectors):
  * the vblank handler at 0x5A0490 clears the texture-upload budget flag at
  * 0x202004 and arms timer 2, and without it the course and title textures were
- * never uploaded. No hooks.
+ * never uploaded. Hooks: the region (srallyc_hook_country_default) and the
+ * native replay's two (srallyc_native.h).
  *
  * Controls: the 315-5649 I/O board's wheel, pedals and four-speed lever
  * (board/io_5649.h). LEFT / RIGHT turn the wheel, B1 is the accelerator, B2
@@ -18,8 +19,10 @@
  * wheel's pot is adjustable (--wheel-center / --wheel-range / --wheel-speed);
  * the default is the owner's manual's spec.
  *
- * Replays: a player's game is recorded as the state and the inputs, labelled
- * with the car and the course (srallyc_match_info below).
+ * Replays: each course raced is kept as the clip the game records of it, and
+ * played back by the game's own ending (srallyc_native.h); --replay-format
+ * inputs keeps the state and the inputs too. Labelled with the car and the
+ * course (srallyc_match_info below).
  */
 #ifndef PROFILES_SRALLYC_H
 #define PROFILES_SRALLYC_H
@@ -36,8 +39,10 @@
 #include "memory.h"
 #include "model2a.h"
 #include "i960.h"
+#include "hle_hooks.h"
 #include "io_5649.h"
 #include "savestate_reg.h"
+#include "srallyc_native.h" /* each course's clip in the game's replay format (Pinboard #997) */
 
 #define SRALLYC_PAIR_32(dest, dest_sz, lo, crc_lo, hi, crc_hi, half_sz, offset) \
     do { \
@@ -155,6 +160,12 @@ static inline void srallyc_install(const romset_t *rs, i960_cpu_t *cpu, memory_b
 
     uint32_t prcb = srallyc_read32(rs->maincpu, 0x04);
     if (prcb + 0x2C < rs->maincpu_size) {
+        /* FP on the PRCB's interrupt stack (MAME i960 device_reset): the boot
+         * calls 0x5C0, which flushes the frames and returns through memory, so
+         * the caller's frame has to land in RAM, not at 0 in ROM. */
+        uint32_t isp = srallyc_read32(rs->maincpu, prcb + PRCB_INTR_STACK);
+        cpu->globals.fp = isp;
+        cpu->locals.sp  = isp + 64;
         uint32_t start_ip_ptr = srallyc_read32(rs->maincpu, prcb + PRCB_START_IP);
         if (start_ip_ptr < rs->maincpu_size) cpu->sfr.ip = srallyc_read32(rs->maincpu, start_ip_ptr);
     }
@@ -177,8 +188,7 @@ static inline void srallyc_install(const romset_t *rs, i960_cpu_t *cpu, memory_b
  *             and the first championship race)
  *   0x20A8C4  the car-select cursor, kept into the race: 0 Celica MT,
  *             1 Celica AT, 2 Delta AT, 3 Delta MT (left to right on the wheel)
- * The game keeps no replay of its own, so a replay is always the state and the
- * input feed. */
+ * The game's own replay, each course's highlight clip, is srallyc_native.h's. */
 #define SRALLYC_MODE   0x00202098u
 #define SRALLYC_COURSE 0x0020A7DCu
 #define SRALLYC_CAR    0x0020A8C4u
@@ -203,6 +213,48 @@ static void srallyc_match_info(memory_bus_t *bus, game_match_info_t *out) {
     out->stage_name    = course < 3 ? courses[course] : NULL;
 }
 
+/*
+ * The region (Pinboard #942). The program runs from RAM, copied from ROM
+ * 0x1000 to 0x5A0000 at boot. Its settings are a 0x24-byte block in work RAM
+ * at 0x202010: CRC16 (+0), length 0x24 (+2), save count (+4), then the GAME
+ * ASSIGNMENTS; COUNTRY is the byte at 0x202019 (0 JPN, 1 USA, 2 EXPORT: the
+ * strings at 0x5A5C68, and the test menu at 0x5A5F80 keeps it at 2 or less).
+ * They are kept in the 315-5649's serial EEPROM (a 93C46 on port 0x1C00000,
+ * DO at 0x1C00002 bit 5), not in the backup SRAM at 0x1D00000.
+ *
+ * At boot 0x5A1C80 reads the block from the EEPROM (0x5A1200 -> 0x5A1180) and
+ * checks its CRC and length. A block that fails gets the factory defaults
+ * (0x5A1A20 -> 0x5A1978) and is saved back (0x5A1930 -> 0x5A1220); either way
+ * the boot goes on at 0x5A1CD0.
+ *
+ * country_default (0x5A19A4, in the factory defaults): the instruction before
+ * it, `stob g14, 0x202019` (g14 zeroed at the routine's start), stores JPN.
+ * Put g_region there and let this one run. Japan (0) is the ROM's default and
+ * MAME's, so --region japan (the graders') leaves the board as it was.
+ *
+ * settings_checked (0x5A1CD0, where the boot goes on): with g_region_over_saved
+ * (the web's --region=, or --region-over-saved), put g_region in the working
+ * block's COUNTRY over the one a saved block brought. The EEPROM keeps its own
+ * until the game next saves. This board has no EEPROM yet (io_5649.h: DO reads
+ * 1), so today every boot fails the CRC and takes the defaults, and this
+ * writes what country_default already did; an emulated EEPROM changes that.
+ */
+#define SRALLYC_COUNTRY 0x00202019u
+
+static int srallyc_hook_country_default(i960_cpu_t *cpu, memory_bus_t *bus) {
+    (void)cpu;
+    mem_write8(bus, SRALLYC_COUNTRY, (uint8_t)g_region);
+    return 1;
+}
+
+static uint32_t srallyc_country(memory_bus_t *bus) { (void)bus; return SRALLYC_COUNTRY; }
+
+static int srallyc_hook_settings_checked(i960_cpu_t *cpu, memory_bus_t *bus) {
+    (void)cpu;
+    if (g_region_over_saved) mem_write8(bus, srallyc_country(bus), (uint8_t)g_region);
+    return 1;
+}
+
 static const game_profile_t srallyc_profile = {
     .id              = "srallyc",
     .display_name    = "Sega Rally Championship (Rev C)",
@@ -210,8 +262,16 @@ static const game_profile_t srallyc_profile = {
     .board           = BOARD_MODEL2A_CRX,
     .load_fn         = srallyc_load,
     .install_fn      = srallyc_install,
-    .hook_count      = 0,
+    .hook_count      = 2 + SRALLYC_NATIVE_HOOK_COUNT,
+    .hooks = {
+        { 0x005A19A4, srallyc_hook_country_default,  "country_default" },
+        { 0x005A1CD0, srallyc_hook_settings_checked, "settings_checked" },
+        SRALLYC_NATIVE_HOOKS
+    },
     .match_info      = srallyc_match_info,
+    .native_take     = srallyc_native_take,
+    .native_put      = srallyc_native_put,
+    .native_play     = srallyc_native_play,
     .in_play         = srallyc_in_play,
     .input = {
         /* IN0 is the cabinet's: COIN1 0x01, TEST 0x04, SERVICE 0x08, VR 0x20,
@@ -239,6 +299,8 @@ static const game_profile_t srallyc_profile = {
         .irq_vectors      = true,
         .board_vblank     = true,
         .io_5649          = true,
+        .region           = { .kind = REGION_HOOKED, .factory_default = "country_default",
+                              .over_saved = "settings_checked", .country = srallyc_country },
         /* The grid's LOD budget is a timer read (0x5BADE0: timer 3 into
          * 0x20AAC0, 0x5BB2A0 picks a quota row from it). At MAME's table the
          * frame ends early, the row is 8 and the third car ahead of the player

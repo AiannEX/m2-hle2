@@ -302,6 +302,42 @@ static inline bool rudp_all_open(const rudp_peer_t *p) {
 
 /* ---- Sending ------------------------------------------------------------- */
 
+/* A data segment's header, sequence snd_nxt. A reliable channel piggybacks our
+ * ACK and its delay. Returns the header's length. */
+static inline uint32_t rudp_put_data_header(const rudp_chan_t *c, uint8_t *b, bool latency, uint64_t now) {
+    uint8_t flags = latency ? RUDP_F_LATENCY : 0;
+    uint32_t n = 0;
+    if (c->reliable) flags |= RUDP_F_ACK | RUDP_F_ACK_DELAY;   /* piggyback our ACK */
+    b[n++] = (uint8_t)((RUDP_TYPE_DATA << 6) | flags);
+    b[n++] = RUDP_WINDOW_BYTE;
+    rudp_be16(b + n, c->snd_nxt); n += 2;
+    if (c->reliable) {
+        rudp_be16(b + n, c->rcv_nxt); n += 2;
+        uint64_t ms = (c->ack_due && now > c->ack_since_ms) ? now - c->ack_since_ms : 0;
+        rudp_be16(b + n, (uint16_t)(ms > 0xFFFF ? 0xFFFF : ms)); n += 2;
+    }
+    return n;
+}
+
+/* Keeps a reliable segment for resending; the piggybacked ACK is now sent.
+ * False if the send queue is full. */
+static inline bool rudp_queue_segment(rudp_chan_t *c, const void *msg, uint32_t len, bool latency,
+                                      uint64_t now) {
+    rudp_seg_t *slot = NULL;
+    for (uint32_t i = 0; i < RUDP_SENDQ && !slot; i++) if (!c->sendq[i].used) slot = &c->sendq[i];
+    if (!slot) return false;
+    slot->used = true;
+    slot->seq = c->snd_nxt;
+    slot->len = (uint16_t)len;
+    slot->flags = latency ? RUDP_F_LATENCY : 0;
+    slot->tries = 1;
+    slot->sent_ms = now;
+    memcpy(slot->data, msg, len);
+    c->ack_due = false;
+    c->rx_unacked = 0;
+    return true;
+}
+
 /*
  * cellRudpWrite. `latency` is STF's write flag 8 (header flag 0x08), which it
  * sets on the per-frame input packet only. False if the channel is not open, the
@@ -313,36 +349,12 @@ static inline bool rudp_write(rudp_peer_t *p, uint16_t vport, const void *msg, u
     if (!c || c->state != RUDP_ESTABLISHED || len > sizeof(c->sendq[0].data)) return false;
 
     uint8_t b[8 + sizeof(c->sendq[0].data)];
-    uint8_t flags = latency ? RUDP_F_LATENCY : 0;
-    uint32_t n = 0;
-    if (c->reliable) flags |= RUDP_F_ACK | RUDP_F_ACK_DELAY;   /* piggyback our ACK */
-    b[n++] = (uint8_t)((RUDP_TYPE_DATA << 6) | flags);
-    b[n++] = RUDP_WINDOW_BYTE;
-    uint16_t seq = c->snd_nxt;
-    rudp_be16(b + n, seq); n += 2;
-    if (c->reliable) {
-        rudp_be16(b + n, c->rcv_nxt); n += 2;
-        uint64_t ms = (c->ack_due && now > c->ack_since_ms) ? now - c->ack_since_ms : 0;
-        rudp_be16(b + n, (uint16_t)(ms > 0xFFFF ? 0xFFFF : ms)); n += 2;
-    }
+    uint32_t n = rudp_put_data_header(c, b, latency, now);
     memcpy(b + n, msg, len);
     n += len;
 
-    if (c->reliable) {
-        rudp_seg_t *slot = NULL;
-        for (uint32_t i = 0; i < RUDP_SENDQ && !slot; i++) if (!c->sendq[i].used) slot = &c->sendq[i];
-        if (!slot) return false;
-        slot->used = true;
-        slot->seq = seq;
-        slot->len = (uint16_t)len;
-        slot->flags = latency ? RUDP_F_LATENCY : 0;
-        slot->tries = 1;
-        slot->sent_ms = now;
-        memcpy(slot->data, msg, len);
-        c->ack_due = false;
-        c->rx_unacked = 0;
-    }
-    c->snd_nxt = (uint16_t)(seq + 1u);
+    if (c->reliable && !rudp_queue_segment(c, msg, len, latency, now)) return false;
+    c->snd_nxt = (uint16_t)(c->snd_nxt + 1u);
     c->tx_segments++;
     rudp_emit(p, c, b, n);
     return true;
@@ -571,33 +583,39 @@ static inline bool rudp_on_datagram(rudp_peer_t *p, const uint8_t *buf, uint32_t
 
 /* ---- Timers -------------------------------------------------------------- */
 
+/* A channel still opening: reset it once the connect timeout has run out, else send
+ * the SYN again when the retry is due. */
+static inline void rudp_pump_syn(rudp_peer_t *p, rudp_chan_t *c, uint64_t now) {
+    if (now - c->syn_start_ms > RUDP_CONNECT_TIMEOUT_MS) {
+        rudp_send_rst(p, c, 3);
+        c->state = RUDP_CLOSED;
+        return;
+    }
+    if (now >= c->syn_next_ms) {
+        rudp_send_syn(p, c, c->state == RUDP_SYN_RCVD);
+        c->syn_next_ms = now + RUDP_SYN_RETRY_MS;
+    }
+}
+
+/* An open reliable channel: resend each segment whose timeout ran out, then the
+ * delayed ACK once two segments wait for it or it has waited long enough. */
+static inline void rudp_pump_reliable(rudp_peer_t *p, rudp_chan_t *c, uint64_t now) {
+    for (uint32_t k = 0; k < RUDP_SENDQ; k++) {
+        rudp_seg_t *s = &c->sendq[k];
+        if (!s->used) continue;
+        uint32_t rto = RUDP_RTO_MS << (s->tries > 4 ? 4 : s->tries - 1);
+        if (rto > RUDP_RTO_MAX_MS) rto = RUDP_RTO_MAX_MS;
+        if (now - s->sent_ms >= rto) rudp_resend(p, c, s, now);
+    }
+    if (c->ack_due && (c->rx_unacked >= 2 || now - c->ack_since_ms >= RUDP_ACK_DELAY_MS))
+        rudp_send_ack(p, c, now);
+}
+
 static inline void rudp_pump(rudp_peer_t *p, uint64_t now) {
     for (uint32_t i = 0; i < RUDP_CHANNELS; i++) {
         rudp_chan_t *c = &p->ch[i];
-        if (c->state == RUDP_SYN_SENT || c->state == RUDP_SYN_RCVD) {
-            if (now - c->syn_start_ms > RUDP_CONNECT_TIMEOUT_MS) {
-                rudp_send_rst(p, c, 3);
-                c->state = RUDP_CLOSED;
-                continue;
-            }
-            if (now >= c->syn_next_ms) {
-                rudp_send_syn(p, c, c->state == RUDP_SYN_RCVD);
-                c->syn_next_ms = now + RUDP_SYN_RETRY_MS;
-            }
-            continue;
-        }
-        if (c->state != RUDP_ESTABLISHED) continue;
-        if (c->reliable) {
-            for (uint32_t k = 0; k < RUDP_SENDQ; k++) {
-                rudp_seg_t *s = &c->sendq[k];
-                if (!s->used) continue;
-                uint32_t rto = RUDP_RTO_MS << (s->tries > 4 ? 4 : s->tries - 1);
-                if (rto > RUDP_RTO_MAX_MS) rto = RUDP_RTO_MAX_MS;
-                if (now - s->sent_ms >= rto) rudp_resend(p, c, s, now);
-            }
-            if (c->ack_due && (c->rx_unacked >= 2 || now - c->ack_since_ms >= RUDP_ACK_DELAY_MS))
-                rudp_send_ack(p, c, now);
-        }
+        if (c->state == RUDP_SYN_SENT || c->state == RUDP_SYN_RCVD) rudp_pump_syn(p, c, now);
+        else if (c->state == RUDP_ESTABLISHED && c->reliable) rudp_pump_reliable(p, c, now);
     }
 }
 

@@ -32,6 +32,7 @@
 
 #include "constants.h"
 #include "game_profile.h"
+#include "eeprom_93c46.h"
 #include "io_5649.h"
 #include "log.h"
 #include "memory.h"
@@ -254,10 +255,20 @@ static uint32_t input_io_read_cb(mem_region_t *r, uint32_t addr, int size) {
     uint32_t off  = addr - r->base;
     uint32_t held = g_input.use_net ? g_input.net_held : g_input.held;
     switch (off) {
-        case 0x02: return (uint8_t)~(held         & 0xFFu);  /* IN0 system */
+        case 0x02: return eeprom_in0((uint8_t)~(held & 0xFFu));  /* IN0 system */
         case 0x04: return (uint8_t)~((held >> 8)  & 0xFFu);  /* IN1 P1     */
         case 0x06: return (uint8_t)~((held >> 16) & 0xFFu);  /* IN2 P2     */
         default:   return r->data ? r->data[off] : 0xFFu;    /* DIPs / idle */
+    }
+}
+
+/* Port A (IO+0x00) is the EEPROM's; the rest keep the plain buffer. */
+static void input_io_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int size) {
+    uint32_t off = addr - r->base;
+    for (int i = 0; i < size; i++) {
+        uint8_t b = (uint8_t)(val >> (8 * i));
+        if (off + (uint32_t)i == 0x00) eeprom_port_a(b);
+        if (r->data && off + (uint32_t)i < r->size) r->data[off + (uint32_t)i] = b;
     }
 }
 
@@ -282,7 +293,7 @@ static inline void input_attach(memory_bus_t *bus) {
     for (int i = 0; i < bus->region_count; i++) {
         if (bus->regions[i].base == IO_BASE) {
             if (g_active_profile && g_active_profile->quirks.io_5649) input_attach_5649(&bus->regions[i]);
-            else bus->regions[i].read_cb = input_io_read_cb;
+            else { bus->regions[i].read_cb = input_io_read_cb; bus->regions[i].write_cb = input_io_write_cb; }
             mem_regions_changed(bus);
             LOG_INFO("input: I/O port read callback attached @ 0x%08X", IO_BASE);
             return;

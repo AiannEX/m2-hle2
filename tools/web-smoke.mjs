@@ -5,7 +5,7 @@
  *   node tools/web-smoke.mjs --url http://localhost:8080/?rom=/dev-rom.zip
  *        [--seconds 30] [--shot out.png] [--shot-at 10,20] [--browser path/to/chrome-or-edge]
  *        [--size 992x768] [--expect-frames N] [--keys "5@12,1@14"] [--gesture-audio]
- *        [--expect-log TEXT] [--fail-on-log REGEX] [--sound] [--diagnose] [--drawer lag|console|picture|replay]
+ *        [--expect-log TEXT] [--fail-on-log REGEX] [--sound] [--diagnose] [--drawer lag|console|picture|replay|cheats]
  *        [--cpu-throttle N] [--eval JS] [--mobile] [--taps "coin@12,b1@20:300,dpad-right@22:500"]
  *        [--hide 20:10] [--watch JS] [--headed]
  *
@@ -47,8 +47,9 @@
  * touch buttons (web/site/m2hle-touch.js). --taps then presses them by name at
  * given seconds, with real touch events on the page: "b1@20:300" holds Punch
  * for 300 ms at t=20 s (120 ms if no hold is given). The names are the controls'
- * ids -- dpad, b1..b4, start, coin -- and dpad-up/-down/-left/-right/-up-left/...
- * press the d-pad two thirds of the way out that way. Each tap prints the mask
+ * ids -- dpad, b1..b4, start, coin; a twin-stick game's rpad, rshot, rdash -- and
+ * dpad-up/-down/-left/-right/-up-left/... (rpad-...) press a d-pad two thirds of
+ * the way out that way. Each tap prints the mask
  * the touch layer held, so a tap that missed says so.
  *
  * --hide T:N covers the game with a new foreground tab at t=T s for N s, which

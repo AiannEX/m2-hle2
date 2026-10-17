@@ -48,6 +48,7 @@
 #include "../core/watchpoint.h"
 #include "../core/backup_ram.h"
 #include "cop.h"
+#include "eeprom_93c46.h"
 #include "irq_timer.h"
 
 /* ---- Region descriptor --------------------------------------------------- */
@@ -852,6 +853,7 @@ static inline int mem_init(memory_bus_t *bus, uint8_t *rom_data, size_t rom_size
 
     cop_reset();   /* clears g_cop / g_sharc and resets rot[] to identity */
     irqt_reset();  /* timers idle (0xFFFFF), no interrupt pending, vblank phase 0 */
+    eeprom_power_on();   /* erased, the same on every machine (eeprom_93c46.h) */
 
     if (!mem_alloc_regions(bus)) return 0;
 

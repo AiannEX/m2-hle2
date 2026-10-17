@@ -93,6 +93,15 @@ typedef struct i960_cpu {
      * into ROM; STF's compiler never addresses through fp. */
     uint32_t       frame_fp[FRAME_STACK_DEPTH];
 
+    /* `flushreg` puts the cached frames in memory, each at its FP in the
+     * hardware's layout (r0 pfp, r1 sp, r2 the IP the frame resumes at), and a
+     * `ret` into one loads it back from there, at pfp. frame_stack[d] for d <
+     * frame_flushed is stale then. frame_mem says a flush ever happened, so a
+     * `ret` with nothing cached reads memory instead of halting. Dynamite Cop's
+     * task switch (0x2E80) rewrites the frame it returns into that way. */
+    int            frame_flushed;
+    int            frame_mem;
+
     // Running state
     int            halted;
 
@@ -130,6 +139,24 @@ static i960_bt_t g_i960_bt;
 static uint32_t  g_i960_cyc_frac;
 /* --i960-timing: -1 the profile's choice, 0 the table, 1 the board's. */
 static int       g_i960_timing_force = -1;
+
+/* Room to push a frame. A full cache drops the frames flushreg already put in
+ * memory (i960.h, frame_flushed): a program that switches tasks never pops
+ * them, as Dynamite Cop's main loop does not (0x142C, a frame a pass). */
+static inline bool i960_frame_room(i960_cpu_t *cpu) {
+    if (cpu->frame_depth < FRAME_STACK_DEPTH) return true;
+    int k = cpu->frame_flushed;
+    if (k <= 0) return false;
+    size_t n = (size_t)(cpu->frame_depth - k);
+    memmove(cpu->frame_stack,  cpu->frame_stack + k,  n * sizeof cpu->frame_stack[0]);
+    memmove(cpu->frame_irq,    cpu->frame_irq + k,    n * sizeof cpu->frame_irq[0]);
+    memmove(cpu->frame_irq_ac, cpu->frame_irq_ac + k, n * sizeof cpu->frame_irq_ac[0]);
+    memmove(cpu->frame_irq_pc, cpu->frame_irq_pc + k, n * sizeof cpu->frame_irq_pc[0]);
+    memmove(cpu->frame_fp,     cpu->frame_fp + k,     n * sizeof cpu->frame_fp[0]);
+    cpu->frame_depth   = (int)n;
+    cpu->frame_flushed = 0;
+    return true;
+}
 
 static inline void i960_reset(i960_cpu_t *cpu) {
     memset(cpu, 0, sizeof(i960_cpu_t));

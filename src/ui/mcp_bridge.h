@@ -132,7 +132,20 @@ static mcp_bridge_t g_mcp = {0};
 #define mcp_json_get_int  json_get_int
 #define mcp_json_escape   json_escape
 
+/* The game scripts' script_* commands (ui/m2lua_mcp.h, Pinboard #958): set by
+ * a host that runs them; NULL elsewhere, and they are unknown. */
+static void (*g_mcp_script_cmd)(const char *cmd, const char *req, char *resp, int cap);
+
 /* ---- Command handlers ---------------------------------------------------- */
+
+/* A linked comm board's 60 Hz clock (link_pace.h): frames run on it, the owed
+ * ones dropped past its cap, and the SLAVE's early ones. */
+static void mcp_link_pace_json(const emu_thread_ctx_t *emu, char *out, int cap) {
+    if (!emu) { snprintf(out, (size_t)cap, "null"); return; }
+    snprintf(out, (size_t)cap, "{\"linked\":%s,\"frames\":%llu,\"dropped\":%llu,\"trims\":%u}",
+             m2comm_linked() ? "true" : "false", (unsigned long long)emu->link_pace.frames,
+             (unsigned long long)emu->link_pace.dropped, emu->link_pace.trims);
+}
 
 static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
     mcp_bridge_t *b = &g_mcp;
@@ -184,6 +197,8 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
      * (emu_times.h); a watcher's reading leaves it be. */
     char et[1024];
     emu_times_json(et, (int)sizeof et, restart_max);
+    char lp[160];
+    mcp_link_pace_json(b->emu, lp, (int)sizeof lp);
 
     snprintf(resp, (size_t)cap,
              "{\"ok\":true,\"running\":%s,\"halted\":%s,"
@@ -192,7 +207,7 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
              "\"idle_hold\":{\"on\":%s,\"holding\":%s},"
              "\"texload\":{\"hle\":%s,\"rows\":%llu},"
              "\"enemy_rank\":%d,"
-             "\"av\":%s,\"overlay\":%s,\"render\":%s,\"emu\":%s,\"version\":\"%s\",\"build\":\"%s\"}",
+             "\"av\":%s,\"overlay\":%s,\"render\":%s,\"emu\":%s,\"link_pace\":%s,\"version\":\"%s\",\"build\":\"%s\"}",
              running ? "true" : "false",
              halted  ? "true" : "false",
              ip, sps, (unsigned long long)steps, profile_id,
@@ -203,7 +218,7 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
              g_idle_hold ? "true" : "false", b->emu && b->emu->idle_holding ? "true" : "false",
              g_texload_hle ? "true" : "false", (unsigned long long)g_texload_rows,
              (int)g_enemy_rank,
-             av, ov, rt, et, M2HLE_VERSION, M2HLE_BUILD_FLAVOR);
+             av, ov, rt, et, lp, M2HLE_VERSION, M2HLE_BUILD_FLAVOR);
 }
 
 /* {"cmd":"prof","on":1} arms the i960 address profiler (clearing it),
@@ -2339,6 +2354,21 @@ static void mcp_np_status_room(mcp_np_out_t *o, const netplay_status_t *st) {
     mcp_np_append(o, "]}");
 }
 
+/* A linked comm board (netplay_comm_open): the role it booted into, the board
+ * frames of CN 1 and of the first send (-1: not yet), the ring and the link. */
+static void mcp_np_status_comm(mcp_np_out_t *o, const netplay_status_t *st) {
+    const struct netplay_comm_status *c = &st->comm;
+    mcp_np_append(o, ",\"comm\":{\"open\":%s,\"linked\":%s,\"role\":\"%s\",\"waited\":%u,"
+              "\"cn_frame\":%d,\"first_send\":%d,\"early\":%u,\"ring\":{\"up\":%s,\"node\":%u,"
+              "\"nodes\":%u,\"sent\":%u,\"taken\":%u},\"sent\":%u,\"taken\":%u,\"stale\":%u,"
+              "\"torn\":%u,\"too_big\":%u,\"overflow\":%u,\"packed_peak\":%u,\"pending\":%u}",
+              mcp_tf(c->open), mcp_tf(c->linked), comm_role_name((game_link_role_t)c->role), c->waited,
+              c->cn_frame == UINT32_MAX ? -1 : (int)c->cn_frame,
+              c->first_send == UINT32_MAX ? -1 : (int)c->first_send, c->early,
+              mcp_tf(c->ring_up == M2COMM_LINK_UP), c->node, c->nodes, c->ring_sent, c->ring_taken,
+              c->sent, c->taken, c->stale, c->torn, c->too_big, c->overflow, c->packed_peak, c->pending);
+}
+
 /* PS3 cross-play (net/ps3_link.h): the PS3 room's phase, our side, the
  * lockstep's counters, and each member's signaling and RUDP channels
  * (0 idle, 1 SYN sent, 2 SYN received, 3 open, 4 closed). */
@@ -2432,6 +2462,7 @@ static void mcp_cmd_netplay_status(const char *req, char *resp, int cap) {
     mcp_np_append(&o, ",\"frame\":%u,\"stalls\":%u,\"generation\":%u,\"seed\":\"0x%08X\"",
               st.frame, st.stalls, st.generation, st.seed);
     if (st.ps3) mcp_np_status_ps3(&o, &st);
+    if (st.comm.open) mcp_np_status_comm(&o, &st);
     /* The room emptied with the board still in its VS mode: any input restarts
      * the game (netplay_empty_room_pump). */
     mcp_np_append(&o, ",\"empty_room\":%s", mcp_tf(st.empty_room));
@@ -2977,6 +3008,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
     else if (strcmp(cmd, "enemy_rank")               == 0) mcp_cmd_enemy_rank(req, resp, cap);
     else if (strcmp(cmd, "follow_lead")              == 0) mcp_cmd_follow_lead(req, resp, cap);
     else if (strcmp(cmd, "replay")                   == 0) mcp_cmd_replay(req, resp, cap);
+    else if (strncmp(cmd, "script_", 7) == 0 && g_mcp_script_cmd) g_mcp_script_cmd(cmd, req, resp, cap);
     else snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"unknown cmd: %s\"}", cmd);
     mcp_follow_break_after(cmd);
 }

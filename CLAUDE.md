@@ -38,6 +38,7 @@ The load-bearing invariants (reverse-engineered, in no datasheet, do not re-deri
 | Raw A/V out | [av-out.md](docs/invariants/av-out.md) | `av_stream.h`, `av_capture.h` |
 | Overlay plugin swap | [overlay-swap.md](docs/invariants/overlay-swap.md) | `overlay_host.h` |
 | Picture filters | [picture-filters.md](docs/invariants/picture-filters.md) | `post_shader.h`, `retro_shader.h` |
+| Game scripts (Lua) | [scripts.md](docs/invariants/scripts.md) | `m2lua*.h`, `m2hle-cheats.js` |
 
 Building, the tests, the graders and the STF disassembly: [docs/build.md](docs/build.md). Grader details: [tools/README.md](tools/README.md). The other top-level `*.md` files are per-topic notes (WEB-PORT, SCSP, ROOM-MATCH, MCP_GUIDE, ...); open them when the topic comes up.
 

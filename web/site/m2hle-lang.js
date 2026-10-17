@@ -18,8 +18,15 @@
  *   data-i18n="key"       the element's text
  *   data-i18n-html="key"  its HTML (only for the tables' own markup, <code>)
  *   data-i18n-title="key", data-i18n-aria="key"  its title / aria-label
+ *   data-i18n-placeholder="key", data-i18n-alt="key"  an input's placeholder, an image's alt
  * A game's own words (title, blurb, profile names, ROM hint, control labels)
  * are in its GAMES entry, with each language's under `i18n` (m2hleGames.text).
+ *
+ * The game page's menu and its panels (Pinboard #944) bring their own words:
+ * m2hle-lang-menu.js the page's markup, and each script that writes text (the
+ * lag check, the lobby, replays, ...) its own keys, with add() at its top.
+ * index.html translates its markup itself, just before those scripts run;
+ * another page is translated at DOMContentLoaded.
  */
 'use strict';
 
@@ -74,8 +81,14 @@ const m2hleLang = (() => {
   const LANGS = { en: { name: 'English', strings: en }, ja: { name: '日本語', strings: ja } };
   const DEFAULT = 'en';
 
+  /* Other names a visit may give a language: ?lang=jp is Japanese. */
+  const ALIASES = { jp: 'ja' };
+
   const q = new URLSearchParams(location.search);
-  const lang = LANGS[q.get('lang')] ? q.get('lang') : DEFAULT;
+  /* The language the visit asked for, even one the site has no words in: the
+   * board's country follows it (m2hle-game.js), ?lang=fr is Export in English. */
+  const asked = ALIASES[q.get('lang')] || q.get('lang') || DEFAULT;
+  const lang = LANGS[asked] ? asked : DEFAULT;
 
   /* The string for `key` in this page's language, {name}s filled from `vars`. */
   function t(key, vars) {
@@ -83,6 +96,18 @@ const m2hleLang = (() => {
     return vars ? s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m)) : s;
   }
 
+  /* More keys, { en: {...}, ja: {...} }: a script's own words, kept beside it.
+   * English must have every key, as above. */
+  function add(tables) {
+    for (const [code, strings] of Object.entries(tables)) {
+      if (LANGS[code]) Object.assign(LANGS[code].strings, strings);
+    }
+  }
+
+  /* Translate everything under `root` that names a key. A page that calls this
+   * itself, before its scripts fill it in (index.html), is not done again at
+   * DOMContentLoaded, which would undo what they wrote. */
+  let applied = false;
   /* Translate everything under `root` that names a key. */
   function apply(root) {
     const all = (attr, fn) => root.querySelectorAll('[' + attr + ']')
@@ -91,6 +116,9 @@ const m2hleLang = (() => {
     all('data-i18n-html', (el, k) => { el.innerHTML = t(k); });
     all('data-i18n-title', (el, k) => { el.title = t(k); });
     all('data-i18n-aria', (el, k) => el.setAttribute('aria-label', t(k)));
+    all('data-i18n-placeholder', (el, k) => { el.placeholder = t(k); });
+    all('data-i18n-alt', (el, k) => { el.alt = t(k); });
+    if (root === document) applied = true;
   }
 
   /* `params` (a URLSearchParams) with this page's language, if it is not the
@@ -108,8 +136,8 @@ const m2hleLang = (() => {
 
   document.documentElement.lang = lang;
   if (document.readyState === 'loading')
-    document.addEventListener('DOMContentLoaded', () => apply(document));
+    document.addEventListener('DOMContentLoaded', () => { if (!applied) apply(document); });
   else apply(document);
 
-  return { LANGS, DEFAULT, lang, t, apply, keep, query };
+  return { LANGS, DEFAULT, lang, asked, t, add, apply, keep, query };
 })();

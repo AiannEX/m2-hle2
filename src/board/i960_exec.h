@@ -325,6 +325,57 @@ static inline unsigned i960_cycle_cost(uint32_t word1) {
 
 #include "i960_timing.h"
 
+//--- Frames in memory ---------------------------------------------------------
+
+/* flushreg: the cached frames above frame_flushed go to memory at their FPs
+ * (i960.h, frame_flushed). The model keeps each frame's return IP in the
+ * callee's set; memory gets the hardware's layout, the IP in the caller's r2,
+ * at the FP rounded down to a frame as MAME's flush does (Sega Rally's boot
+ * reinitialises with an unaligned FP, then flushes and returns to 0x590).
+ * pfp is the caller's FP, as `call` sets it. */
+static inline void i960_flushreg(i960_cpu_t *cpu, memory_bus_t *bus) {
+    int depth = cpu->frame_depth;
+    for (int d = cpu->frame_flushed; d < depth; d++) {
+        local_regs_t f = cpu->frame_stack[d];
+        f.rip = d + 1 < depth ? cpu->frame_stack[d + 1].rip : cpu->locals.rip;
+        for (int i = 0; i < 16; i++) mem_write32(bus, (cpu->frame_fp[d] & ~(uint32_t)FRAME_ALIGN_MASK) + 4u * (uint32_t)i, f.r[i]);
+    }
+    cpu->frame_flushed = depth;
+    cpu->frame_mem = 1;
+}
+
+/* `ret` into a frame flushreg left in memory: FP from pfp, the locals from
+ * there, the IP from its r2. The cached frame below is that one unless a task
+ * switch rewrote pfp (Dynamite Cop's longjmp, 0x2E80); then every cached frame
+ * is another task's, all in memory already, and the cache empties. Interrupt
+ * returns go as the cached `ret`'s. */
+static inline void i960_ret_mem(i960_cpu_t *cpu, memory_bus_t *bus) {
+    uint32_t fp = cpu->locals.pfp & ~(uint32_t)FRAME_ALIGN_MASK;
+    bool rt7 = (cpu->locals.pfp & 7u) == 7u && (cpu->sfr.pc & 2u);
+    uint32_t rt7_pc = rt7 ? mem_read32(bus, cpu->globals.fp - 16u) : 0;
+    uint32_t rt7_ac = rt7 ? mem_read32(bus, cpu->globals.fp - 12u) : 0;
+    bool irq = false;
+    int d = cpu->frame_depth - 1;
+    if (d >= 0 && (cpu->frame_fp[d] & ~(uint32_t)FRAME_ALIGN_MASK) == fp) {
+        cpu->frame_depth = cpu->frame_flushed = d;
+        irq = cpu->frame_irq[d] != 0;
+        cpu->frame_irq[d] = 0;
+    } else {
+        cpu->frame_depth = cpu->frame_flushed = 0;   /* another task's frame */
+    }
+    if (irq) {
+        cpu->sfr.ac = cpu->frame_irq_ac[d];
+        cpu->sfr.pc = cpu->frame_irq_pc[d];
+    } else if (rt7) {
+        cpu->sfr.ac = rt7_ac;
+        cpu->sfr.pc = rt7_pc;
+    }
+    for (int i = 0; i < 16; i++) cpu->locals.r[i] = mem_read32(bus, fp + 4u * (uint32_t)i);
+    cpu->sfr.ip = cpu->locals.rip;
+    cpu->locals.rip = mem_read32(bus, (cpu->locals.pfp & ~(uint32_t)FRAME_ALIGN_MASK) + 8u);
+    cpu->globals.fp = fp;
+}
+
 //--- Execute one instruction --------------------------------------------------
 
 
@@ -372,7 +423,7 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
                 case 0x09: // call
                 {
                     // Save current frame
-                    if (cpu->frame_depth < FRAME_STACK_DEPTH) {
+                    if (i960_frame_room(cpu)) {
                         cpu->frame_stack[cpu->frame_depth] = cpu->locals;
                         cpu->frame_irq[cpu->frame_depth] = 0;
                         cpu->frame_fp[cpu->frame_depth] = cpu->globals.fp;
@@ -384,7 +435,7 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
                     }
 
                     // New frame: pfp = old FP, rip = return address
-                    uint32_t old_fp = cpu->locals.pfp;
+                    uint32_t old_fp = cpu->globals.fp;
                     uint32_t old_sp = cpu->locals.sp;
                     memset(&cpu->locals, 0, sizeof(local_regs_t));
                     cpu->locals.pfp = old_fp;
@@ -399,6 +450,10 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
 
                 case 0x0A: // ret
                 {
+                    if (M2_UNLIKELY(cpu->frame_mem && cpu->frame_depth <= cpu->frame_flushed)) {
+                        i960_ret_mem(cpu, bus);
+                        return 0;
+                    }
                     if (cpu->frame_depth > 0) {
                         uint32_t return_ip = cpu->locals.rip;
                         /* Return status 7 in pfp, set by the program, is an
@@ -852,6 +907,8 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
 
                                 memset(&cpu->locals, 0, sizeof(local_regs_t));
                                 cpu->frame_depth = 0;
+                                cpu->frame_flushed = 0;
+                                cpu->frame_mem = 0;
                                 cpu->prcb = new_prcb;
 
                                 uint32_t new_isp = mem_read32(bus, new_prcb + PRCB_INTR_STACK);
@@ -885,7 +942,7 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
                     cpu->sfr.pc |= 0x2000;
                     break;
                 case 0x66d: // flushreg
-                    // Flush register cache to memory - noop for us
+                    i960_flushreg(cpu, bus);
                     break;
                 case 0x66f: // syncf
                     // Synchronize faults - noop for us
@@ -1337,7 +1394,7 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
                     return 0;
                 case 0x86: // callx (call indirect)
                 {
-                    if (cpu->frame_depth < FRAME_STACK_DEPTH) {
+                    if (i960_frame_room(cpu)) {
                         cpu->frame_stack[cpu->frame_depth] = cpu->locals;
                         cpu->frame_irq[cpu->frame_depth] = 0;
                         cpu->frame_fp[cpu->frame_depth] = cpu->globals.fp;
@@ -1348,9 +1405,9 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
                         return -1;
                     }
                     uint32_t old_sp = cpu->locals.sp;
-                    uint32_t old_pfp = cpu->locals.pfp;
+                    uint32_t old_fp = cpu->globals.fp;
                     memset(&cpu->locals, 0, sizeof(local_regs_t));
-                    cpu->locals.pfp = old_pfp;
+                    cpu->locals.pfp = old_fp;
                     cpu->globals.fp = (old_sp + FRAME_ALIGN_MASK) & ~FRAME_ALIGN_MASK;
                     cpu->locals.sp = cpu->globals.fp + 64;
                     cpu->locals.rip = ip + instr_len;
