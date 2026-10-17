@@ -180,10 +180,31 @@ Steps:
    and without a peer the board is 75145df's bit for bit (vonj and STF,
    3000 frames with sound). Still no room calls `netplay_comm_open`, so
    `NETPLAY_PROTO_REV` stays.
-5. Test two headless clients on the container's RPCN.
+5. Done (#983). A room's match of a game with a `link_role` (vonj) opens the
+   link, not a lockstep session: each fighter's `netplay_member_start_session`
+   takes the match's side and generation (`netplay_member_start_link`) and
+   calls `netplay_comm_open`. Nothing steps a session, so the emu thread's role
+   pump boots the board into the room's role and plugs the peer in after it.
+   A watcher's board runs alone; the match's end closes the link.
+   `NETPLAY_PROTO_REV` 23 (above #381's 22): a room session now reads the
+   other cabinet's packets. `netplay_status` has the link (`comm`: role, CN 1
+   frame, first send, early sends, ring node, the channel's counts) and
+   `get_status` the clock (`link_pace`). `tools/von-rpcn-pair.mjs` runs two
+   headless m2hle, one board each, on the container's RPCN (127.0.0.1:31313):
+   one owns a room, the other joins, both press Start, and it watches 60 s.
+   Owner: role byte 1, node 1 of 2, link_ID 1. Guest: role byte 0, node 2 of
+   2, link_ID 2, 0x503A08 1. Both: `net_flag` 1, `cRecn+4` 0x10, CN 1 in frame
+   345 of the role boot and nothing sent before it. First sends: frame 578
+   (owner) and 500 (guest; against step 3's phantom, which sends from its
+   first frame, 345: the SLAVE answers its master). 3618 messages each way,
+   every one taken: none overflowed, too big or torn; no frame dropped or
+   trimmed; 59.8 board frames a second of wall time on both. Without a peer
+   the board is 75145df's bit for bit (vonj and STF, 3000 frames with sound),
+   and the libretro shell's Arcade launch (Hard, 2 rounds, 60 s) writes the
+   same settings to backup RAM as 42c6e58's.
 
-The shell's Online Battle row then opens the lobby for vonj (`no_online` =
-NULL).
+Still to do: the shell's Online Battle row opens the lobby for vonj
+(`no_online` = NULL); it and Versus still refuse.
 
 ## GGPO: not for Virtual-On
 

@@ -219,3 +219,10 @@ are **silently wrong** rather than loudly wrong when you get them half right.
   trims (one frame early after 30 frame edges with 2+ of the master's messages waiting): a
   master that trimmed on the slave's answers would chase the slave's backlog. The board's
   frame stays 416,667 cycles; a linked board refuses a state load and rewind.
+- **A linked game's room match opens the link, not a lockstep session** (`netplay_member_start_link`,
+  Pinboard #983). For a profile with a `link_role`, each fighter takes the match's side and
+  generation (the datagram header) and calls `netplay_comm_open`; the room stays in its lobby
+  state and no session steps, which is what lets `emu_comm_role_pump` boot the board into the role.
+  There is no barrier, input exchange or desync check; a watcher's board runs alone, and
+  `netplay_end_match` closes the link. Each board sends nothing before its comm board starts
+  (`netplay_status` `comm.early`, 0 on the RPCN pair test, `tools/von-rpcn-pair.mjs`).
