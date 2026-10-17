@@ -15,8 +15,9 @@
  * the whole chip), on the board's clock, so every machine sees it end at the
  * same instruction.
  *
- * The words are board state like backup RAM; a fresh board's chip reads
- * erased (0xFFFF), the same on every machine, and a board reset keeps them.
+ * The words are board state (savestates, rollback) but not kept on disk yet:
+ * mem_init, which every install and netplay reset runs, erases the chip
+ * (0xFFFF), so every machine starts a session from the same one.
  */
 #ifndef M2HLE_EEPROM_93C46_H
 #define M2HLE_EEPROM_93C46_H
@@ -56,13 +57,6 @@ static inline void eeprom_power_on(void) {
     memset(&g_eeprom, 0, sizeof g_eeprom);
     memset(g_eeprom.word, 0xFF, sizeof g_eeprom.word);
     g_eeprom.locked = 1;
-}
-
-/* A board reset: the lines and the state machine, not the words. */
-static inline void eeprom_reset(void) {
-    eeprom_t e = g_eeprom;
-    eeprom_power_on();
-    memcpy(g_eeprom.word, e.word, sizeof e.word);
 }
 
 static inline int64_t eeprom_now(void) {
