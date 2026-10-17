@@ -118,6 +118,40 @@ const m2hleGames = (() => {
         },
       },
     },
+    dynamcop: {
+      title: 'Dynamite Cop',
+      year: 1998, board: 'Model 2A/2B-CRX', colors: ['#e0a106', '#5c3a0b'],
+      blurb: 'Pirates have taken the President\'s daughter hostage on a cruise liner. Bruno Delinger is going in.',
+      /* src/profiles/dynamcop.h: the 2B sets first, which track MAME closest;
+       * the 2A sets are the same game on the TGP board. 2C is prepared only. */
+      profiles: [
+        { id: 'dynamcopb', name: 'Export', about: 'Model 2B (Export)' },
+        { id: 'dyndeka2b', name: 'Japan', about: 'Dynamite Deka 2, Model 2B (Japan)' },
+        { id: 'dynamcop', name: 'Export 2A', about: 'Model 2A (Export)' },
+        { id: 'dyndeka2', name: 'Japan 2A', about: 'Dynamite Deka 2, Model 2A (Japan)' },
+        { id: 'dynamcopc', name: 'USA 2C', about: 'Model 2C (USA)', soon: true },
+      ],
+      /* Every set but dynamcop is a clone of dynamcop.zip. */
+      romHint: 'Your <code>dynmcopb.zip</code>, <code>dyndek2b.zip</code> or <code>dyndeka2.zip</code> and its parent <code>dynamcop.zip</code>, picked together, or <code>dynamcop.zip</code> alone',
+      /* src/profiles/dynamcop.h: an 8-way stick, B1 punch, B2 kick, B3 jump. */
+      labels: { b1: 'Punch', b2: 'Kick', b3: 'Jump', b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'ダイナマイト刑事2',
+          blurb: '豪華客船を乗っ取った海賊に大統領の娘が人質に。ブルーノ・デリンジャー、出動。',
+          profiles: { dynamcopb: { name: '海外', about: 'Model 2B（海外）' },
+                      dyndeka2b: { name: '日本', about: 'ダイナマイト刑事2、Model 2B（日本）' },
+                      dynamcop: { name: '海外 2A', about: 'Model 2A（海外）' },
+                      dyndeka2: { name: '日本 2A', about: 'ダイナマイト刑事2、Model 2A（日本）' },
+                      dynamcopc: { name: '北米 2C', about: 'Model 2C（北米）' } },
+          romHint: 'お持ちの <code>dynmcopb.zip</code>、<code>dyndek2b.zip</code> または <code>dyndeka2.zip</code> と親セットの <code>dynamcop.zip</code> を一緒に選ぶか、<code>dynamcop.zip</code> だけ',
+          labels: { b1: 'パンチ', b2: 'キック', b3: 'ジャンプ', b4: '未使用' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
 
