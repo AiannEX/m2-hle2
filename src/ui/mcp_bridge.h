@@ -280,6 +280,27 @@ static void mcp_cmd_set_input(const char *req, char *resp, int cap) {
     snprintf(resp, (size_t)cap, "{\"ok\":true,\"held\":\"0x%08X\"}", held);
 }
 
+/* Point a light gun as a host's mouse would (lightgun.h): {"cmd":"set_gun",
+ * "player":0,"x":0.5,"y":0.5} aims P1 at the picture's centre (0..1 across
+ * and down), "offscreen":1 points it off the picture, "on":0 hands the gun
+ * back to the pad. Replies with where the board's gun points. */
+static void mcp_cmd_set_gun(const char *req, char *resp, int cap) {
+    int player = 0, on = 1, off = 0;
+    float x = 0.5f, y = 0.5f;
+    json_get_int(req, "player", &player);
+    json_get_int(req, "on", &on);
+    json_get_int(req, "offscreen", &off);
+    json_get_f32(req, "x", &x);
+    json_get_f32(req, "y", &y);
+    if (player < 0 || player >= LIGHTGUN_PLAYERS) {
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"player is 0 or 1\"}");
+        return;
+    }
+    lightgun_point(player, on != 0, off != 0, x, y);
+    snprintf(resp, (size_t)cap, "{\"ok\":true,\"player\":%d,\"ad_x\":%d,\"ad_y\":%d}",
+             player, (int)g_lightgun.x[player], (int)g_lightgun.y[player]);
+}
+
 /* set_camera's view fields: where the debug camera stands and looks, and the
  * test triangle / lines-only switches. */
 static void mcp_set_camera_view(const char *req) {
@@ -2914,6 +2935,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
 
     if      (strcmp(cmd, "get_status")       == 0) mcp_cmd_get_status(resp, cap, true);
     else if (strcmp(cmd, "set_input")        == 0) mcp_cmd_set_input(req, resp, cap);
+    else if (strcmp(cmd, "set_gun")          == 0) mcp_cmd_set_gun(req, resp, cap);
     else if (strcmp(cmd, "prof")             == 0) mcp_cmd_prof(req, resp, cap);
     else if (strcmp(cmd, "prof_dump")        == 0) mcp_cmd_prof_dump(req, resp, cap);
     else if (strcmp(cmd, "set_camera")       == 0) mcp_cmd_set_camera(req, resp, cap);

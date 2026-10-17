@@ -65,6 +65,7 @@
 #include "shader_window.h"   /* ...and the Video menu that picks one */
 #include "m2lua_ui.h"        /* M2emulator's game scripts: their drawing, keys and menu */
 #include "m2lua_mcp.h"       /* ...and the bridge's script_* commands */
+#include "lightgun_ui.h"      /* the mouse as a light gun, and its crosshairs */
 #if defined(__linux__)
 #include <unistd.h>          /* readlink: scripts/ beside the executable */
 #endif
@@ -1637,6 +1638,8 @@ static void frame(void) {
         /* What the game's script drew (PostDraw), over the game and under the
          * debug windows. Not on the A/V stream: that is the board's picture. */
         if (!win_overlay) m2lua_ui_draw(ox, oy, w, h);
+        lightgun_ui_set_rect(ox, oy, w, h);
+        lightgun_ui_draw(ox, oy, w, h);
 
         extract_model_tick();
     }
@@ -1706,6 +1709,7 @@ static void event(const sapp_event* ev) {
     if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && !ev->key_repeat) input_key_down((int)ev->key_code);
     if (ev->type == SAPP_EVENTTYPE_KEY_UP)                      input_key_up((int)ev->key_code);
     m2lua_ui_event(ev);
+    lightgun_ui_event(ev);
 
     if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) return;
     switch (ev->key_code) {
