@@ -297,6 +297,8 @@ typedef struct game_profile {
      * the id. Several profiles can run one set (STF's Console and Arcade); the
      * first registered is the default, see profile_for_rom_set(). */
     const char       *rom_set;
+    /* The set's name in older MAME (dynmcopb for dynamcopb), picked too. */
+    const char       *rom_set_old;
     const char       *parent_zip_name; /* MAME parent set zip name, e.g. "schamp.zip" */
     board_variant_t   board;
 
@@ -351,6 +353,12 @@ static inline const char *profile_rom_set(const game_profile_t *p) {
     return p->rom_set ? p->rom_set : p->id;
 }
 
+/* Whether `set` (a zip basename) is this profile's set, by its name or its
+ * older MAME name. */
+static inline bool profile_runs_set(const game_profile_t *p, const char *set) {
+    return strcmp(profile_rom_set(p), set) == 0 || (p->rom_set_old && strcmp(p->rom_set_old, set) == 0);
+}
+
 /* The quirks' model table as the board reads it (model_table.h). No quirks:
  * an empty table. */
 static inline model_table_t profile_model_table(const game_quirks_t *q) {
@@ -375,16 +383,16 @@ static inline const game_profile_t *profile_by_id(const char *id) {
 static inline const game_profile_t *profile_for_rom_set(const char *set,
                                                         const game_profile_t *preferred) {
     if (!set) return NULL;
-    if (preferred && strcmp(profile_rom_set(preferred), set) == 0) return preferred;
+    if (preferred && profile_runs_set(preferred, set)) return preferred;
     for (size_t i = 0; i < g_profile_count; i++)
-        if (strcmp(profile_rom_set(g_profiles[i]), set) == 0) return g_profiles[i];
+        if (profile_runs_set(g_profiles[i], set)) return g_profiles[i];
     return NULL;
 }
 
 /* The prepared profile for a ROM set, or NULL. */
 static inline const game_profile_t *profile_prepared_for_rom_set(const char *set) {
     for (size_t i = 0; set && i < g_prepared_count; i++)
-        if (strcmp(profile_rom_set(g_prepared_profiles[i]), set) == 0) return g_prepared_profiles[i];
+        if (profile_runs_set(g_prepared_profiles[i], set)) return g_prepared_profiles[i];
     return NULL;
 }
 

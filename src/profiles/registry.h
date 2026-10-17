@@ -23,6 +23,7 @@
 #include "fvipers.h"
 #include "m2snake.h"
 #include "sfight_homebrew.h"
+#include "dynamcop.h"
 #endif
 /* Prepared, not runnable (Pinboard #660): the sets noclip reads that the
  * board cannot run yet. A few hundred bytes of chip lists, so the web build
@@ -42,6 +43,10 @@ const game_profile_t *const g_profiles[] = {
     &fvipers_profile,
     &m2snake_profile,
     &sfight_homebrew_profile,
+    &dynamcopb_profile,
+    &dyndeka2b_profile,
+    &dynamcop_profile,
+    &dyndeka2_profile,
 #endif
 };
 
@@ -53,6 +58,9 @@ const game_profile_t *const g_prepared_profiles[] = {
     &vcop_profile,
     &daytona_profile,
     &hotd_profile,
+#ifndef M2HLE_WEB
+    &dynamcopc_profile,
+#endif
 };
 
 const size_t g_prepared_count = sizeof(g_prepared_profiles) / sizeof(g_prepared_profiles[0]);
