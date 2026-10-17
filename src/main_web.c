@@ -202,6 +202,7 @@ static void web_install_board(void) {
     g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
     irqt_reset();
     if (g_active_profile->quirks.enable_68k_sound) {
+        sound_select_board(g_active_profile->quirks.model1_sound);
         sound_reset();
         sound_attach(&state.bus);
         if (state.romset.audiocpu && state.romset.audiocpu_size > 0)

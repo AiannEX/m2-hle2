@@ -432,6 +432,7 @@ static savestate_rom_t g_lr_state_rom;  /* the loaded ROM's id, with g_lr_state_
 static bool g_lr_redraw;   /* a state was loaded: draw it even if the board did not run */
 
 static void lr_attach_sound(void) {
+    sound_select_board(g_active_profile->quirks.model1_sound);
     sound_reset();
     sound_attach(&state.bus);
     sound_load_rom(state.romset.audiocpu, (uint32_t)state.romset.audiocpu_size);

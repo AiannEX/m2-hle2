@@ -352,6 +352,7 @@ static SDL_AudioStream *sound_start(void) {
         fprintf(stderr, "m2hle: could not open audio (%s); running silent\n", SDL_GetError());
         return NULL;
     }
+    sound_select_board(g_active_profile->quirks.model1_sound);
     sound_reset();
     sound_attach(&state.bus);
     sound_load_rom(state.romset.audiocpu, (uint32_t)state.romset.audiocpu_size);
@@ -1028,6 +1029,7 @@ static void sdl_netplay_reset_cb(void *ctx) {
     g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
     irqt_reset();
     if (g_sound_on) {
+        sound_select_board(g_active_profile->quirks.model1_sound);
         sound_reset();
         sound_attach(&state.bus);
         sound_load_rom(state.romset.audiocpu, (uint32_t)state.romset.audiocpu_size);

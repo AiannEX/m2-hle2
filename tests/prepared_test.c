@@ -1,7 +1,9 @@
 /*
  * prepared_test.c — the prepared profiles (registry.h, g_prepared_profiles;
- * Pinboard #660): Virtua Cop, Daytona USA and The House of the Dead, which no
- * board here can run yet.
+ * Pinboard #660): Virtua Cop and The House of the Dead, which no board here
+ * can run yet, and Daytona USA, which runs since Pinboard #1035 (on the
+ * desktop builds; the web build still lists it as prepared) and keeps its
+ * checks against noclip's reads.
  *
  * Without ROMs (the canary): every recipe part lands inside a region the
  * recipe gives a size, every profile says what its board lacks and has no
@@ -33,7 +35,7 @@
 
 #include "test_rom_dir.h"
 
-const game_profile_t *const g_prepared_profiles[] = { &vcop_profile, &daytona_profile, &hotd_profile };
+const game_profile_t *const g_prepared_profiles[] = { &vcop_profile, &hotd_profile };
 const size_t g_prepared_count = sizeof g_prepared_profiles / sizeof g_prepared_profiles[0];
 
 static int g_fail = 0;
@@ -151,6 +153,10 @@ static void check_recipe(const rom_recipe_t *rc) {
 
 static void check_profile(const prepared_case_t *c) {
     const game_profile_t *p = c->p;
+    if (p->install_fn) {   /* runnable now: only the recipe */
+        check_recipe(c->recipe);
+        return;
+    }
     CHECK(p->load_fn && !p->install_fn, "%s: loads, and has no installer", p->id);
     CHECK(p->preliminary && p->preliminary[0], "%s: says what the board lacks", p->id);
     CHECK(profile_prepared_for_rom_set(p->id) == p, "%s: found by its set name", p->id);
@@ -490,7 +496,9 @@ static void check_set(const prepared_case_t *c) {
     if (!f) { printf("skip: %s not found\n", path); return; }
     fclose(f);
     static romset_t rs;
-    int rc = c->p->load_fn(&rs, path, NULL);
+    char parent[1100] = "";
+    if (c->p->parent_zip_name) snprintf(parent, sizeof parent, "%s", test_rom(c->p->parent_zip_name));
+    int rc = c->p->load_fn(&rs, path, parent[0] ? parent : NULL);
     CHECK(rc == 0 && rs.loaded, "%s: the set loads", id);
     if (rc != 0) return;
     for (int r = 0; r < ROM_REGION_COUNT; r++) {

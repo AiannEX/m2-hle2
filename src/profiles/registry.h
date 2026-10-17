@@ -48,6 +48,7 @@ const game_profile_t *const g_profiles[] = {
     &fvipers_profile,
     &m2snake_profile,
     &sfight_homebrew_profile,
+    &daytona_profile,
 #endif
 };
 
@@ -57,7 +58,9 @@ const game_profile_t *g_active_profile = NULL;
 
 const game_profile_t *const g_prepared_profiles[] = {
     &vcop_profile,
-    &daytona_profile,
+#ifdef M2HLE_WEB
+    &daytona_profile,   /* runs on the desktop builds (Pinboard #1035) */
+#endif
     &hotd_profile,
 };
 
