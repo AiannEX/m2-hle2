@@ -21,7 +21,7 @@ endforeach()
 # A game's own page: index.html with that game's words in its head. m2hle-game.js
 # gives the page its game's title once it runs, but a link preview (Discord, a chat
 # app, a search engine) reads the page without running it, so a link that should
-# name its game points at sfight.html, srallyc.html, vonj.html or dynamcop.html (m2hle-games.js picks the game
+# name its game points at sfight.html, srallyc.html, vonj.html, dynamcop.html or fvipers.html (m2hle-games.js picks the game
 # from the file name; Pinboard #673, #881, #935). The same text as m2hle-game.js sets.
 file(READ "${SITE}/index.html" text)
 set(site_title "<title>Model 2 Arcade</title>")
@@ -33,7 +33,8 @@ foreach(want site_title site_desc)
   endif()
 endforeach()
 foreach(game "sfight|Sonic the Fighters" "srallyc|Sega Rally Championship"
-             "vonj|Cyber Troopers Virtual-On" "dynamcop|Dynamite Cop")
+             "vonj|Cyber Troopers Virtual-On" "dynamcop|Dynamite Cop"
+             "fvipers|Fighting Vipers")
   string(REPLACE "|" ";" game "${game}")
   list(GET game 0 id)
   list(GET game 1 title)

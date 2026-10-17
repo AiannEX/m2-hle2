@@ -13,15 +13,16 @@
 #include "sfight.h"
 #include "sfight_console.h"
 /* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
- * play over RPCN, Sega Rally, Virtual-On and Dynamite Cop (the page's ?game=,
- * web/site/m2hle-games.js). Any other set is only download size:
- * left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
+ * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop and Fighting Vipers
+ * (the page's ?game=, web/site/m2hle-games.js). Any other set is only
+ * download size: left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. */
 #include "srallyc.h"
 #include "vonj.h"
 #include "dynamcop.h"
-#ifndef M2HLE_WEB
 #include "fvipers.h"
+#include "hotd.h"      /* runs since Pinboard #1034; not on the web yet */
+#ifndef M2HLE_WEB
 #include "m2snake.h"
 #include "sfight_homebrew.h"
 #endif
@@ -30,7 +31,6 @@
  * has them too. */
 #include "vcop.h"
 #include "daytona.h"
-#include "hotd.h"
 
 /* Order matters: the first profile for a ROM set is its default
  * (profile_for_rom_set), so Console comes before Arcade. */
@@ -44,9 +44,9 @@ const game_profile_t *const g_profiles[] = {
     &dynamcop_profile,
     &dyndeka2_profile,
     &dynamcopc_profile,
+    &fvipers_profile,
 #ifndef M2HLE_WEB
     &hotd_profile,
-    &fvipers_profile,
     &m2snake_profile,
     &sfight_homebrew_profile,
 #endif

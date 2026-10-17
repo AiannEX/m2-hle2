@@ -152,6 +152,31 @@ const m2hleGames = (() => {
         },
       },
     },
+    fvipers: {
+      title: 'Fighting Vipers',
+      year: 1995, board: 'Model 2B-CRX', colors: ['#c81d6a', '#3d0b2a'],
+      blurb: 'Armoured street fighters in caged arenas: break the armour, then the walls.',
+      profiles: [
+        { id: 'fvipers', name: 'Rev D', about: 'Revision D' },
+        { id: 'fvipersb', name: 'Rev B', about: 'Revision B', soon: true },
+      ],
+      romHint: 'Your <code>fvipers.zip</code> (Fighting Vipers, Revision D)',
+      /* src/profiles/fvipers.h: MAME's INPUT_PORTS(vf2), B1 punch, B2 kick, B3 guard. */
+      labels: { b1: 'Punch', b2: 'Kick', b3: 'Guard', b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'ファイティングバイパーズ',
+          blurb: 'アーマーをまとった喧嘩屋たちが金網の中で激突。アーマーを砕き、壁をぶち破れ。',
+          profiles: { fvipers: { name: 'リビジョン D', about: 'リビジョン D' },
+                      fvipersb: { name: 'リビジョン B', about: 'リビジョン B' } },
+          romHint: 'お持ちの <code>fvipers.zip</code>（ファイティングバイパーズ、リビジョン D）',
+          labels: { b1: 'パンチ', b2: 'キック', b3: 'ガード', b4: '未使用' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
 
