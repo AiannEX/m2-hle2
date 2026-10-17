@@ -111,8 +111,13 @@ static uint32_t m2comm_phantom__board_recv(void *ctx, uint8_t *msg, uint32_t cap
     return m2comm_q_get(&g_m2comm_board_in, msg, cap);
 }
 
+static uint32_t m2comm_phantom__board_pending(void *ctx) {
+    (void)ctx;
+    return g_m2comm_board_in.tail - g_m2comm_board_in.head;
+}
+
 static const m2comm_peer_t m2comm_phantom_board_peer = {
-    NULL, m2comm_phantom__from_board, m2comm_phantom__board_recv };
+    NULL, m2comm_phantom__from_board, m2comm_phantom__board_recv, m2comm_phantom__board_pending };
 
 /* A phantom that is `role` (1 master, 2 slave); the board's end of the link,
  * for the caller to plug in (m2comm_set_peer, or net/comm_role.h's reset). */

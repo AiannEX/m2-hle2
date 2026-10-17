@@ -212,4 +212,10 @@ static inline uint32_t comm_link_recv(void *ctx, uint8_t *msg, uint32_t cap) {
     return len;
 }
 
+/* m2comm_peer_t pending: the messages waiting in the inbox. */
+static inline uint32_t comm_link_pending(void *ctx) {
+    const comm_link_t *l = (const comm_link_t *)ctx;
+    return l->tail - l->head;
+}
+
 #endif /* COMM_LINK_H */

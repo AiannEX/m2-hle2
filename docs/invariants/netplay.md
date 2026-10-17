@@ -210,3 +210,12 @@ are **silently wrong** rather than loudly wrong when you get them half right.
   are kept); then the board cold-boots with its backup RAM kept and only then gets its peer.
   The ROM sends nothing until it starts its comm board (CN 1; `m2comm.h` makes no pass before).
   The reset is not a lockstep barrier: `emu_comm_role_pump` runs only while no session steps.
+- **A linked board keeps 60 Hz of wall time, whatever the host** (`core/link_pace.h`,
+  Pinboard #978). Nothing waits for the other cabinet, so its speed is only kept by both hosts
+  running the board to the wall clock: a slow board loses the stage handshake (state 0x24, one
+  frame) and moves less often. While `m2comm_linked()`, the emu thread, `retro_run` and the
+  page's callback run the frames that are due (a late one owes up to 4; the rest is dropped),
+  and nothing runs it faster (fast-forward, unthrottled, a watcher's catch-up). Only the SLAVE
+  trims (one frame early after 30 frame edges with 2+ of the master's messages waiting): a
+  master that trimmed on the slave's answers would chase the slave's backlog. The board's
+  frame stays 416,667 cycles; a linked board refuses a state load and rewind.

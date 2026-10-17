@@ -87,11 +87,14 @@ typedef struct {
 
 /* The other cabinet: datagrams, each a frame type byte and its payload.
  * recv returns the next one's length (at most cap bytes) or 0 if none has
- * come. The link session owns it; it outlives the board's resets. */
+ * come. pending (may be NULL) is how many are waiting: the host's link clock
+ * reads it (core/link_pace.h). The link session owns it; it outlives the
+ * board's resets. */
 typedef struct {
     void     *ctx;
     void     (*send)(void *ctx, const uint8_t *msg, uint32_t len);
     uint32_t (*recv)(void *ctx, uint8_t *msg, uint32_t cap);
+    uint32_t (*pending)(void *ctx);
 } m2comm_peer_t;
 
 enum { M2COMM_LINK_DOWN = 0, M2COMM_LINK_UP = 1 };
@@ -307,6 +310,21 @@ static void m2comm_ram_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, in
 static inline void m2comm_set_peer(const m2comm_peer_t *peer) {
     g_m2comm_link.peer = peer;
     m2comm__link_reset(&g_m2comm_link);
+}
+
+/* Whether the comm board is linked to another cabinet: its host then paces it
+ * by the link's clock (core/link_pace.h). */
+static inline bool m2comm_linked(void) { return g_m2comm_link.peer != NULL; }
+
+/* The master's messages waiting for a slave's next passes; 0 on the master.
+ * The master's clock is the link's: it sends a window every pass, and the
+ * slave answers each one it takes, so only the slave can fall behind. A
+ * master that ran early to work off the slave's answers would only hand the
+ * slave one more of its own, and the two would chase each other's backlog. */
+static inline uint32_t m2comm_backlog(void) {
+    const m2comm_peer_t *p = g_m2comm_link.peer;
+    if (!p || !p->pending || m2comm__is_master(&g_m2comm)) return 0u;
+    return p->pending(p->ctx);
 }
 
 /* Call after mem_init: the COMM status regions answer as the board, and the

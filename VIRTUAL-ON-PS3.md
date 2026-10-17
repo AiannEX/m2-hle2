@@ -148,7 +148,38 @@ Steps:
    session reads the peer's packets and `NETPLAY_PROTO_REV` stays: the room
    opens the link with steps 4 and 5. `tests/comm_role_test.c` holds the role
    bytes, the CRC, the shell's settings across it and the order of the reset.
-4. Pace the board to 60 Hz while linked.
+4. Done (#978). While a peer is plugged in (`m2comm_linked`), the host runs
+   the board on `core/link_pace.h`'s clock, YAMP's `BoardFramesDue`: each
+   frame is due one 1/60 s after the last was due, so a late call runs the
+   frames it owes (4 at most; the rest is dropped, not repaid), and nothing
+   runs it faster, fast-forward and unthrottled runs included. The emu thread
+   sleeps to it (`emu_pace_linked`); libretro's `retro_run` (`lr_run_linked`)
+   and the page's frame callback (`web_run_linked`) run what is due, from a
+   30 Hz display to a 240 Hz one. The two cabinets' clocks drift, and a
+   dropped debt leaves the SLAVE behind for good, with the master's frames
+   piling up in its inbox (8 kept, the oldest dropped): so a SLAVE that has 2
+   or more of them waiting at 30 frame edges in a row runs one frame early
+   (the peer's `pending`, `m2comm_backlog`; 0 on the MASTER, whose clock is
+   the link's). The board's frame is unchanged (416,667 cycles); a state load
+   and rewind are refused on a linked board. `tests/link_pace_test.c` runs
+   the clock on called hosts from 30 to 1000 Hz (3600 frames a minute, one a
+   call at 60 Hz with 4 ms jitter), on a stall, on the sleeping host, and on
+   two cabinets 500 ppm apart (48 of the master's frames lost without the
+   trim, none with it). `det_digest --link-host-hz HZ` puts the board on a
+   host called HZ times a second of virtual time, with the phantom MASTER on
+   its own 60 Hz clock; `--link-unpaced` runs one frame a call as before.
+   vonj, 3000 frames, guest over the UDP pair on a 32 Hz host: unpaced the
+   board runs 32 frames a second and loses 2320 of the master's messages to
+   the inbox; paced it runs 60.2 a second and loses none (the in-process
+   phantom: 2308 and none). At 60 Hz with 4 ms jitter and at 144 Hz: 60.2 a
+   second, none lost. The 0.2 is 11 early frames while the ring comes up,
+   the backlog the master sends before the SLAVE's ROM takes it (11 at 600
+   frames and still 11 at 6000). Host on a 32 Hz host: 32 a second unpaced,
+   60.0 paced. Pacing moves no board frame: first sends stay at 578 (host)
+   and 345 (guest), roles, node ids, link_ID and `net_flag` as in step 3,
+   and without a peer the board is 75145df's bit for bit (vonj and STF,
+   3000 frames with sound). Still no room calls `netplay_comm_open`, so
+   `NETPLAY_PROTO_REV` stays.
 5. Test two headless clients on the container's RPCN.
 
 The shell's Online Battle row then opens the lobby for vonj (`no_online` =

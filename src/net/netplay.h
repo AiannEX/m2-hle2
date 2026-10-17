@@ -1405,7 +1405,8 @@ static inline void netplay_comm_open(void) {
     lockstep_header_t h;
     netplay_fill_header(&h, LOCKSTEP_PACKET_COMM);
     comm_link_start(&g_netplay_comm, (uint16_t)(net_now_us() | 1u), &h, netplay__comm_transmit, NULL);
-    g_netplay_comm_peer = (m2comm_peer_t){ &g_netplay_comm, comm_link_send, comm_link_recv };
+    g_netplay_comm_peer = (m2comm_peer_t){ &g_netplay_comm, comm_link_send, comm_link_recv,
+                                           comm_link_pending };
     comm_role_begin(netplay_comm_role(), &g_netplay_comm_peer);
     g_netplay_comm_open = true;
     netplay_log("comm link: this cabinet is the %s; it boots into that once its backup RAM can hold it",

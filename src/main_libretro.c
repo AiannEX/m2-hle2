@@ -1577,7 +1577,7 @@ static void lr_push_audio(void) {
 static uint32_t g_lr_runs, g_lr_skips;
 
 /* One slice of the board, and what it ended on. */
-static void lr_slice(void) {
+static emu_slice_result_t lr_slice(void) {
     emu_slice_body(&state.emu);
     emu_slice_result_t res = emu_slice_finish(&state.emu);
     if (res == EMU_SLICE_FRAME && pkt_lockstep_playing(&g_pkt)) {
@@ -1602,6 +1602,7 @@ static void lr_slice(void) {
             emu_run(&state.emu);   /* a debug stop (break-on-warn ...) has no debugger to go to here */
         }
     }
+    return res;
 }
 
 /* RetroArch session: run the frame lockstep allows, waiting briefly for it. */
@@ -1632,6 +1633,28 @@ static bool lr_run_pkt(uint32_t local_held) {
     }
 }
 
+/* A linked comm board (Pinboard #978): the frames its 60 Hz clock owes now,
+ * none to LINK_PACE_MAX_DEBT, not one a retro_run. RetroArch calls at the
+ * display's rate, and as fast as it can under fast-forward; neither may change
+ * how fast this cabinet runs against the other (core/link_pace.h). The first
+ * frame's pump is the caller's; the socket is drained again between frames.
+ * False when no frame was due. */
+static bool lr_run_linked(void) {
+    link_pace_t *p = &state.emu.link_pace;
+    int64_t now = emu_now_us();
+    link_pace_owed(p, now);
+    bool ran = false;
+    while (link_pace_due(p, now)) {
+        if (ran && emu_netplay_pump(&state.emu) != NETPLAY_STEP_OFF) break;
+        if (!m2comm_linked()) break;
+        emu_slice_result_t res = lr_slice();
+        if (res == EMU_SLICE_FRAME) link_pace_ran(p, m2comm_backlog());
+        ran = true;
+        if (res != EMU_SLICE_FRAME) break;
+    }
+    return ran;
+}
+
 /* RPCN: netplay.h decides, exactly as the emu thread's run loop asks it. */
 static bool lr_run_rpcn(uint32_t local_held) {
     g_input.held = local_held;   /* netplay_sample_local reads it */
@@ -1644,6 +1667,8 @@ static bool lr_run_rpcn(uint32_t local_held) {
             emu_sleep_us(500);
             continue;
         }
+        if (step == NETPLAY_STEP_OFF && m2comm_linked()) return lr_run_linked();
+        link_pace_stop(&state.emu.link_pace);
         lr_slice();
         /* A watcher behind the fighters runs a few extra slices a frame until it
          * has caught up (netplay_catching_up): one retro_run is one slice, and
@@ -2228,7 +2253,8 @@ RETRO_API unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
  * profile. A load takes the flat state or, from before it, the zip. A state
  * loads only into the build, ROM set and profile that made it. Netplay does
  * not use them (pkt_lockstep.h), and a load during a session would change this
- * board and not the other's, so it is refused there. */
+ * board and not the other's, so it is refused there; so is one (and rewind)
+ * on a linked comm board, whose time is the link's (core/link_pace.h). */
 #define LR_STATE_SLACK 4096
 
 /* Whether a session has the board, either kind (lr_sound_may_go's test). */
@@ -2255,6 +2281,7 @@ RETRO_API bool retro_serialize(void *data, size_t size) {
 RETRO_API bool retro_unserialize(const void *data, size_t size) {
     if (!g_game_loaded) return false;
     const char *err = lr_session_owns_board() ? "a netplay session owns the board"
+                    : m2comm_linked() ? "the board is linked to another cabinet"
                     : !data ? "no state"
                     : rollback_flat_is(data, size) && retro_serialize_size()
                     ? emu_state_flat_load(&state.emu, data, size, &g_lr_state_rom)

@@ -116,8 +116,14 @@ static uint32_t comm_udp_phantom__board_recv(void *ctx, uint8_t *msg, uint32_t c
     return comm_link_recv(&g_comm_udp_board.link, msg, cap);
 }
 
+static uint32_t comm_udp_phantom__board_pending(void *ctx) {
+    (void)ctx;
+    comm_udp_drain(&g_comm_udp_board);
+    return comm_link_pending(&g_comm_udp_board.link);
+}
+
 static const m2comm_peer_t comm_udp_phantom_board_peer = {
-    NULL, comm_udp_phantom__from_board, comm_udp_phantom__board_recv };
+    NULL, comm_udp_phantom__from_board, comm_udp_phantom__board_recv, comm_udp_phantom__board_pending };
 
 /* m2comm_phantom_open, with the two cabinets on either end of a UDP pair.
  * NULL if there are no sockets. */

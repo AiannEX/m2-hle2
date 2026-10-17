@@ -81,6 +81,12 @@
  * the role -- host MASTER, guest SLAVE, the phantom the other -- through the
  * same emu_comm_role_pump the emulator runs, and only then plugs it in;
  * stderr says when, and what the game made of it.
+ * --link-host-hz HZ (with one of those) runs the board on a host called HZ
+ * times a second of virtual time: one frame a call alone, and linked what
+ * core/link_pace.h says is due (Pinboard #978), a master phantom passing on
+ * its own 60 Hz clock; --link-host-jitter US moves each call up to US early
+ * or late, --link-unpaced runs one frame a call linked too. stderr: board
+ * frames per linked second, and how many of the phantom's messages were lost.
  *
  * Two builds of it, one from each configuration, so each has exactly its
  * frontend's compiler flags:
@@ -279,7 +285,12 @@ static uint32_t room_board_recv(void *ctx, uint8_t *msg, uint32_t cap) {
     return room_board_peer->recv(room_board_peer->ctx, msg, cap);
 }
 
-static const m2comm_peer_t room_board = { NULL, room_board_send, room_board_recv };
+static uint32_t room_board_pending(void *ctx) {
+    (void)ctx;
+    return room_board_peer->pending ? room_board_peer->pending(room_board_peer->ctx) : 0u;
+}
+
+static const m2comm_peer_t room_board = { NULL, room_board_send, room_board_recv, room_board_pending };
 
 /* The phantom on the board's comm link, over UDP if asked (and built for it):
  * plugged in now, or, with --room-role, at the reset into the role. */
@@ -301,12 +312,18 @@ static void m2comm_phantom_link(void) {
 
 /* A board frame: the phantom's own pass if it is the master, and while the
  * board waits for its role, the emulator's frame-edge reset into it. */
-static void m2comm_phantom_frame_edge(emu_thread_ctx_t *ctx) {
+static bool link_host_on(void);
+
+static void m2comm_phantom_pass(void) {
 #ifndef __EMSCRIPTEN__
     if (m2comm_udp) comm_udp_phantom_frame();
     else
 #endif
     if (m2comm_phantom) m2comm_phantom_frame();
+}
+
+static void m2comm_phantom_frame_edge(emu_thread_ctx_t *ctx) {
+    if (!link_host_on() || !m2comm_linked()) m2comm_phantom_pass();   /* linked: on its own clock */
     if (comm_role_linked() && g_m2comm.enabled && room_cn == UINT32_MAX) room_cn = g_emu_frames - 1u;
     emu_comm_role_pump(ctx, NETPLAY_STEP_OFF);
 }
@@ -335,6 +352,95 @@ static void m2comm_phantom_report(void) {
             b->sent, b->taken, b->stale, b->torn, b->too_big, b->overflow, b->packed_peak,
             g_comm_udp_board.wire_dgrams, g_comm_udp_board.wire_bytes, p->sent, p->taken);
 #endif
+}
+
+/* --link-host-hz HZ: the board on a host that is called HZ times a second of
+ * virtual time (retro_run, the page's frame callback), each call up to
+ * --link-host-jitter US early or late. Alone it runs one frame a call, as
+ * the frontends do; linked, the frames core/link_pace.h says are due
+ * (Pinboard #978), and a master phantom passes on its own 60 Hz clock, a
+ * cabinet whose host keeps time. --link-unpaced runs one a call linked too,
+ * as before #978. stderr: the board's frames per linked second, and what the
+ * link lost. */
+static double   link_host_hz;
+static int32_t  link_host_jitter_us;
+static bool     link_unpaced;
+static uint64_t link_host_call;            /* calls so far */
+static int64_t  link_host_now;             /* this call's time, us */
+static uint32_t link_host_in_call;         /* frames run in it */
+static int64_t  link_phantom_next;         /* the phantom master's next pass */
+static uint32_t link_rng = 0x9E3779B9u;
+static link_pace_t link_host_pace;
+static struct {
+    int64_t  t0, t1;
+    uint64_t frames, calls, multi;
+    uint32_t most, f0;
+} link_stat = { -1, 0, 0, 0, 0, 0, 0 };
+
+static bool link_host_on(void) { return link_host_hz > 0.0; }
+
+static void link_host__next_call(void) {
+    if (link_host_in_call > link_stat.most) link_stat.most = link_host_in_call;
+    if (link_host_in_call > 1) link_stat.multi++;
+    link_host_call++;
+    link_host_in_call = 0;
+    int32_t j = 0;
+    if (link_host_jitter_us) {
+        link_rng = link_rng * 1664525u + 1013904223u;
+        j = (int32_t)((link_rng >> 8) % (uint32_t)(2 * link_host_jitter_us + 1)) - link_host_jitter_us;
+    }
+    link_host_now = (int64_t)((double)link_host_call * 1e6 / link_host_hz) + j;
+    if (m2comm_linked() && link_stat.t0 >= 0) link_stat.calls++;
+}
+
+/* Before a board frame: the host call it runs in. */
+static void link_host_frame_start(void) {
+    if (!m2comm_linked()) {
+        link_pace_stop(&link_host_pace);
+        link_host__next_call();
+        return;
+    }
+    if (link_stat.t0 < 0) {   /* the link came up: its clock starts at this call */
+        link_host__next_call();
+        link_stat.t0 = link_host_now;
+        link_stat.f0 = g_emu_frames;
+        link_phantom_next = link_host_now;
+    }
+    if (link_unpaced) { if (link_host_in_call) link_host__next_call(); }
+    else {
+        link_pace_owed(&link_host_pace, link_host_now);
+        while (!link_pace_due(&link_host_pace, link_host_now)) {
+            link_host__next_call();
+            link_pace_owed(&link_host_pace, link_host_now);
+        }
+    }
+    for (; link_phantom_next <= link_host_now; link_phantom_next += LINK_PACE_FRAME_US) m2comm_phantom_pass();
+    link_host_in_call++;
+}
+
+/* After a board frame. */
+static void link_host_frame_end(void) {
+    if (!m2comm_linked() || link_stat.t0 < 0) return;
+    if (!link_unpaced) link_pace_ran(&link_host_pace, m2comm_backlog());
+    link_stat.frames++;
+    link_stat.t1 = link_host_now;
+}
+
+static void link_host_report(void) {
+    if (!link_host_on()) return;
+    if (link_stat.t0 < 0) { fprintf(stderr, "link host: %.2f Hz, never linked\n", link_host_hz); return; }
+    double secs = (double)(link_stat.t1 - link_stat.t0) / 1e6;
+    uint32_t lost = g_m2comm_board_in.dropped;
+#ifndef __EMSCRIPTEN__
+    if (m2comm_udp) lost = g_comm_udp_board.link.overflow;
+#endif
+    fprintf(stderr, "link host: %.2f Hz (+-%d us)%s; linked from frame %u, %.2f s: %llu board frames, "
+            "%.2f a second, at most %u a call (%llu calls with two or more), %llu dropped, %u trims; "
+            "the board lost %u of the phantom's messages, took %u\n",
+            link_host_hz, link_host_jitter_us, link_unpaced ? ", unpaced" : "", link_stat.f0, secs,
+            (unsigned long long)link_stat.frames, secs > 0 ? (double)link_stat.frames / secs : 0.0,
+            link_stat.most, (unsigned long long)link_stat.multi, (unsigned long long)link_host_pace.dropped,
+            link_host_pace.trims, lost, g_m2comm_link.taken);
 }
 
 /* main_web.c web_install_board, which is also what a netplay reset runs (and
@@ -677,6 +783,9 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--mem")) state_mem = true;
         else if (!strcmp(argv[i], "--m2comm-phantom")) m2comm_phantom = true;
         else if (!strcmp(argv[i], "--m2comm-udp")) m2comm_udp = true;
+        else if (!strcmp(argv[i], "--link-host-hz") && i + 1 < argc) link_host_hz = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--link-host-jitter") && i + 1 < argc) link_host_jitter_us = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--link-unpaced")) link_unpaced = true;
         else if (!strcmp(argv[i], "--room-role") && i + 1 < argc) {
             const char *r = argv[++i];
             room_role = !strcmp(r, "host") ? GAME_LINK_MASTER : !strcmp(r, "guest") ? GAME_LINK_SLAVE : GAME_LINK_ALONE;
@@ -765,6 +874,7 @@ int main(int argc, char **argv) {
 
     if (rewind_k && !rewind_init(&emu)) { fprintf(stderr, "--rewind: out of memory\n"); return 2; }
     int at = 0;
+    bool frame_edge = true;
     uint64_t slices = 0;
     uint32_t mismatches = 0, first_mismatch = UINT32_MAX;
     while (g_emu_frames < frames) {
@@ -779,10 +889,13 @@ int main(int argc, char **argv) {
             pokes[p].n = 0;
         }
         if (follow_in && !follow_next_ready(&emu)) break;
+        if (frame_edge && link_host_on()) link_host_frame_start();
         if (trace_out && g_emu_frames + 1 == trace_frame) trace_slice(&emu);
         else                                              emu_slice_body(&emu);
         emu_slice_result_t r = emu_slice_finish(&emu);
         slices++;
+        frame_edge = r == EMU_SLICE_FRAME;
+        if (r == EMU_SLICE_FRAME && link_host_on()) link_host_frame_end();
         if (r == EMU_SLICE_FRAME) m2comm_phantom_frame_edge(&emu);
         if (r == EMU_SLICE_STOPPED) {
             fprintf(stderr, "board stopped at frame %u, IP 0x%08X\n", (unsigned)g_emu_frames, cpu.sfr.ip);
@@ -843,6 +956,7 @@ int main(int argc, char **argv) {
     }
     rewind_report();
     m2comm_phantom_report();
+    link_host_report();
     fprintf(stderr, "texload: %llu rows in C\n", (unsigned long long)g_texload_rows);
     fprintf(stderr, "spin: %llu idle iterations skipped\n", (unsigned long long)g_spin_iters);
     if (cop_out) fclose(cop_out);
