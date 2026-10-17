@@ -450,6 +450,7 @@
     <button id="tab-console" class="tab" role="tab" aria-controls="pane-console" data-i18n="ui.menu.console">Console</button>
     <button id="tab-picture" class="tab" role="tab" aria-controls="pane-picture" data-i18n="ui.menu.picture">Picture</button>
     <button id="tab-replay" class="tab" role="tab" aria-controls="pane-replay" data-i18n="ui.menu.replay">Replay</button>
+    <button id="tab-cheats" class="tab" role="tab" aria-controls="pane-cheats" data-i18n="ui.menu.cheats">Cheats</button>
     <span class="spacer"></span>
     <button id="drawer-close" class="tool ps-back" aria-label="Close tools" data-i18n-aria="ui.tools.close"><svg class="ps-glyph" aria-hidden="true"><use href="#ps-circle"/></svg><span data-i18n="ui.back">Back</span></button>
   </div>
@@ -624,7 +625,33 @@
       <ul id="replay-list" class="replay-list"></ul>
     </div>
   </div>
+
+  <!-- The game's script, typed in and kept in this browser (m2hle-cheats.js,
+       src/core/m2lua.h): M2emulator's SCRIPTS\<set>.lua, without the file. -->
+  <div id="pane-cheats" class="pane" role="tabpanel" hidden>
+    <div class="replay cheats">
+      <h3 class="shader-h" data-i18n="ui.cheat.head">CHEATS</h3>
+      <p class="fine left" data-i18n="ui.cheat.about">A Lua script for this game, as M2emulator's scripts are written: Init, Frame and
+        PostDraw, an Options table, I960_Write*, Romset_Patch* and the rest, in Lua 5.5. It is kept in this
+        browser for this game, and runs from when you press Run until you turn it off, the next time
+        too. It does not run during an online match, a replay or a follow: its patches come off, and it
+        starts again when that ends.</p>
+      <textarea id="cheats-text" class="cheats-text" rows="14" spellcheck="false" autocomplete="off"
+        aria-label="The game's script" data-i18n-aria="ui.cheat.text"></textarea>
+      <p class="np-row">
+        <button id="cheats-run" class="tool primary" data-i18n="ui.cheat.run">Run</button>
+        <button id="cheats-off" class="tool" data-i18n="ui.cheat.off">Turn off</button>
+        <button id="cheats-example" class="tool" data-i18n="ui.cheat.example">Example</button>
+      </p>
+      <p id="cheats-status" class="status" role="status"></p>
+      <h3 id="cheats-opt-head" class="shader-h" hidden data-i18n="ui.cheat.options">OPTIONS</h3>
+      <div id="cheats-options" class="cheats-options"></div>
+    </div>
+  </div>
 </section>
+
+<!-- What the game's script draws (PostDraw), over the picture (m2hle-cheats.js). -->
+<canvas id="cheats-draw" class="cheats-draw" aria-hidden="true" hidden></canvas>
 
 <!-- A few buttons float in the top-right corner, over the canvas, so the game gets the
      whole window: the source link, Finish replay (while your own game is being
@@ -658,6 +685,7 @@
     <button id="btn-console" class="tool" aria-expanded="false" aria-controls="drawer"><span data-i18n="ui.menu.console">Console</span> <span id="console-badge" class="badge" hidden></span></button>
     <button id="btn-picture" class="tool" aria-expanded="false" aria-controls="drawer" data-i18n="ui.menu.picture">Picture</button>
     <button id="btn-replay" class="tool" aria-expanded="false" aria-controls="drawer" data-i18n="ui.menu.replay">Replay</button>
+    <button id="btn-cheats" class="tool" aria-expanded="false" aria-controls="drawer" data-i18n="ui.menu.cheats">Cheats</button>
     <button id="btn-shot" class="tool" hidden data-i18n="ui.menu.shot">Screenshot</button>
     <button id="btn-report" class="tool" aria-expanded="false" aria-controls="report" hidden data-i18n="ui.menu.report">Report an issue</button>
   </div>
@@ -681,6 +709,7 @@
 <script src="m2hle-touch.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-follow.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-replay.js?v=@M2HLE_VERSION@"></script>
+<script src="m2hle-cheats.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-report.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-page.js?v=@M2HLE_VERSION@"></script>
 <script async src="m2hle.js?v=@M2HLE_VERSION@"></script>

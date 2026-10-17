@@ -67,6 +67,7 @@
 #include "post_shader.h"   /* the CRT filter and libretro presets over the picture */
 #include "crt_pots.h"      /* the monitor's R/G/B and H/V pots, over the picture */
 #include "json_min.h"
+#include "m2lua.h"         /* the cheats scratchpad: a game script from the page */
 
 /* The single TU that defines g_profiles[] / g_active_profile. Under M2HLE_WEB it
  * registers sfight alone. */
@@ -588,6 +589,8 @@ static void init(void) {
 
     mem_init(&state.bus, NULL, 0);
     i960_reset(&state.cpu);
+    g_emu_script_frame = m2lua_frame_hook;   /* the Cheats tab's script */
+    g_emu_script_reset = m2lua_reset_hook;
     bp_init();
     wp_init();
     if (g_profile_count > 0) g_active_profile = g_profiles[0];
@@ -869,6 +872,7 @@ typedef struct {
     float lerp_t;
 } web_picture_t;
 static void web_shot_done(const web_picture_t *pic);   /* the page's screenshot (Pinboard #653) */
+static void web_cheats_place(const web_picture_t *pic, bool shown);   /* the Cheats tab's drawing */
 
 /* The game in its letterbox, through the filter, from the offscreen target or
  * drawn straight in; then the pause menu over it. */
@@ -958,6 +962,7 @@ static void frame(void) {
     pic.ox = r.x; pic.oy = r.y; pic.w = r.w; pic.h = r.h;
     crt_pots_place(&pic.ox, &pic.oy, &pic.w, &pic.h);
     post_shader_set_input_scale(g_web_rt.want);
+    web_cheats_place(&pic, game && !pic.overlay && !g_web_objview_show);
     pic.post = game && !g_web_objview_show && post_shader_active();
     if (pic.post) web_draw_post_source(pic.w, pic.h, pic.lerp_t);
 
@@ -1098,6 +1103,8 @@ EMSCRIPTEN_KEEPALIVE int web_rom_load(uint8_t *zip, int len) {
 
     state.emu.run_state = EMU_STOPPED;
     replay_game_loaded();   /* a recording ends; a replay lets go of the board */
+    /* The last game's script and its text go: the page hands the new set's over. */
+    m2lua_load_source(NULL, NULL, &state.bus, &state.romset, false);
     rl_mem_zip_set(zip, (size_t)len, true);
     for (int i = 0; i < g_web_rom_extra_n; i++)
         rl_mem_zip_add(g_web_rom_extra[i], (size_t)g_web_rom_extra_len[i]);
@@ -1128,6 +1135,93 @@ EMSCRIPTEN_KEEPALIVE int web_rom_load(uint8_t *zip, int len) {
     }
     g_web_volume = 1.0f;
     return 0;
+}
+
+/* ---- Cheats: the game's script from the page (core/m2lua.h, Pinboard #958) --
+ *
+ * M2emulator's SCRIPTS\<set>.lua, typed into the drawer's Cheats tab rather
+ * than read from a file; the page keeps the text per set in localStorage and
+ * hands it over at each game load. A session (netplay, GGPO, a replay, a
+ * follow) keeps it but does not run it: its ROM patches come off, and it runs
+ * again from its start when the session ends. Text and rectangles are drawn by
+ * the page over the picture (web_cheats_draw); no images, no files. */
+static char g_web_cheats_json[16384];
+
+/* The game's ROM set, the page's key for its scratchpad ("" before a game). */
+EMSCRIPTEN_KEEPALIVE const char *web_cheats_romset(void) {
+    return g_active_profile ? profile_rom_set(g_active_profile) : "";
+}
+
+/* The script's state (m2lua_status_json), for the page. */
+EMSCRIPTEN_KEEPALIVE const char *web_cheats_status(void) {
+    m2lua_status_json(g_web_cheats_json, (int)sizeof g_web_cheats_json, emu_script_may_run());
+    return g_web_cheats_json;
+}
+
+/* The scratchpad's text for the game loaded ("" for none): it runs now, Init()
+ * and all, or when the session that has the board lets go. 1 when it runs or
+ * waits, 0 on an error (web_cheats_status says which). */
+EMSCRIPTEN_KEEPALIVE int web_cheats_set(const char *src) {
+    if (!g_active_profile) return 0;
+    return m2lua_load_source(profile_rom_set(g_active_profile), src, &state.bus, &state.romset,
+                             emu_script_may_run()) ? 1 : 0;
+}
+
+/* Option key to its value'th value; refused while a session has the board. */
+EMSCRIPTEN_KEEPALIVE int web_cheats_option(const char *key, int value) {
+    int i = key ? m2lua_option_index(key) : -1;
+    if (i < 0 || !emu_script_may_run() || g_m2lua.suspended) return 0;
+    if (value < 0 || value >= g_m2lua.options[i].nvalues) return 0;
+    m2lua_set_option(i, value);
+    return 1;
+}
+
+/* Input_IsKeyPressed: the page maps KeyboardEvent.code to a DirectInput code. */
+EMSCRIPTEN_KEEPALIVE void web_cheats_key(int dik, int down) { m2lua_set_key(dik, down != 0); }
+
+/* Where the game's picture was last put on the canvas, for the page's drawing
+ * over it; w 0 while it is not shown (the lobby, the pause menu, no game). */
+static int g_web_cheats_rect[4];
+static void web_cheats_place(const web_picture_t *pic, bool shown) {
+    g_web_cheats_rect[0] = pic->ox;
+    g_web_cheats_rect[1] = pic->oy;   /* sg_apply_viewport's, from the top left */
+    g_web_cheats_rect[2] = shown ? pic->w : 0;
+    g_web_cheats_rect[3] = pic->h;
+}
+
+static void web_cheats_draw_item(int *at, const m2lua_draw_t *d, bool first) {
+    float size = M2LUA_TEXT_SIZE;
+    int bold = 0;
+    if (d->font >= 0 && d->font < M2LUA_FONT_MAX) {
+        size = g_m2lua.fonts[d->font].size;
+        bold = g_m2lua.fonts[d->font].bold;
+    }
+    char esc[M2LUA_TEXT_MAX * 6 + 1];
+    json_escape(esc, (int)sizeof esc, d->text);
+    int cap = (int)sizeof g_web_cheats_json - 2;
+    if (*at < cap)
+        *at += snprintf(g_web_cheats_json + *at, (size_t)(cap - *at),
+                        "%s{\"x\":%.1f,\"y\":%.1f,\"c\":%u,\"s\":%.1f,\"b\":%d,\"t\":\"%s\"}",
+                        first ? "" : ",", d->x, d->y, (unsigned)d->color, size, bold, esc);
+}
+
+/* What PostDraw drew last, in board pixels (496 x 384): {"gen":N,"canvas":
+ * [w,h],"rect":[x,y,w,h] (the picture on the canvas, top-down; w 0: hidden),
+ * "items":[{x,y,c (0xAARRGGBB),s (size),b (bold),t}]}. */
+EMSCRIPTEN_KEEPALIVE const char *web_cheats_draw(void) {
+    static m2lua_draw_t list[M2LUA_DRAW_MAX];
+    int n = 0;
+    uint32_t gen = m2lua_take_draw(list, &n);
+    const int *r = g_web_cheats_rect;
+    int at = snprintf(g_web_cheats_json, sizeof g_web_cheats_json,
+                      "{\"gen\":%u,\"canvas\":[%d,%d],\"rect\":[%d,%d,%d,%d],\"items\":[", (unsigned)gen,
+                      sapp_width(), sapp_height(), r[0], r[1], r[2], r[3]);
+    bool first = true;
+    for (int i = 0; i < n; i++)
+        if (list[i].kind == M2LUA_DRAW_TEXT) { web_cheats_draw_item(&at, &list[i], first); first = false; }
+    if (at > (int)sizeof g_web_cheats_json - 3) at = (int)sizeof g_web_cheats_json - 3;
+    memcpy(g_web_cheats_json + at, "]}", 3);
+    return g_web_cheats_json;
 }
 
 /* ---- ?follow= (core/follow.h) ------------------------------------------------
