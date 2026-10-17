@@ -2730,6 +2730,24 @@ static int geo3d_layer_by_lo(const void *a, const void *b) {
     return x < y ? -1 : x > y ? 1 : *(const int *)a - *(const int *)b;
 }
 
+/* A ranked face's area, summed over the triangles the fill draws (ABC, or
+ * ABD + ADC), and the unit normal of the larger. Returns twice that one's
+ * area, 0 when neither has any. */
+static double geo3d_layer_face_normal(geo3d_lface_t *f, bool is_tri) {
+    const int tri[2][3] = { {0, 1, is_tri ? 2 : 3}, {0, 3, 2} };
+    double best = 0.0;
+    for (int t = 0; t < (is_tri ? 1 : 2); t++) {
+        const double *a = f->pts[tri[t][0]], *b = f->pts[tri[t][1]], *e = f->pts[tri[t][2]];
+        double e1[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+        double e2[3] = { e[0] - a[0], e[1] - a[1], e[2] - a[2] };
+        double x[3] = { e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0] };
+        double len = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+        f->area += len / 2.0;
+        if (len > best) { best = len; for (int a2 = 0; a2 < 3; a2++) f->n[a2] = x[a2] / len; }
+    }
+    return best;
+}
+
 /* One cached face as the ranking sees it: its corners, the normal of the
  * larger of the triangles the fill draws, turned to agree with the ROM's, its
  * area and its box. False for a line or a face with no area, which is not
@@ -2744,18 +2762,7 @@ static bool geo3d_layer_face(const geo3d_cmesh_t *m, int k, geo3d_lface_t *f) {
         vec3_t p = m->sv[corner[i]];
         f->pts[i][0] = p.x; f->pts[i][1] = p.y; f->pts[i][2] = p.z;
     }
-    /* The triangles the fill draws: ABC, or ABD + ADC. */
-    const int tri[2][3] = { {0, 1, c->is_tri ? 2 : 3}, {0, 3, 2} };
-    double best = 0.0;
-    for (int t = 0; t < (c->is_tri ? 1 : 2); t++) {
-        const double *a = f->pts[tri[t][0]], *b = f->pts[tri[t][1]], *e = f->pts[tri[t][2]];
-        double e1[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
-        double e2[3] = { e[0] - a[0], e[1] - a[1], e[2] - a[2] };
-        double x[3] = { e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0] };
-        double len = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
-        f->area += len / 2.0;
-        if (len > best) { best = len; for (int a2 = 0; a2 < 3; a2++) f->n[a2] = x[a2] / len; }
-    }
+    double best = geo3d_layer_face_normal(f, c->is_tri);
     if (best <= 0.0 || f->area <= 1e-4) return false;
     /* Turned to agree with the ROM's normal, so "further along the normal"
      * is "further behind" for either face of a pair, and two faces back to
