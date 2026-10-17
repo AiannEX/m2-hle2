@@ -64,7 +64,7 @@ Wording, not behaviour:
 ## 3. Neither side has the board's rule
 
 - **The texel snap.** MAME truncates u, v to 8 fractional bits (`s32(uoz * z * 256.0F)`, `model2rd.ipp`), then subtracts half a texel. noclip rounds to the nearest 1/256 (its issue 44), and m2-hle2's fill copies noclip (`game_render.h`). Truncation is the board. Grade it against MAME (the Tails-lab attract intro, #85) before either side changes.
-- **Model-table length.** The word before the table is the *last index*, not the count. STF has 5104 entries (both sides say 5103) and FV 5413 (m2-hle2 says 5412, noclip 5413). Only the model viewer and the bridge's `dump_model` range use it (`sfight.h`, `fvipers.h`, `mcp_bridge.h`).
+- **Model-table length.** The word before the table is the *last index*, not the count. STF has 5104 entries (both sides say 5103) and FV 5413 (m2-hle2 said 5412 until #1025, noclip 5413). Only the model viewer and the bridge's `dump_model` range use it (`sfight.h`, `fvipers.h`, `mcp_bridge.h`).
 - **`master_z_clip`** is modelled on neither side.
 - **Microtexture** (texture-header 0 bit 12) is drawn on neither side. Count how many STF and FV faces set it before deciding whether it matters.
 - **The object viewer's free camera** has no board sort to copy. m2-hle2's layers are noclip's old vote, and noclip's `rankLayers` (`layers-board-key`) is the newer version to port once it lands.
