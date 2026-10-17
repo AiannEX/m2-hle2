@@ -183,6 +183,10 @@ static inline uint8_t *zip_extract_by_crc(const char *zippath, uint32_t crc, siz
     return (uint8_t *)data;
 }
 
+/* While > 0, a file not found is no error: a caller trying a chip that has a
+ * stand-in (rom_recipe.h, an older revision's) says so itself if both miss. */
+static int g_rl_quiet_missing;
+
 /* Try the child zip first (e.g. sfight.zip), fall back to the parent
  * (e.g. schamp.zip) for files shared via MAME's clone mechanism.
  * Verifies CRC32 — mismatches log a warning but the buffer is still
@@ -192,7 +196,7 @@ static inline uint8_t *zip_extract_from_set(const char *child_zip, const char *p
                                             uint32_t expected_crc) {
     if (g_rl_mem_zip.count > 0) {
         uint8_t *mem = zip_extract_mem(filename, out_size, expected_crc);
-        if (!mem) {
+        if (!mem && !g_rl_quiet_missing) {
             rl_mem_zip_note_missing(filename);
             LOG_ERROR("ROM not in the zip: %s (CRC %08X)", filename, expected_crc);
         }
@@ -204,7 +208,10 @@ static inline uint8_t *zip_extract_from_set(const char *child_zip, const char *p
     if (!data && parent_zip) data = zip_extract(parent_zip, filename, out_size, &actual);
     if (!data && child_zip  && (data = zip_extract_by_crc(child_zip,  expected_crc, out_size))) actual = expected_crc;
     if (!data && parent_zip && (data = zip_extract_by_crc(parent_zip, expected_crc, out_size))) actual = expected_crc;
-    if (!data) { LOG_ERROR("ROM not found: %s", filename); return NULL; }
+    if (!data) {
+        if (!g_rl_quiet_missing) LOG_ERROR("ROM not found: %s", filename);
+        return NULL;
+    }
 
     if (actual != expected_crc) {
         LOG_WARN("CRC mismatch: %s (expected %08X, got %08X)", filename, expected_crc, actual);
