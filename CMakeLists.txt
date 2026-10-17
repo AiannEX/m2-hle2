@@ -737,6 +737,13 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(MSVC)
         target_compile_definitions(cop_replay PRIVATE _CRT_SECURE_NO_WARNINGS)
     endif()
+    # Not a ctest: replays a MAME capture of a Model 2B game's SHARC COP traffic
+    # (tools/mame-sharc-tap.lua) and checks every word the SHARC writes back.
+    add_executable(sharc_replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/sharc_replay.c)
+    target_include_directories(sharc_replay PRIVATE ${TEST_INCLUDES})
+    if(MSVC)
+        target_compile_definitions(sharc_replay PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
     # Not a ctest: replays a MAME sound capture's MIDI stream through the sound board.
     add_executable(snd_replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/snd_replay.c)
     target_include_directories(snd_replay PRIVATE ${TEST_INCLUDES})
@@ -820,7 +827,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(NOT WIN32)
         foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test
                   input_test net_test ps3net_test tile_test heat_test audio_out_test scsp_dsp_test scsp_dsp_test_masks
-                  scsp_lazy_test tgp_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
+                  scsp_lazy_test tgp_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay sharc_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
             target_link_libraries(${t} PRIVATE m)
         endforeach()
     endif()
