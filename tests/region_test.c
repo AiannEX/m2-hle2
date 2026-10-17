@@ -46,7 +46,6 @@ static const struct { const char *id; game_region_kind_t kind; } g_region_unhook
     { "dynamcopb",        REGION_TODO },
     { "dyndeka2b",        REGION_TODO },
     { "dynamcopc",        REGION_TODO },
-    { "hotd",             REGION_TODO },
     { "vonj",            REGION_PROGRAM_ROM },
     { "m2snake",         REGION_HOMEBREW },
     { "sfight_homebrew", REGION_HOMEBREW },

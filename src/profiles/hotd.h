@@ -13,8 +13,8 @@
  * The sound board is STF's SCSP + 68000, with the UART at 0x01C80000. The two
  * light guns are on the I/O chip's second serial channel (board/lightgun.h;
  * docs/invariants/memory-bus.md): the pad's directions walk a gun, B1 fires,
- * B2 reloads, and the desktop's mouse aims P1's (ui/lightgun_ui.h). No HLE
- * hook: the program runs as it is. Its country setting is not looked for yet.
+ * B2 reloads, and a host's pointer aims a gun (ui/lightgun_host.h). The only
+ * HLE hooks are the region's two (below).
  */
 #ifndef PROFILES_HOTD_H
 #define PROFILES_HOTD_H
@@ -32,6 +32,7 @@
 #include "model2c_cop.h"
 #include "lightgun.h"
 #include "savestate_reg.h"
+#include "hle_hooks.h"     /* g_region */
 
 static const rom_part_t hotd_parts[] = {
     ROM_PAIR32(ROM_MAINCPU,    0x0000000, "epr-19696a.15", 0x42adc32e, "epr-19697a.16", 0x1e247cd5),
@@ -84,6 +85,51 @@ static inline uint32_t hotd_read32(const uint8_t *buf, uint32_t off) {
          | (uint32_t)buf[off + 2] << 16 | (uint32_t)buf[off + 3] << 24;
 }
 
+/*
+ * The region (Pinboard #1040). The settings are in the 93C46 EEPROM, as Sega
+ * Rally's, not in backup RAM. At boot 0x1DF90 reads it to 0x51F090: the magic
+ * "S32A", version 0x6655, then a sum at 0x51F098 over 38 bytes from 0x51F09A
+ * and a mirror of both at 0x51F0C0. COUNTRY is 0x51F0A9 (EEPROM byte 0x19;
+ * mirror 0x51F0D1): 0 Japan, 1 USA, 2 Export, the test menu's (0x9DC8) "JAPAN",
+ * "USA", "EXPORT" at 0xA91D0; get_country (0x1F050) takes the ROM's 0xAA531,
+ * Japan, over anything above 2. After the load, 0x13CD0 copies it to
+ * 0x51F111, which the game reads.
+ *
+ * country_default (0x1E0A8): the first store after 0x1E1D0 has written the
+ * factory settings (0x1E0A0 runs only on the default paths of 0x1DF90). Put
+ * g_region in COUNTRY; 0x1E0C0 then sums it, mirrors it and writes the EEPROM.
+ * Japan is the ROM's default and MAME's, so --region japan leaves the board as
+ * it was.
+ *
+ * settings_loaded (0x168C8, `call 0x13CD0` in the boot after 0x1DF90): with
+ * g_region_over_saved, put g_region in COUNTRY over the one a saved EEPROM
+ * brought, before 0x13CD0 copies it on. The EEPROM keeps its own until the
+ * test menu next saves (0x8764).
+ *
+ * Both are hotdo's addresses (the container's hotd.zip; checked in MAME). The
+ * Revision A program is another build: install checks the two instructions and
+ * leaves the hooks idle on any other program.
+ */
+#define HOTD_HOOK_ADDR_COUNTRY_DEFAULT  0x0001E0A8u
+#define HOTD_HOOK_ADDR_SETTINGS_LOADED  0x000168C8u
+#define HOTD_COUNTRY                    0x0051F0A9u
+
+static bool g_hotd_region_idle;   /* the program is not hotdo's: the hooks do nothing */
+
+static int hotd_hook_country_default(i960_cpu_t *cpu, memory_bus_t *bus) {
+    (void)cpu;
+    if (!g_hotd_region_idle) mem_write8(bus, HOTD_COUNTRY, (uint8_t)g_region);
+    return 1;
+}
+
+static uint32_t hotd_country(memory_bus_t *bus) { (void)bus; return HOTD_COUNTRY; }
+
+static int hotd_hook_settings_loaded(i960_cpu_t *cpu, memory_bus_t *bus) {
+    (void)cpu;
+    if (g_region_over_saved && !g_hotd_region_idle) mem_write8(bus, hotd_country(bus), (uint8_t)g_region);
+    return 1;
+}
+
 /* The 2C board (model2c_cop.h), the data windows, and the processor's start
  * (MAME i960 device_reset: the PRCB's interrupt stack, priority 31,
  * interrupted, supervisor), as Dynamite Cop's 2C less the 315-5881. */
@@ -104,6 +150,11 @@ static inline void hotd_install(const romset_t *rs, i960_cpu_t *cpu, memory_bus_
         size_t n = rs->main_data_size - 0x1000000u;
         memcpy(bus->xtra_data, rs->main_data + 0x1000000u, n < XTRA_DATA_SIZE ? n : XTRA_DATA_SIZE);
     }
+    /* `call 0x13CD0` and `st r4, 0x51F09C`: hotdo's program, whose region hooks these are. */
+    g_hotd_region_idle = rs->maincpu_size <= 0x1F000u
+                      || hotd_read32(rs->maincpu, HOTD_HOOK_ADDR_SETTINGS_LOADED) != 0x09FFD408u
+                      || hotd_read32(rs->maincpu, HOTD_HOOK_ADDR_COUNTRY_DEFAULT) != 0x92203000u;
+    if (g_hotd_region_idle) LOG_WARN("hotd_install: not hotdo's program; the region hooks stay idle");
     uint32_t prcb = hotd_read32(rs->maincpu, 0x04);
     cpu->prcb = prcb;
     if (prcb + 0x2C < rs->maincpu_size) {
@@ -138,6 +189,11 @@ static const game_profile_t hotd_profile = {
     .board        = BOARD_MODEL2C_CRX,
     .load_fn      = hotd_load,
     .install_fn   = hotd_install,
+    .hook_count   = 2,
+    .hooks = {
+        { HOTD_HOOK_ADDR_COUNTRY_DEFAULT, hotd_hook_country_default, "country_default" },
+        { HOTD_HOOK_ADDR_SETTINGS_LOADED, hotd_hook_settings_loaded, "settings_loaded" },
+    },
     .input        = HOTD_INPUT,
     .quirks = {
         .lightgun = true,
@@ -151,7 +207,8 @@ static const game_profile_t hotd_profile = {
         },
         .irq_vectors      = true,
         .board_vblank     = true,
-        .region           = { .kind = REGION_TODO, .why = "country setting not looked for yet" },
+        .region           = { .kind = REGION_HOOKED, .factory_default = "country_default",
+                              .over_saved = "settings_loaded", .country = hotd_country },
         /* noclip games.js `hotd` / `hotdo`: 7477 entries of 16 bytes; the
          * board's mesh-pointer encoding, as STF's. */
         .model_table_offset = 0xe73530,
