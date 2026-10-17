@@ -37,7 +37,9 @@
  * sits over the game. Signing in needs no keyboard: Twitch shows a code, and an
  * RPCN account is typed on the lobby's own on-screen keyboard. The Arcade
  * version is the board as it shipped (coins on SELECT); its RPCN lobby opens at
- * load and with L + R together.
+ * load and with L + R together. Virtual-On (vonj) gets the same shell with the
+ * PS3 port's Arcade rows (difficulty, rounds to win, time limit) on free play;
+ * its Versus and Online Battle need a second board and say so.
  */
 
 /* net/ first, as in main.c: net_socket.h owns the socket include order. */
@@ -191,7 +193,7 @@ static struct {
 /* The heat guard's stages (core/heat_guard.h); lr_heat_tick feeds it once a retro_run. */
 static heat_guard_t g_heat;
 
-/* The PS3's interface (ui/ps3ui_shell.h): the Console version has it. */
+/* The PS3's interface (ui/ps3ui_shell.h): STF's Console version and Virtual-On have it. */
 static bool g_shell_on;
 
 static struct retro_core_option_v2_category option_cats[] = {
@@ -818,6 +820,23 @@ static void lr_rpcn_report_state(const netplay_status_t *st) {
     }
 }
 
+/* A linked match (Virtual-On's two cabinets, netplay_member_start_link) keeps
+ * the room's lobby state, so lr_rpcn_report_state never sees it start: said
+ * when the link opens, with the shell's way out of it. */
+static void lr_rpcn_report_link(const netplay_status_t *st) {
+    static bool was_open;
+    char msg[400];
+    if (st->comm.open == was_open) return;
+    was_open = st->comm.open;
+    if (!was_open) return;
+    const char *peer = "?";
+    for (uint32_t i = 0; i < st->member_count; i++)
+        if (st->members[i].side == (st->local_player ^ 1)) peer = st->members[i].npid;
+    snprintf(msg, sizeof msg, "Cabinet linked to %s's, as the %s%s", peer,
+             st->comm.role == GAME_LINK_MASTER ? "MASTER" : "SLAVE", g_shell_on ? ". SELECT: leave the match" : "");
+    lr_notify(msg, 5000);
+}
+
 /* The room emptied with the board still in its VS mode
  * (netplay_empty_room_pump). Said again every few seconds while it holds,
  * short enough each time that it is gone soon after the restart. */
@@ -855,6 +874,7 @@ static void lr_rpcn_report(void) {
     if (!g_ps3ui_app.be.get_status) return;   /* no session behind the lobby yet */
     lr_rpcn_report_log(st);
     lr_rpcn_report_state(st);
+    lr_rpcn_report_link(st);
     lr_rpcn_report_empty(st);
     lr_rpcn_report_desync(st);
 }
@@ -1030,8 +1050,15 @@ static void lr_shell_reset(void *u) {
     if (state.emu.run_state != EMU_RUNNING) emu_run(&state.emu);
 }
 
+static bool lr_shell_von(void) { return g_active_profile && !strcmp(g_active_profile->id, "vonj"); }
+
 static void lr_shell_apply(void *u, const uint8_t v[8], int versus) {
     (void)u;
+    if (lr_shell_von()) {
+        vonj_apply_menu_settings(&state.bus, v);
+        lr_log(RETRO_LOG_INFO, "Arcade: difficulty %u, rounds to win %u, time %u", v[0], v[4] + 1u, v[3]);
+        return;
+    }
     sfight_apply_menu_settings(&state.bus, v, versus);
     lr_log(RETRO_LOG_INFO, "%s: difficulty %u, rounds %u, time %u, attack %u, barriers %u, type %u",
            versus ? "Offline Versus" : "Arcade", v[0], v[4], v[3], v[5], v[6], v[7]);
@@ -1040,6 +1067,18 @@ static void lr_shell_apply(void *u, const uint8_t v[8], int versus) {
 static void lr_shell_volume(void *u, int music, int se) {
     (void)u;
     g_volume = (float)(music + se) / 10.0f;   /* 5 and 5, the PS3's defaults, are the board as it is */
+}
+
+/* At load: the shell for the games that have one, with the game's rows. */
+static void lr_shell_setup(void) {
+    g_shell_on = g_active_profile && (!strcmp(g_active_profile->id, "sfight_console") || lr_shell_von());
+    if (!g_shell_on) return;
+    ps3ui_shell_init(&g_ps3ui_shell, (ps3ui_host_t){ lr_shell_reset, lr_shell_apply, lr_shell_volume, NULL },
+                     &g_ps3ui_app);
+    if (lr_shell_von()) {
+        ps3ui_shell_set_rules(&g_ps3ui_shell, &ps3ui_rules_von);
+        g_ps3ui_shell.no_controls = 1;   /* levers, not punch / kick / guard */
+    }
 }
 
 /* A RetroPad port as the board's buttons, the way the shell's Controls screen
@@ -1056,6 +1095,7 @@ static uint32_t lr_port_held_shell(unsigned port) {
     const int p = port == 0 ? GAME_INPUT_P1_B1 : GAME_INPUT_P2_B1;   /* B1 punch, B2 kick, B3 guard */
     const uint8_t *code = ps3ui_shell_buttons(&g_ps3ui_shell);
     uint32_t held = lr_port_held(port);
+    if (g_ps3ui_shell.no_controls) return held;   /* Virtual-On: the core's own binds */
     /* the face buttons and shoulders are the Controls screen's, not lr_binds' */
     for (int b = 0; b < 3; b++) held &= ~in->bits[p + b];
     held &= ~in->bits[port == 0 ? GAME_INPUT_P1_B4 : GAME_INPUT_P2_B4];
@@ -1687,7 +1727,7 @@ static void lr_push_audio(void) {
 static uint32_t g_lr_runs, g_lr_skips;
 
 /* One slice of the board, and what it ended on. */
-static void lr_slice(void) {
+static emu_slice_result_t lr_slice(void) {
     emu_slice_body(&state.emu);
     emu_slice_result_t res = emu_slice_finish(&state.emu);
     if (res == EMU_SLICE_FRAME && pkt_lockstep_playing(&g_pkt)) {
@@ -1712,6 +1752,7 @@ static void lr_slice(void) {
             emu_run(&state.emu);   /* a debug stop (break-on-warn ...) has no debugger to go to here */
         }
     }
+    return res;
 }
 
 /* RetroArch session: run the frame lockstep allows, waiting briefly for it. */
@@ -1742,6 +1783,28 @@ static bool lr_run_pkt(uint32_t local_held) {
     }
 }
 
+/* A linked comm board (Pinboard #978): the frames its 60 Hz clock owes now,
+ * none to LINK_PACE_MAX_DEBT, not one a retro_run. RetroArch calls at the
+ * display's rate, and as fast as it can under fast-forward; neither may change
+ * how fast this cabinet runs against the other (core/link_pace.h). The first
+ * frame's pump is the caller's; the socket is drained again between frames.
+ * False when no frame was due. */
+static bool lr_run_linked(void) {
+    link_pace_t *p = &state.emu.link_pace;
+    int64_t now = emu_now_us();
+    link_pace_owed(p, now);
+    bool ran = false;
+    while (link_pace_due(p, now)) {
+        if (ran && emu_netplay_pump(&state.emu) != NETPLAY_STEP_OFF) break;
+        if (!m2comm_linked()) break;
+        emu_slice_result_t res = lr_slice();
+        if (res == EMU_SLICE_FRAME) link_pace_ran(p, m2comm_backlog());
+        ran = true;
+        if (res != EMU_SLICE_FRAME) break;
+    }
+    return ran;
+}
+
 /* RPCN: netplay.h decides, exactly as the emu thread's run loop asks it. */
 static bool lr_run_rpcn(uint32_t local_held) {
     g_input.held = local_held;   /* netplay_sample_local reads it */
@@ -1754,6 +1817,8 @@ static bool lr_run_rpcn(uint32_t local_held) {
             emu_sleep_us(500);
             continue;
         }
+        if (step == NETPLAY_STEP_OFF && m2comm_linked()) return lr_run_linked();
+        link_pace_stop(&state.emu.link_pace);
         lr_slice();
         /* A watcher behind the fighters runs a few extra slices a frame until it
          * has caught up (netplay_catching_up): one retro_run is one slice, and
@@ -2192,10 +2257,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game) {
         return false;
     }
     if (!lr_load_rom(game->path)) return false;
-    g_shell_on = g_active_profile && !strcmp(g_active_profile->id, "sfight_console");
-    if (g_shell_on)
-        ps3ui_shell_init(&g_ps3ui_shell, (ps3ui_host_t){ lr_shell_reset, lr_shell_apply, lr_shell_volume, NULL },
-                         &g_ps3ui_app);
+    lr_shell_setup();
     g_volume = 1.0f;
     lr_set_input_descriptors();
     lr_check_info_cache();
@@ -2343,7 +2405,8 @@ RETRO_API unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
  * profile. A load takes the flat state or, from before it, the zip. A state
  * loads only into the build, ROM set and profile that made it. Netplay does
  * not use them (pkt_lockstep.h), and a load during a session would change this
- * board and not the other's, so it is refused there. */
+ * board and not the other's, so it is refused there; so is one (and rewind)
+ * on a linked comm board, whose time is the link's (core/link_pace.h). */
 #define LR_STATE_SLACK 4096
 
 /* Whether a session has the board, either kind (lr_sound_may_go's test). */
@@ -2371,6 +2434,7 @@ RETRO_API bool retro_serialize(void *data, size_t size) {
 RETRO_API bool retro_unserialize(const void *data, size_t size) {
     if (!g_game_loaded) return false;
     const char *err = lr_session_owns_board() ? "a netplay session owns the board"
+                    : m2comm_linked() ? "the board is linked to another cabinet"
                     : !data ? "no state"
                     : rollback_flat_is(data, size) && retro_serialize_size()
                     ? emu_state_flat_load(&state.emu, data, size, &g_lr_state_rom)

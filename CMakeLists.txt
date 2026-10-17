@@ -682,6 +682,23 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     # with it, and the hooks that put it in the games' settings. No ROM.
     add_executable(region_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/region_test.c)
     target_link_libraries(region_test PRIVATE miniz sokol)
+    # The comm board's link to another cabinet (board/m2comm.h): two nodes in
+    # one process over datagram queues. No ROM.
+    add_executable(m2comm_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/m2comm_test.c)
+    # A linked comm board's datagrams over the room's socket (net/comm_link.h):
+    # packing, copies and late datagrams, two boards over UDP on 127.0.0.1. No ROM.
+    add_executable(comm_link_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/comm_link_test.c)
+    # The room's cabinet role for a linked comm board (net/comm_role.h): the
+    # profile's role byte with the ROM's CRC, the reset into it. No ROM.
+    add_executable(comm_role_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/comm_role_test.c)
+    target_link_libraries(comm_role_test PRIVATE miniz sokol)
+    # A Versus's two cabinets on one machine (net/comm_local.h): the hello,
+    # both ways over 127.0.0.1, strangers dropped. No ROM.
+    add_executable(comm_local_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/comm_local_test.c)
+    target_link_libraries(comm_local_test PRIVATE miniz sokol)
+    # A linked board's 60 Hz clock (core/link_pace.h): called and sleeping
+    # hosts, and two cabinets whose clocks drift apart. No ROM.
+    add_executable(link_pace_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/link_pace_test.c)
     # The game scripts (core/m2lua.h): the bit helpers, the I960 and Romset
     # calls on a bus, Options, the callbacks' order. No ROM.
     add_executable(m2lua_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/m2lua_test.c)
@@ -745,6 +762,11 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(MSVC)
         target_compile_definitions(det_digest PRIVATE _CRT_SECURE_NO_WARNINGS)
     endif()
+    if(WIN32)   # UDP on 127.0.0.1: comm_link_test, comm_local_test, det_digest --m2comm-udp
+        target_link_libraries(comm_link_test PRIVATE ws2_32)
+        target_link_libraries(comm_local_test PRIVATE ws2_32)
+        target_link_libraries(det_digest PRIVATE ws2_32)
+    endif()
     target_link_libraries(rom_test   PRIVATE miniz)
     target_link_libraries(prepared_test PRIVATE miniz)
     target_link_libraries(boot_test  PRIVATE miniz)
@@ -757,7 +779,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     target_link_libraries(audio_out_test PRIVATE sokol)
 
     foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test input_test net_test ps3net_test tile_test heat_test audio_out_test
-              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test sharc_cpu_test sfight_settings_test region_test retro_shader_test ra_info_cache_test m2lua_test)
+              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test sharc_cpu_test sfight_settings_test region_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
         target_include_directories(${t} PRIVATE ${TEST_INCLUDES})
         if(MSVC)
             target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -770,7 +792,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(NOT WIN32)
         foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test
                   input_test net_test ps3net_test tile_test heat_test audio_out_test scsp_dsp_test scsp_dsp_test_masks
-                  scsp_lazy_test tgp_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test ps3ui_render m2lua_test)
+                  scsp_lazy_test tgp_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
             target_link_libraries(${t} PRIVATE m)
         endforeach()
     endif()

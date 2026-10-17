@@ -280,6 +280,14 @@ typedef const char *(*game_native_play_fn)(const game_native_round_t *rounds, in
  * session is recorded while it is. */
 typedef bool (*game_in_play_fn)(struct memory_bus *bus);
 
+/* A linked cabinet's role (Pinboard #969): what the room makes this machine's
+ * board on a comm-board link (VIRTUAL-ON-PS3.md, "RPCN"). */
+typedef enum { GAME_LINK_ALONE, GAME_LINK_MASTER, GAME_LINK_SLAVE } game_link_role_t;
+/* Write the role where the ROM reads it when it next boots. False while the
+ * board cannot hold one yet: Virtual-On's lives in a backup block the ROM
+ * factory-fills at its first boot, so a role written before that is lost. */
+typedef bool (*game_link_role_fn)(struct memory_bus *bus, game_link_role_t role);
+
 /* ---- Profile ------------------------------------------------------------- */
 
 typedef struct game_profile {
@@ -315,6 +323,10 @@ typedef struct game_profile {
     game_native_put_fn  native_put;
     game_native_play_fn native_play;
     game_in_play_fn     in_play;
+
+    /* The cabinet role for a comm-board link (net/comm_role.h). NULL: the game
+     * has no link. */
+    game_link_role_fn   link_role;
 
     /* A prepared profile (registry.h, g_prepared_profiles): the set's ROMs and
      * what is known of its data, with no board to run it yet. Says what the

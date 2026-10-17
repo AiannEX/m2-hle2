@@ -75,6 +75,15 @@
  *            rankings) in DIR/<set>/backup1 instead of the per-user
  *            ~/.config/m2hle2/nvram (core/backup_ram.h).
  * --no-nvram  boot with blank backup RAM every time and keep nothing.
+ * --versus   Versus on this machine (Virtual-On): start a second m2hle beside
+ *            this one, each a cabinet with its own window and pad, their comm
+ *            boards linked over 127.0.0.1 (net/comm_local.h). This window is
+ *            the MASTER and plays the first pad; the other is the SLAVE and
+ *            plays the second. Closing either ends the Versus. Windowed
+ *            (640x480 unless --window). Not with --netplay.
+ * --pad N    only the Nth gamepad (0 the first) plays here; default all.
+ * --window-at X,Y  put the window there.
+ * --versus-slave PORT:TOKEN  the SLAVE that --versus starts (not for players).
  * --scripts DIR  the game scripts' folder (M2emulator's Lua, core/m2lua.h):
  *            <set>.lua there runs with the game. Default scripts/ in the
  *            working directory, else beside the executable.
@@ -117,6 +126,8 @@
 #include "input.h"
 #include "audio_out.h"   /* audio_out_cb: drains g_sound's ring (only its callback is used here) */
 #include "miniz.h"
+#include "net/comm_local.h"   /* --versus: the two cabinets' link over 127.0.0.1 */
+#include "child_proc.h"   /* --versus: the SLAVE's process */
 #include "m2lua.h"       /* M2emulator's game scripts (Pinboard #972) */
 #include "m2lua_wide.h"  /* and the picture they ask for */
 /* Video_CreateSurfaceFromFile's PNGs (M2emulator loads only PNG). Static, from
@@ -173,11 +184,17 @@ static struct {
     bool        net_host;           /* host a room as soon as the sign-in completes */
     const char *net_room_pass;      /* the rooms hosted here are locked with it */
     int         net_delay;          /* 0 = the stored value */
+    bool        versus;             /* --versus: the MASTER, starting the SLAVE */
+    uint16_t    versus_port;        /* --versus-slave: the MASTER's port; 0 = not a SLAVE */
+    uint32_t    versus_token;
+    int         pad;                /* --pad: the only gamepad that plays here; -1 = all */
+    bool        win_at;
+    int         win_x, win_y;
     const char *scripts_dir;        /* --scripts; NULL = the default */
     bool        no_scripts;
     int         script_opt_count;
     const char *script_opt[MAX_SCRIPT_OPTS];   /* --script-option codes */
-} opt = { .render_fps = 30.0, .render_scale = 1, .linear = true };
+} opt = { .render_fps = 30.0, .render_scale = 1, .linear = true, .pad = -1 };
 
 static bool g_sdtx_on;              /* sokol's debug text is set up: --osd, the lobby or a script's text */
 static bool g_sound_on;             /* the sound board is attached (sound_start succeeded) */
@@ -237,11 +254,17 @@ static bool apply_pad_map(const char *list) {
  * event so the d-pad and stick cannot release each other's direction. */
 static bool g_pad_held[GAME_INPUT_COUNT];
 
+/* --pad: only that gamepad plays this window; the others play another's. */
+static bool pad_plays_here(int i) {
+    return opt.pad < 0 || i == opt.pad;
+}
+
 static void pad_refresh(void) {
     bool now[GAME_INPUT_COUNT] = {0};
     int count = 0;
     SDL_JoystickID *ids = SDL_GetGamepads(&count);
     for (int i = 0; ids && i < count; i++) {
+        if (!pad_plays_here(i)) continue;
         SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
         if (!pad) continue;
         const int dead = 16000;
@@ -778,7 +801,44 @@ static void verify_fill(int w, int h) {
 
 /* ---- Main ------------------------------------------------------------------ */
 
+/* --versus, --versus-slave, --pad, --window-at: the arguments argv[i] takes
+ * (val its value, NULL if none), 0 if a is none of them, -1 if its value is bad. */
+static int parse_versus_arg(const char *a, const char *val) {
+    if (!strcmp(a, "--versus")) { opt.versus = true; return 1; }
+    if (!val) return 0;
+    if (!strcmp(a, "--versus-slave")) {
+        unsigned port = 0, token = 0;
+        if (sscanf(val, "%u:%u", &port, &token) != 2 || !port || port > 65535u) return -1;
+        opt.versus_port  = (uint16_t)port;
+        opt.versus_token = token;
+        return 2;
+    }
+    if (!strcmp(a, "--pad")) { opt.pad = atoi(val); return 2; }
+    if (!strcmp(a, "--window-at")) {
+        if (sscanf(val, "%d,%d", &opt.win_x, &opt.win_y) != 2) return -1;
+        opt.win_at = true;
+        return 2;
+    }
+    return 0;
+}
+
+/* A Versus is two windows, not with --netplay. */
+static bool versus_args_check(void) {
+    if (!opt.versus && !opt.versus_port) return true;
+    if (opt.netplay) {
+        fprintf(stderr, "m2hle: --versus is this machine's two cabinets; it does not go with --netplay\n");
+        return false;
+    }
+    if (opt.versus && opt.versus_port) return false;
+    if (opt.win_w <= 0 || opt.win_h <= 0) {
+        opt.win_w = 640;   /* two cabinets, two windows: neither fullscreen */
+        opt.win_h = 480;
+    }
+    return true;
+}
+
 static bool parse_args(int argc, char **argv) {
+    int used;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         bool more = i + 1 < argc;
@@ -841,6 +901,10 @@ static bool parse_args(int argc, char **argv) {
         else if (!strcmp(a, "--net-delay") && more)  opt.net_delay = atoi(argv[++i]);
         else if (!strcmp(a, "--net-host"))           opt.net_host = opt.netplay = true;
         else if (!strcmp(a, "--net-room-pass") && more) opt.net_room_pass = argv[++i];
+        else if ((used = parse_versus_arg(a, more ? argv[i + 1] : NULL)) != 0) {
+            if (used < 0) return false;
+            i += used - 1;
+        }
         else if (!strcmp(a, "--filter") && more) {
             const char *f = argv[++i];
             if (!strcmp(f, "linear")) opt.linear = true;
@@ -862,6 +926,7 @@ static bool parse_args(int argc, char **argv) {
         else if (a[0] != '-' && !opt.rom)            opt.rom = a;
         else { fprintf(stderr, "m2hle: bad argument '%s'\n", a); return false; }
     }
+    if (!versus_args_check()) return false;
     return opt.rom != NULL;
 }
 
@@ -1037,15 +1102,17 @@ static bool lobby_event(const SDL_Event *ev, bool *pad_changed) {
     return toggle || used;
 }
 
+/* The board was reset under the pad (netplay's barrier, a Versus's role
+ * boot): it holds nothing now, so press again whatever is still down. */
+static void pad_resync(bool *pad_changed) {
+    if (!g_pad_resync) return;
+    g_pad_resync = 0;
+    memset(g_pad_held, 0, sizeof g_pad_held);
+    *pad_changed = true;
+}
+
 /* Who holds the pad after this round of events. */
 static void lobby_pad_settle(bool *pad_changed) {
-    /* The board was reset under the pad (netplay's barrier): it holds nothing
-     * now, so press again whatever is still down. */
-    if (g_pad_resync) {
-        g_pad_resync = 0;
-        memset(g_pad_held, 0, sizeof g_pad_held);
-        *pad_changed = true;
-    }
     static bool lobby_was_open;
     if (lobby_was_open && !g_lobby.open) *pad_changed = true;
     lobby_was_open = g_lobby.open;
@@ -1085,6 +1152,7 @@ static bool poll_events(void) {
             default: break;
         }
     }
+    pad_resync(&pad_changed);
     if (opt.netplay) lobby_pad_settle(&pad_changed);
     if (pad_changed) pad_refresh();
     return running;
@@ -1120,10 +1188,163 @@ static bool gl_window_open(void) {
     SDL_GL_MakeCurrent(g_window, g_gl);
     /* Paced by the render timer below; vsync on top would stall a skipped frame. */
     SDL_GL_SetSwapInterval(opt.render_fps >= 59.0 ? 1 : 0);
+    if (opt.win_at) SDL_SetWindowPosition(g_window, opt.win_x, opt.win_y);
     SDL_HideCursor();
     printf("m2hle %s: %s on %s (%s)\n", M2HLE_VERSION, g_active_profile->display_name,
            (const char *)glGetString(GL_RENDERER), SDL_GetCurrentVideoDriver());
     return true;
+}
+
+/* ---- Versus on this machine (--versus) ----------------------------------------- */
+/*
+ * Two cabinets, as the arcade's Versus is: this process and a second one it
+ * starts, each running one board, their comm boards linked over 127.0.0.1
+ * (net/comm_local.h). The link is netplay's comm link without the room: the
+ * MASTER is this window, the SLAVE the other, each boots into its role
+ * (comm_role.h, through the netplay reset hook) and is paced by the link
+ * (link_pace.h). Each window plays one pad, so the pads go on being read
+ * while the other window has the focus.
+ */
+
+static child_proc_t g_versus_child;
+static bool         g_versus_child_up;
+static char       **g_versus_cmdline;   /* argv as given: parse_args cuts --shot's in two */
+
+static void versus_keep_cmdline(int argc, char **argv) {
+    g_versus_cmdline = calloc((size_t)argc + 1u, sizeof *g_versus_cmdline);
+    for (int i = 0; g_versus_cmdline && i < argc; i++) g_versus_cmdline[i] = SDL_strdup(argv[i]);
+}
+
+#define VERSUS_ARGS_MAX 96
+static char  g_versus_buf[VERSUS_ARGS_MAX][320];
+static char *g_versus_argv[VERSUS_ARGS_MAX + 1];
+
+/* A file of the SLAVE's: the MASTER's name with "-slave" before its extension,
+ * so the two cabinets do not write one log or one screenshot. */
+static void versus_slave_file(char *out, size_t cap, const char *path) {
+    const char *dot = strrchr(path, '.'), *slash = strrchr(path, '/');
+    if (!dot || (slash && dot < slash)) dot = path + strlen(path);
+    snprintf(out, cap, "%.*s-slave%s", (int)(dot - path), path, dot);
+}
+
+static bool versus_arg(int *n, const char *fmt, ...) {
+    if (*n >= VERSUS_ARGS_MAX) return false;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_versus_buf[*n], sizeof g_versus_buf[*n], fmt, ap);
+    va_end(ap);
+    g_versus_argv[*n] = g_versus_buf[*n];
+    (*n)++;
+    return true;
+}
+
+/* A file argument's value for the SLAVE: --log's renamed, --shot's FRAME:FILE
+ * with FILE renamed. */
+static bool versus_file_arg(int *n, const char *a, const char *val) {
+    char file[300];
+    if (!strcmp(a, "--log")) {
+        versus_slave_file(file, sizeof file, val);
+        return versus_arg(n, "%s", file);
+    }
+    const char *colon = strchr(val, ':');
+    versus_slave_file(file, sizeof file, colon ? colon + 1 : val);
+    return versus_arg(n, "%.*s:%s", colon ? (int)(colon - val) : 0, val, file);
+}
+
+/* Copy argv[*i] (and its value) to the SLAVE's command line, unless it is the
+ * MASTER's alone (--versus, --pad, --window-at). False when it is full. */
+static bool versus_copy_arg(int *n, char **argv, int argc, int *i) {
+    const char *a = argv[*i];
+    bool more = *i + 1 < argc;
+    if (!strcmp(a, "--versus")) return true;
+    if ((!strcmp(a, "--pad") || !strcmp(a, "--window-at")) && more) { ++*i; return true; }
+    if (!versus_arg(n, "%s", a)) return false;
+    if (more && (!strcmp(a, "--log") || !strcmp(a, "--shot"))) return versus_file_arg(n, a, argv[++*i]);
+    return true;
+}
+
+/* The SLAVE's command line: this one without what is the MASTER's alone,
+ * its files renamed, and its end of the link. */
+static bool versus_slave_argv(int argc, int x, int y) {
+    char **argv = g_versus_cmdline;
+    if (!argv) return false;
+    int n = 0;
+    bool ok = versus_arg(&n, "%s", argv[0]);
+    for (int i = 1; i < argc && ok; i++) ok = versus_copy_arg(&n, argv, argc, &i);
+    ok = ok && versus_arg(&n, "--versus-slave") && versus_arg(&n, "%u:%u", g_comm_local.port, g_comm_local.token)
+            && versus_arg(&n, "--pad") && versus_arg(&n, "1")
+            && versus_arg(&n, "--window-at") && versus_arg(&n, "%d,%d", x, y);
+    g_versus_argv[n] = NULL;
+    return ok;
+}
+
+/* The MASTER's window on the left of where it would be, the SLAVE's on the right. */
+static void versus_place(int *slave_x, int *slave_y) {
+    int x = 0, y = 0, w = 0, h = 0;
+    SDL_GetWindowPosition(g_window, &x, &y);
+    SDL_GetWindowSize(g_window, &w, &h);
+    if (!opt.win_at) {
+        x -= w / 2 + 8;
+        SDL_SetWindowPosition(g_window, x, y);
+    }
+    *slave_x = x + w + 16;
+    *slave_y = y;
+}
+
+/* The link, and on the MASTER the SLAVE's process. Before the emu thread. */
+static bool versus_start(int argc) {
+    if (!opt.versus && !opt.versus_port) return true;
+    SDL_srand(0);
+    uint16_t epoch = (uint16_t)(SDL_rand_bits() | 1u);
+    bool master = opt.versus;
+    if (master ? !comm_local_listen(&g_comm_local, SDL_rand_bits(), epoch)
+               : !comm_local_connect(&g_comm_local, opt.versus_port, opt.versus_token, epoch)) {
+        fprintf(stderr, "m2hle: --versus: no UDP socket on 127.0.0.1\n");
+        return false;
+    }
+    if (master) {
+        if (opt.pad < 0) opt.pad = 0;
+        int sx, sy;
+        versus_place(&sx, &sy);
+        if (!versus_slave_argv(argc, sx, sy) || !child_proc_start(&g_versus_child, g_versus_argv)) {
+            fprintf(stderr, "m2hle: --versus: could not start the second cabinet\n");
+            comm_local_close(&g_comm_local);
+            return false;
+        }
+        g_versus_child_up = true;
+    }
+    netplay_set_reset_hook(sdl_netplay_reset_cb, NULL);
+    comm_local_begin(&g_comm_local);
+    char title[96];
+    snprintf(title, sizeof title, "m2hle Versus: %s cabinet (pad %d)", comm_role_name(g_comm_local.role),
+             opt.pad + 1);
+    SDL_SetWindowTitle(g_window, title);
+    printf("m2hle: Versus: this window is the %s cabinet, pad %d; link on 127.0.0.1:%u\n",
+           comm_role_name(g_comm_local.role), opt.pad + 1, g_comm_local.port);
+    fflush(stdout);
+    return true;
+}
+
+/* Two windows, one pad each: a pad plays its window with the focus on the
+ * other. Before SDL_Init. */
+static void versus_before_sdl(void) {
+    if (opt.versus || opt.versus_port) SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+}
+
+/* The MASTER's run loop ends once the other window is closed. */
+static bool versus_other_gone(void) {
+    return g_versus_child_up && !child_proc_alive(&g_versus_child);
+}
+
+static void versus_stop(void) {
+    if (!opt.versus && !opt.versus_port) return;
+    const comm_link_t *l = &g_comm_local.link;
+    printf("m2hle: Versus: sent %u took %u (stale %u torn %u too big %u overflow %u), "
+           "ring %s, node %u of %u\n", l->sent, l->taken, l->stale, l->torn, l->too_big, l->overflow,
+           g_m2comm_link.alive == M2COMM_LINK_UP ? "up" : "down", g_m2comm_link.id, g_m2comm_link.count);
+    comm_local_close(&g_comm_local);
+    if (g_versus_child_up) child_proc_stop(&g_versus_child);
+    g_versus_child_up = false;
 }
 
 /* sokol and the renderers on the new context. 0, or the exit code. */
@@ -1436,6 +1657,7 @@ static int run_loop(bool audio) {
             return 1;
         }
         if (opt.exit_after && g_emu_frames >= opt.exit_after) break;
+        if (versus_other_gone()) { printf("m2hle: Versus: the other cabinet's window closed\n"); break; }
 
         if (period_ns) {
             Uint64 now = SDL_GetTicksNS();
@@ -1454,10 +1676,12 @@ static int run_loop(bool audio) {
 }
 
 int main(int argc, char **argv) {
+    versus_keep_cmdline(argc, argv);
     if (!parse_args(argc, argv)) {
         fprintf(stderr, "usage: m2hle [--rom] <set.zip> [--render-fps N] [--window WxH] [--stats] [--osd]\n"
                         "             [--log FILE] [--log-level SPEC] [--pad-map LIST] [--shot FRAME:FILE] [--exit-after N]\n"
                         "             [--netplay] [--net-config FILE] [--net-delay N]\n"
+                        "             [--versus] [--pad N] [--window-at X,Y]\n"
                         "             [--scripts DIR] [--no-scripts] [--script-option KEY=VALUE]\n");
         return 2;
     }
@@ -1479,6 +1703,7 @@ int main(int argc, char **argv) {
     if (!load_rom(opt.rom)) { dump_log_tail(12); return 1; }
     scripts_load();
 
+    versus_before_sdl();
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "m2hle: SDL_Init: %s\n", SDL_GetError());
         return 1;
@@ -1490,12 +1715,14 @@ int main(int argc, char **argv) {
     game_target_make();
 
     if (opt.netplay) netplay_start();
+    if (!versus_start(argc)) return 1;
     emu_thread_init(&state.emu, &state.cpu, &state.bus);
     emu_run(&state.emu);
 
     rc = run_loop(audio != NULL);
 
     emu_thread_shutdown(&state.emu);
+    versus_stop();   /* after the emu thread: it reads the link's socket */
     if (g_m2lua.loaded)
         printf("m2hle: script %s: %llu frames%s%s\n", g_m2lua.path, (unsigned long long)g_m2lua.frames,
                g_m2lua.error[0] ? ", last error: " : "", g_m2lua.error);

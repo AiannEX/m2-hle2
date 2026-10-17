@@ -469,6 +469,21 @@ static bool web_slice_due(int n, int64_t start) {
     return room && (state.owed_us >= WEB_SLICE_DUE_US || web_catching_up());
 }
 
+/* A linked comm board (Pinboard #978): the link's clock in place of the
+ * accumulator (core/link_pace.h). It owes up to LINK_PACE_MAX_DEBT frames
+ * after a late callback, and no catch-up runs it faster: the other cabinet
+ * runs at 60 Hz too. */
+static void web_run_linked(int64_t now) {
+    link_pace_t *p = &state.emu.link_pace;
+    state.owed_us = 0;   /* the accumulator starts afresh when the link ends */
+    link_pace_owed(p, now);
+    while (link_pace_due(p, now) && m2comm_linked()) {
+        uint32_t frames = g_emu_frames;
+        if (!web_slice() || g_emu_frames == frames) break;
+        link_pace_ran(p, m2comm_backlog());
+    }
+}
+
 static void web_run_owed_slices(void) {
     int64_t now = emu_now_us();
     if (state.last_us == 0) state.last_us = now;
@@ -489,8 +504,11 @@ static void web_run_owed_slices(void) {
          * starts (emu_thread.h, STOPPED branch). */
         emu_netplay_pump(&state.emu);
         state.owed_us = 0;
+        link_pace_stop(&state.emu.link_pace);
         return;
     }
+    if (m2comm_linked()) { web_run_linked(now); return; }
+    link_pace_stop(&state.emu.link_pace);
     for (int n = 0; web_slice_due(n, now); n++) {
         bool owed = state.owed_us >= WEB_SLICE_DUE_US;
         if (!web_slice()) {

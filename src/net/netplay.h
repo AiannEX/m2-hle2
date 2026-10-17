@@ -97,6 +97,8 @@
 #include "net_socket.h"
 
 #include "com_id.h"
+#include "comm_link.h"
+#include "comm_role.h"    /* the room's cabinet role for a linked comm board */
 #include "lockstep.h"
 #include "ps3_link.h"
 #include "room.h"
@@ -108,6 +110,7 @@
 #include "i960.h"
 #include "input.h"
 #include "log.h"
+#include "m2comm.h"     /* a linked comm board's peer (comm_link.h) */
 #include "memory.h"
 #include "thread_mutex.h"
 
@@ -187,8 +190,13 @@
  * 21: Sega Rally puts the session's region in its COUNTRY setting
  *    (srallyc_hook_country_default), where it always booted Japan; USA, the
  *    default, and Export boards differ from the first boot (Pinboard #942).
+ * 22: PR #381's (the SHARC rounds as MAME does, Pinboard #949), open when
+ *    23 was taken; 23 is above it and above master.
+ * 23: a Virtual-On match in a room links the two cabinets' comm boards
+ *    (netplay_comm_open, Pinboard #983): the i960 reads the other cabinet's
+ *    packets, which a board before it never sends.
  */
-#define NETPLAY_PROTO_REV 21
+#define NETPLAY_PROTO_REV 23
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.
@@ -449,6 +457,18 @@ typedef struct {
     uint32_t        results;
     int8_t          last_winner;
     int8_t          last_side;
+
+    /* A linked comm board (netplay_comm_open, Pinboard #983): the role, the
+     * board frames (from the boot into it) of CN 1 and of the first send, the
+     * ring (m2comm.h) and the datagram link (comm_link.h). */
+    struct netplay_comm_status {
+        bool     open, linked;
+        uint8_t  role;              /* game_link_role_t */
+        uint32_t waited, cn_frame, first_send, early;
+        uint8_t  ring_up, node, nodes;
+        uint32_t ring_sent, ring_taken;
+        uint32_t sent, taken, stale, torn, too_big, overflow, packed_peak, pending;
+    } comm;
 
     /* PS3 cross-play (ps3_link.h). */
     bool            ps3;
@@ -1368,6 +1388,88 @@ static inline void netplay_on_bye_packet(uint16_t from, const lockstep_announce_
     }
 }
 
+/* ---- A linked comm board over the room (comm_link.h, Pinboard #964) ----
+ *
+ * Virtual-On's two cabinets talk through their comm boards (board/m2comm.h):
+ * each runs its own board at its own pace, and the ROM's link traffic goes to
+ * the opponent as LOCKSTEP_PACKET_COMM datagrams on the room's socket. It is
+ * not a lockstep match: no barrier, no frame gate, no desync check; what the
+ * i960 reads there is the other cabinet's (VIRTUAL-ON-PS3.md, "RPCN").
+ * Emu thread only, like the rest of this file: m2comm.h sends from inside the
+ * board's slice and the drain below feeds the inbox between slices. Opened
+ * with the opponent known. The room gives the role (Pinboard #969): its owner's
+ * cabinet is the MASTER, the other's the SLAVE, and the board boots into it
+ * (comm_role.h) before it is linked. */
+static comm_link_t   g_netplay_comm;
+static m2comm_peer_t g_netplay_comm_peer;
+static bool          g_netplay_comm_open;
+
+/* What the link has done, for the status (Pinboard #983): the board frame,
+ * counted from the boot into the role, in which its ROM started the comm board
+ * (CN 1) and in which it first sent, and the datagrams sent before CN 1 (never,
+ * by comm_role.h). UINT32_MAX: not yet. */
+static uint32_t g_netplay_comm_cn_frame, g_netplay_comm_first_send, g_netplay_comm_early;
+
+static inline void netplay__comm_transmit(void *ud, const void *buf, uint32_t len) {
+    (void)ud;
+    uint16_t to = netplay_opponent_id();
+    if (to == ROOM_NO_MEMBER) return;
+    if (g_netplay_comm_first_send == UINT32_MAX) g_netplay_comm_first_send = g_emu_frames;
+    if (!g_m2comm.enabled) g_netplay_comm_early++;
+    rpcn_session_send_to(&g_netplay.session, to, buf, len);
+}
+
+/* Once a pump: the frame the ROM started its comm board in. */
+static inline void netplay_comm_pump(void) {
+    if (g_netplay_comm_open && comm_role_linked() && g_m2comm.enabled && g_netplay_comm_cn_frame == UINT32_MAX)
+        g_netplay_comm_cn_frame = g_emu_frames ? g_emu_frames - 1u : 0u;
+}
+
+/* This machine's cabinet, as the room makes it: the owner's is the MASTER. */
+static inline game_link_role_t netplay_comm_role(void) {
+    return netplay_is_host() ? GAME_LINK_MASTER : GAME_LINK_SLAVE;
+}
+
+/* Link the comm board to the opponent's, as the room's role: the board boots
+ * into the role (netplay_comm_role_reset, at a frame edge) and the ring comes
+ * up when the game then starts its comm board. */
+static inline void netplay_comm_open(void) {
+    lockstep_header_t h;
+    netplay_fill_header(&h, LOCKSTEP_PACKET_COMM);
+    comm_link_start(&g_netplay_comm, (uint16_t)(net_now_us() | 1u), &h, netplay__comm_transmit, NULL);
+    g_netplay_comm_peer = (m2comm_peer_t){ &g_netplay_comm, comm_link_send, comm_link_recv,
+                                           comm_link_pending };
+    comm_role_begin(netplay_comm_role(), &g_netplay_comm_peer);
+    g_netplay_comm_open       = true;
+    g_netplay_comm_cn_frame   = UINT32_MAX;
+    g_netplay_comm_first_send = UINT32_MAX;
+    g_netplay_comm_early      = 0;
+    netplay_log("comm link: this cabinet is the %s; it boots into that once its backup RAM can hold it",
+                comm_role_name(g_comm_role.role));
+}
+
+/* The board alone again, as it was before the link. */
+static inline void netplay_comm_close(void) {
+    if (!g_netplay_comm_open) return;
+    comm_role_end();
+    g_netplay_comm_open = false;
+}
+
+/* Emu thread, emu mutex held, between slices: the reset into the room's role,
+ * once the game can hold it (comm_role.h). True if the board was reset. */
+static inline bool netplay_comm_role_reset(memory_bus_t *bus) {
+    if (!comm_role_reset(bus, g_active_profile, g_netplay.reset_board, g_netplay.reset_ctx)) return false;
+    input_reset();
+    netplay_log("comm link: the board boots as the %s after %u frames alone",
+                comm_role_name(g_comm_role.role), (unsigned)g_comm_role.waited);
+    return true;
+}
+
+static inline void netplay_on_comm_packet(uint16_t from, const uint8_t *buf, int got) {
+    if (g_netplay_comm_open && from == netplay_opponent_id())
+        comm_link_on_datagram(&g_netplay_comm, buf, (uint32_t)got);
+}
+
 /* One accepted datagram, by its type; one too short for its type is dropped. */
 static inline void netplay_on_datagram(uint16_t from, const uint8_t *buf, int got) {
     const lockstep_header_t *hdr = (const lockstep_header_t *)buf;
@@ -1388,12 +1490,14 @@ static inline void netplay_on_datagram(uint16_t from, const uint8_t *buf, int go
     } else if (hdr->type == LOCKSTEP_PACKET_BYE
                && got >= (int)sizeof(lockstep_announce_packet_t)) {
         netplay_on_bye_packet(from, (const lockstep_announce_packet_t *)buf);
+    } else if (hdr->type == LOCKSTEP_PACKET_COMM) {
+        netplay_on_comm_packet(from, buf, got);
     }
 }
 
 static inline void netplay_drain_socket(void) {
     if (g_netplay.ps3) { netplay_drain_socket_ps3(); return; }
-    uint8_t buf[sizeof(lockstep_input_packet_t) + 64];
+    uint8_t buf[COMM_LINK_DGRAM_MAX];   /* the largest datagram, a comm board's */
     for (;;) {
         uint16_t from = 0;
         uint32_t ip = 0;
@@ -2093,6 +2197,26 @@ static inline void netplay_status_log(netplay_status_t *st) {
     st->log_count = g_netplay.log_count;
 }
 
+/* The comm link's counters (netplay_comm_open). */
+static inline void netplay_status_comm(struct netplay_comm_status *c) {
+    const comm_link_t *l = &g_netplay_comm;
+    c->open       = g_netplay_comm_open;
+    c->linked     = comm_role_linked();
+    c->role       = (uint8_t)g_comm_role.role;
+    c->waited     = g_comm_role.waited;
+    c->cn_frame   = g_netplay_comm_cn_frame;
+    c->first_send = g_netplay_comm_first_send;
+    c->early      = g_netplay_comm_early;
+    c->ring_up    = g_m2comm_link.alive;
+    c->node       = g_m2comm_link.id;
+    c->nodes      = g_m2comm_link.count;
+    c->ring_sent  = g_m2comm_link.sent;
+    c->ring_taken = g_m2comm_link.taken;
+    c->sent = l->sent; c->taken = l->taken; c->stale = l->stale; c->torn = l->torn;
+    c->too_big = l->too_big; c->overflow = l->overflow; c->packed_peak = l->packed_peak;
+    c->pending = g_netplay_comm_open ? comm_link_pending((void *)l) : 0;
+}
+
 /* The UI reads this. It is refreshed once per pump while a board runs, and
  * while netplay is off or waiting whenever something changed or 16 ms have
  * passed (netplay_status_due). */
@@ -2125,6 +2249,7 @@ static inline void netplay_publish_status(void) {
     st->results        = g_netplay.results;
     st->last_winner    = g_netplay.last_winner;
     st->last_side      = g_netplay.last_side;
+    netplay_status_comm(&st->comm);
 
     /* Only the listings in use: the rest of each 2.5 KB table is never read. */
     uint32_t rooms = g_netplay.session.room_count < RPCN_MAX_ROOMS ? g_netplay.session.room_count : RPCN_MAX_ROOMS;
@@ -2563,6 +2688,10 @@ static inline void netplay_end_match(const char *why) {
     if (netplay_running_match() || g_netplay.state == NETPLAY_SYNCING) {
         if (why) netplay_log("match %u: %s", (unsigned)g_netplay.match_started, why);
         g_netplay.state = rpcn_session_in_room(&g_netplay.session) ? NETPLAY_IN_ROOM : NETPLAY_ONLINE;
+    }
+    if (g_netplay_comm_open) {
+        if (why && g_netplay.match_live) netplay_log("match %u: %s", (unsigned)g_netplay.match_started, why);
+        netplay_comm_close();
     }
     g_netplay.match_live     = false;
     g_netplay.reset_pending  = false;
@@ -3757,6 +3886,20 @@ static inline void netplay_adopt_room_settings(const room_state_t *r) {
     }
 }
 
+/* A fighter's match in a game whose cabinets link their comm boards (Virtual-On,
+ * the profile's link_role): no lockstep, no barrier. Each cabinet runs its own
+ * board, which boots into the room's role and then talks to the other's over
+ * the room's socket (netplay_comm_open; VIRTUAL-ON-PS3.md, "RPCN"). The match
+ * stays IN_ROOM: the board is the player's to drive, at the link's 60 Hz. */
+static inline void netplay_member_start_link(const room_state_t *r, int side, uint16_t session) {
+    g_netplay.generation   = session & 0x1F;
+    g_netplay.local_player = side;
+    g_netplay.frame        = 0;
+    netplay_log("match %u: you are %s against %s, cabinets linked", (unsigned)r->match,
+                side == 0 ? "1P" : "2P", netplay_member_name(r->fighter[side ^ 1]));
+    netplay_comm_open();
+}
+
 /* Start the room's match on `session`: a cold boot of our board, as a fighter
  * if the state names us `me`, as a watcher otherwise. */
 static inline void netplay_member_start_session(const room_state_t *r, uint16_t me, uint16_t session) {
@@ -3773,7 +3916,15 @@ static inline void netplay_member_start_session(const room_state_t *r, uint16_t 
     /* This session cold boots the board, so it decides what is left behind. */
     g_netplay.vs_board        = r->vs_mode != 0;
     netplay_adopt_room_settings(r);
-    if (side >= 0) {
+    bool linked = g_active_profile && g_active_profile->link_role;
+    if (side >= 0 && linked) {
+        netplay_member_start_link(r, side, session);
+    } else if (linked) {
+        /* Two cabinets, each on its own board: nothing a third could follow. */
+        netplay_log("match %u: %s vs %s, on their own linked cabinets", (unsigned)r->match,
+                    netplay_member_name(r->fighter[0]), netplay_member_name(r->fighter[1]));
+        return;
+    } else if (side >= 0) {
         netplay_log("match %u: you are %s against %s", (unsigned)r->match, side == 0 ? "1P" : "2P",
                     netplay_member_name(r->fighter[side ^ 1]));
         netplay_begin_generation(session, (uint32_t)side, r->frame_delay);
@@ -4133,6 +4284,7 @@ static inline netplay_step_t netplay_begin_frame(void) {
     if (g_netplay.ps3) return netplay_begin_frame_ps3(took);
 
     if (rpcn_session_in_room(&g_netplay.session)) netplay_room_pumps();
+    netplay_comm_pump();
 
     netplay_step_t step = NETPLAY_STEP_OFF;
     if (g_netplay.state == NETPLAY_SYNCING) {
