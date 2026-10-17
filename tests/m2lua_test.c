@@ -11,8 +11,10 @@
  *   - The options as RetroArch cheats (the libretro core): the .cht text and
  *     the codes retro_cheat_set hands over.
  *
- * A ctest (CMakeLists.txt, m2lua_test). Writes m2lua_test_set.lua in the
- * working directory and deletes it.
+ *   - require("model2") with no scripts folder: the built-in stand-ins.
+ *
+ * A ctest (CMakeLists.txt, m2lua_test). Writes m2lua_test_set.lua and
+ * model2.lua in the working directory and deletes them.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -164,6 +166,26 @@ static void test_source(void) {
           "empty text: no script");
 }
 
+/* require("model2") with no SCRIPTS folder (the web's case): the built-in
+ * stand-ins for M2emulator's model2.lua and common.lua; a file in the folder
+ * still wins. */
+static void test_builtin_modules(void) {
+    static const char k_rally[] = "require(\"model2\")\nfunction Frame() Model2_SetWideScreen(1) end\n";
+    m2lua_set_dir("m2lua_test_nowhere");
+    CHECK(m2lua_load_source("m2lua_test_set", k_rally, &bus, &rom, true), "require(\"model2\") with no folder");
+    CHECK(strcmp(eval("return RAM2BASE == 0x200000, HEX32(0xABCDEF01), HEX8(0x1FF), HEX4(10), JOY2 + JOY_BUTTON3"),
+                 "true\tABCDEF01\tFF\tA\t560") == 0, "model2's map, common's HEX helpers and JOY numbers");
+    m2lua_frame_hook(true);
+    CHECK(g_m2lua.video.widescreen, "its Frame ran: widescreen on");
+    FILE *f = fopen("model2.lua", "wb");
+    if (f) { fputs("RAM2BASE = 7\n", f); fclose(f); }
+    m2lua_set_dir(".");
+    CHECK(m2lua_load_source("m2lua_test_set", k_rally, &bus, &rom, true) && strcmp(eval("return RAM2BASE, HEX8"), "7\tnil") == 0,
+          "the folder's model2.lua wins");
+    remove("model2.lua");
+    m2lua_unload();
+}
+
 static void test_bad_script(void) {
     FILE *f = fopen("m2lua_test_bad.lua", "wb");
     if (f) { fputs("function Frame( end\n", f); fclose(f); }
@@ -187,6 +209,7 @@ int main(void) {
     m2lua_unload();
     test_script();
     test_source();
+    test_builtin_modules();
     test_bad_script();
     m2lua_unload();
     printf("%s\n", g_fail ? "FAILED" : "all passed");
