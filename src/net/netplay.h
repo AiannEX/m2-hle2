@@ -190,8 +190,8 @@
  * 21: Sega Rally puts the session's region in its COUNTRY setting
  *    (srallyc_hook_country_default), where it always booted Japan; USA, the
  *    default, and Export boards differ from the first boot (Pinboard #942).
- * 22: PR #381's (the SHARC rounds as MAME does, Pinboard #949), open when
- *    23 was taken; 23 is above it and above master.
+ * 22: held for PR #381 (the SHARC rounds as MAME does, Pinboard #949) when
+ *    23 was taken; unused: #381 took 27, above #946's 26.
  * 23: a Virtual-On match in a room links the two cabinets' comm boards
  *    (netplay_comm_open, Pinboard #983): the i960 reads the other cabinet's
  *    packets, which a board before it never sends.
@@ -201,8 +201,14 @@
  * 25: the sound 68000 decodes AND Dn,<ea> (word/long) instead of EXG and
  *    runs ABCD/SBCD/NBCD/TAS/CHK, so Dynamite Cop's sound driver no longer
  *    derails and its UART answers differ (Pinboard #1006).
+ * 26: the SHARC's RSQRTS of +-0 is +-infinity, so Virtual-On's COP gives NaN
+ *    for the length of a zero vector, as MAME and the board do, not 0; its
+ *    tutorial shadow read that 0 and streaked (Pinboard #946).
+ * 27: the SHARC rounds as MAME does: MODE1.TRUNC only reaches FIX, FMUL
+ *    neither flushes nor saturates, so every Virtual-On COP reply matches
+ *    MAME's word for word (Pinboard #949).
  */
-#define NETPLAY_PROTO_REV 25
+#define NETPLAY_PROTO_REV 27
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.

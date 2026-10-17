@@ -84,6 +84,30 @@ if(M2HLE_GEMS_DIR)
     include_directories("${M2HLE_GEMS_DIR}")
 endif()
 
+# Sega's own C for Fighting Vipers' patched i960 functions, from Sega Ages 2500
+# Vol. 19 (src/core/ages.h; --ages-i960, --ages-verify). The owner's ages-c
+# repository, which carries ages-decomp as its submodule decomp/: point this
+# at a checkout holding ages_impl.h. Empty (the default): none. As with Gems,
+# its ages_all.h is generated, not tracked: gen_all.py writes it beside itself.
+set(M2HLE_AGES_DIR "" CACHE PATH "Directory with ages_impl.h (Sega Ages 2500 Fighting Vipers C); empty: none")
+if(M2HLE_AGES_DIR)
+    if(NOT EXISTS "${M2HLE_AGES_DIR}/ages_impl.h")
+        message(FATAL_ERROR "M2HLE_AGES_DIR: no ages_impl.h in ${M2HLE_AGES_DIR}")
+    endif()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    execute_process(COMMAND "${Python3_EXECUTABLE}" "${M2HLE_AGES_DIR}/gen_all.py"
+                    RESULT_VARIABLE _ages_rc OUTPUT_QUIET ERROR_VARIABLE _ages_err)
+    if(NOT _ages_rc EQUAL 0)
+        message(FATAL_ERROR "M2HLE_AGES_DIR: gen_all.py failed: ${_ages_err}"
+                "(it needs the decomp/ submodule: git submodule update --init decomp)")
+    endif()
+    file(GLOB _ages_inputs CONFIGURE_DEPENDS "${M2HLE_AGES_DIR}/fn/*.h")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_ages_inputs}
+                 "${M2HLE_AGES_DIR}/gen_all.py" "${M2HLE_AGES_DIR}/decomp/FV/FN/INDEX.md")
+    add_compile_definitions(M2HLE_AGES)
+    include_directories("${M2HLE_AGES_DIR}")
+endif()
+
 # A build to debug a running emulator with (tools/build-debug.sh). Debug and
 # RelWithDebInfo keep the frame pointer, so perf, gdb and the crash backtrace
 # (core/crash_trace.h) can walk the stack. M2HLE_SANITIZE adds sanitizers, e.g.
@@ -715,6 +739,13 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(MSVC)
         target_compile_definitions(cop_replay PRIVATE _CRT_SECURE_NO_WARNINGS)
     endif()
+    # Not a ctest: replays a MAME capture of a Model 2B game's SHARC COP traffic
+    # (tools/mame-sharc-tap.lua) and checks every word the SHARC writes back.
+    add_executable(sharc_replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/sharc_replay.c)
+    target_include_directories(sharc_replay PRIVATE ${TEST_INCLUDES})
+    if(MSVC)
+        target_compile_definitions(sharc_replay PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
     # Not a ctest: replays a MAME sound capture's MIDI stream through the sound board.
     add_executable(snd_replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/snd_replay.c)
     target_include_directories(snd_replay PRIVATE ${TEST_INCLUDES})
@@ -798,7 +829,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(NOT WIN32)
         foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test
                   input_test net_test ps3net_test tile_test heat_test audio_out_test scsp_dsp_test scsp_dsp_test_masks
-                  scsp_lazy_test tgp_test tgpx4_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
+                  scsp_lazy_test tgp_test tgpx4_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay sharc_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
             target_link_libraries(${t} PRIVATE m)
         endforeach()
     endif()
