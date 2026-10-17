@@ -156,6 +156,12 @@ static inline void srallyc_install(const romset_t *rs, i960_cpu_t *cpu, memory_b
 
     uint32_t prcb = srallyc_read32(rs->maincpu, 0x04);
     if (prcb + 0x2C < rs->maincpu_size) {
+        /* FP on the PRCB's interrupt stack (MAME i960 device_reset): the boot
+         * calls 0x5C0, which flushes the frames and returns through memory, so
+         * the caller's frame has to land in RAM, not at 0 in ROM. */
+        uint32_t isp = srallyc_read32(rs->maincpu, prcb + PRCB_INTR_STACK);
+        cpu->globals.fp = isp;
+        cpu->locals.sp  = isp + 64;
         uint32_t start_ip_ptr = srallyc_read32(rs->maincpu, prcb + PRCB_START_IP);
         if (start_ip_ptr < rs->maincpu_size) cpu->sfr.ip = srallyc_read32(rs->maincpu, start_ip_ptr);
     }
