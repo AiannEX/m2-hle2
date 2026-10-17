@@ -77,6 +77,38 @@ typedef struct {
     int x, y, w, h;
 } game_rect_t;
 
+/*
+ * Widescreen (a game script's Model2_SetWideScreen, core/m2lua.h): the 3D
+ * gets `extra` board columns on each side, Hor+ (the same focal lengths, so
+ * the same vertical view and more of the scene at the sides), and the target
+ * is 496 + 2*extra wide. A window that spans the board's width spans the wide
+ * picture; a narrower one stays where the board puts it. The tile layers stay
+ * 496 wide in the middle unless stretched to the whole width: the layer behind
+ * the 3D when stretch_low, the one in front when stretch_high. 0 extra is the
+ * board's picture. Drawing only: nothing the i960 reads changes.
+ */
+typedef struct {
+    int  extra;
+    bool stretch_low, stretch_high;
+} game_wide_t;
+static game_wide_t g_game_wide;
+
+/* Board columns from the picture's left edge to its right. */
+static inline int game_render_wide_width(void) { return VIDEO_WIDTH + 2 * g_game_wide.extra; }
+
+/* The columns a 16:9 picture adds on each side of the board's 496 x 384. */
+#define GAME_RENDER_WIDE_EXTRA ((VIDEO_HEIGHT * 16 / 9 - VIDEO_WIDTH) / 2)
+
+/* Where a tile layer goes in the picture's rect vp: all of it when stretched,
+ * else the board's 496 columns in the middle. */
+static inline game_rect_t game_render_tile_rect(game_rect_t vp, bool stretch) {
+    if (!g_game_wide.extra || stretch) return vp;
+    const int W = game_render_wide_width();
+    int x0 = vp.x + g_game_wide.extra * vp.w / W;
+    int x1 = vp.x + (g_game_wide.extra + VIDEO_WIDTH) * vp.w / W;
+    return (game_rect_t){ x0, vp.y, x1 - x0, vp.h };
+}
+
 typedef struct {
     /* Tile (fullscreen-quad) pipeline */
     sg_buffer   quad_vbuf;
@@ -2065,7 +2097,7 @@ static inline void game_render_draw_lines(float cam_x, float cam_y, float cam_z,
     /* Build MVP — perspective × view, transposed for column-major GLSL. */
     float proj[16], view[16], mvp[16], mvp_t[16];
     float aspect  = (aspect_override > 0.0f) ? aspect_override
-                                              : (float)VIDEO_WIDTH / (float)VIDEO_HEIGHT;
+                                              : (float)game_render_wide_width() / (float)VIDEO_HEIGHT;
     float fov_rad = fov_deg * 3.14159265f / 180.0f;
     gm_mat4_perspective(proj, fov_rad, aspect, 0.1f, 5000.0f);
     gm_mat4_view(view, cam_x, cam_y, cam_z, rot_y, rot_x);
@@ -2116,7 +2148,7 @@ static inline void game_render_draw_fills(float cam_x, float cam_y, float cam_z,
 
     float proj[16], view[16], mvp[16], mvp_t[16];
     float aspect  = (aspect_override > 0.0f) ? aspect_override
-                                              : (float)VIDEO_WIDTH / (float)VIDEO_HEIGHT;
+                                              : (float)game_render_wide_width() / (float)VIDEO_HEIGHT;
     float fov_rad = fov_deg * 3.14159265f / 180.0f;
     gm_mat4_perspective(proj, fov_rad, aspect, 0.1f, 5000.0f);
     gm_mat4_view(view, cam_x, cam_y, cam_z, rot_y, rot_x);
@@ -2335,12 +2367,13 @@ static inline void game_render_batch_flush(bool lines_only) {
  * placed below zero there is not drawn at all.
  */
 static inline void gm_mat4_geo_projection(float *m, const float *gproj, int win, int windows) {
-    const float W = (float)VIDEO_WIDTH, H = (float)VIDEO_HEIGHT;
+    const float W = (float)game_render_wide_width(), H = (float)VIDEO_HEIGHT;
+    const float cx = gproj[2] + (float)g_game_wide.extra;
     const float n = GEO3D_NEAR, f = 20000.0f;
     float nwin = (float)(windows > 0 ? windows : 1);
     memset(m, 0, 64);
     m[0]  = 2.0f * gproj[0] / W;
-    m[2]  = -(2.0f * gproj[2] / W - 1.0f);
+    m[2]  = -(2.0f * cx / W - 1.0f);
     m[5]  = 2.0f * gproj[1] / H;
     m[6]  = -(1.0f - 2.0f * gproj[3] / H);
     m[14] = -1.0f;
@@ -2372,7 +2405,7 @@ static inline void game_render__view_cull_planes(const float *mvp, int x0, int y
     }
     g_geo3d_cull_on = g_geo3d_view_cull;
     if (!g_geo3d_cull_on) return;
-    const float W = (float)VIDEO_WIDTH, H = (float)VIDEO_HEIGHT, M = GAME_RENDER_CULL_MARGIN;
+    const float W = (float)game_render_wide_width(), H = (float)VIDEO_HEIGHT, M = GAME_RENDER_CULL_MARGIN;
     const float aL = 2.0f * ((float)x0 - M) / W - 1.0f, aR = 2.0f * ((float)x1 + M) / W - 1.0f;
     const float bT = 1.0f - 2.0f * ((float)y0 - M) / H, bB = 1.0f - 2.0f * ((float)y1 + M) / H;
     const float *r0 = mvp, *r1 = mvp + 4, *r3 = mvp + 12;   /* x, y and w rows (row-major) */
@@ -2484,6 +2517,15 @@ static inline game_render_run_t *game_render__geo_decode_run(geo3d_state_t *geo,
     return &g_render_batch.runs[g_render_batch.count - 1];
 }
 
+/* A window's columns x0..x1 (the board's) in the wide picture's: moved over
+ * by the extra columns, and out to its edges when it spans the board. */
+static inline void game_render__wide_window(int *x0, int *x1) {
+    const bool full = *x0 == 0 && *x1 == VIDEO_WIDTH;
+    *x0 += g_game_wide.extra;
+    *x1 += g_game_wide.extra;
+    if (full) { *x0 = 0; *x1 = game_render_wide_width(); }
+}
+
 /*
  * Draw the frame's GEO display list: runs of objects that share a projection
  * and window are decoded together and drawn with that window's scissor.
@@ -2509,15 +2551,17 @@ static inline void game_render_draw_geo_list(geo3d_state_t *geo, const geo3d_mod
         int x1 = c0->vp[2] > VIDEO_WIDTH ? VIDEO_WIDTH : c0->vp[2];
         int y1 = c0->vp[3] > VIDEO_HEIGHT ? VIDEO_HEIGHT : c0->vp[3];
         if (!(x1 > x0 && y1 > y0)) { i = j; continue; }   /* off-screen window: nothing drawn */
+        game_render__wide_window(&x0, &x1);
 
         if (g_render_batch.count == GAME_RENDER_MAX_RUNS) game_render_batch_flush(geo->lines_only);
         float mvp[16];
         gm_mat4_geo_projection(mvp, c0->gproj, c0->window, geo->geo_windows);
         game_render__view_cull_planes(mvp, x0, y0, x1, y1);
         game_render_run_t *run = game_render__geo_decode_run(geo, md, i, j);
-        run->sx = ox + x0 * w / VIDEO_WIDTH;
+        const int W = game_render_wide_width();
+        run->sx = ox + x0 * w / W;
         run->sy = oy + y0 * h / VIDEO_HEIGHT;
-        run->sw = (x1 - x0) * w / VIDEO_WIDTH;
+        run->sw = (x1 - x0) * w / W;
         run->sh = (y1 - y0) * h / VIDEO_HEIGHT;
         gm_mat4_transpose(run->mvp_t, mvp);
         i = j;

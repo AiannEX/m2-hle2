@@ -153,13 +153,19 @@ endif()
 # Vendored dependencies are git submodules. Fail early and usefully if the
 # tree was cloned without them.
 # ---------------------------------------------------------------------------
-if(M2HLE_SDL3 OR M2HLE_WEB OR M2HLE_LIBRETRO)
-    set(M2HLE_SUBMODULE_PATHS vendor/sokol vendor/miniz vendor/stb)
-    set(M2HLE_SUBMODULE_PROBES sokol/sokol_gfx.h miniz/miniz.c stb/stb_truetype.h)
+if(M2HLE_WEB)
+    set(M2HLE_SUBMODULE_PATHS vendor/sokol vendor/miniz vendor/stb vendor/lua)
+    set(M2HLE_SUBMODULE_PROBES sokol/sokol_gfx.h miniz/miniz.c stb/stb_truetype.h lua/onelua.c)
+elseif(M2HLE_LIBRETRO)
+    set(M2HLE_SUBMODULE_PATHS vendor/sokol vendor/miniz vendor/stb vendor/lua)
+    set(M2HLE_SUBMODULE_PROBES sokol/sokol_gfx.h miniz/miniz.c stb/stb_truetype.h lua/onelua.c)
+elseif(M2HLE_SDL3)
+    set(M2HLE_SUBMODULE_PATHS vendor/sokol vendor/miniz vendor/stb vendor/lua)
+    set(M2HLE_SUBMODULE_PROBES sokol/sokol_gfx.h miniz/miniz.c stb/stb_truetype.h lua/onelua.c)
 else()
-    set(M2HLE_SUBMODULE_PATHS vendor/imgui vendor/dear_bindings vendor/sokol vendor/miniz vendor/ImGuiFileDialog vendor/imgui_club vendor/stb)
+    set(M2HLE_SUBMODULE_PATHS vendor/imgui vendor/dear_bindings vendor/sokol vendor/miniz vendor/ImGuiFileDialog vendor/imgui_club vendor/stb vendor/lua)
     set(M2HLE_SUBMODULE_PROBES imgui/imgui.h dear_bindings/dear_bindings.py sokol/sokol_gfx.h miniz/miniz.c ImGuiFileDialog/ImGuiFileDialog.cpp stb/stb_truetype.h
-                               imgui_club/imgui_memory_editor/imgui_memory_editor.h)
+                               imgui_club/imgui_memory_editor/imgui_memory_editor.h lua/onelua.c)
 endif()
 foreach(probe ${M2HLE_SUBMODULE_PROBES})
     if(NOT EXISTS ${VENDOR}/${probe})
@@ -219,6 +225,22 @@ add_library(miniz STATIC
 target_include_directories(miniz PUBLIC ${VENDOR}/miniz ${MINIZ_GEN_DIR})
 
 # ---------------------------------------------------------------------------
+# Lua 5.5 (C), the game scripts' language (core/m2lua.h, Pinboard #958): the
+# library half of onelua.c, every core and standard library in one unit.
+# Every frontend links it: the desktop, the web (the page's scratchpad), the
+# libretro core and the handheld (Pinboard #972).
+# ---------------------------------------------------------------------------
+add_library(lua55 STATIC EXCLUDE_FROM_ALL ${VENDOR}/lua/onelua.c)
+target_compile_definitions(lua55 PRIVATE MAKE_LIB)
+if(MSVC)
+    target_compile_definitions(lua55 PRIVATE _CRT_SECURE_NO_WARNINGS)
+elseif(NOT WIN32 AND NOT EMSCRIPTEN)
+    target_compile_definitions(lua55 PRIVATE LUA_USE_POSIX)   # mkstemp, popen
+    target_link_libraries(lua55 PUBLIC m)
+endif()
+target_include_directories(lua55 PUBLIC ${VENDOR}/lua)
+
+# ---------------------------------------------------------------------------
 # sdl3 frontend: m2hle from src/main_sdl.c, then stop — nothing below (ImGui,
 # sokol_app, the unit tests) is part of this build.
 # ---------------------------------------------------------------------------
@@ -236,13 +258,14 @@ if(M2HLE_SDL3)
     # No debugger here to arm the board's breakpoint/watchpoint/capture hooks
     # (src/core/build_features.h).
     target_compile_definitions(m2hle PRIVATE M2HLE_DEV_TOOLS=0)
-    target_link_libraries(m2hle PRIVATE sokol_gfx miniz SDL3::SDL3 Threads::Threads m)
+    target_link_libraries(m2hle PRIVATE sokol_gfx miniz lua55 SDL3::SDL3 Threads::Threads m)
     target_include_directories(m2hle PRIVATE
         ${SRC}
         ${SRC}/board
         ${SRC}/core
         ${SRC}/ui
         ${SRC}/profiles
+        ${VENDOR}/stb    # stb_image: a script's PostDraw PNGs
     )
     install(TARGETS m2hle RUNTIME DESTINATION bin)
     return()
@@ -260,6 +283,7 @@ if(M2HLE_LIBRETRO)
     endif()
     # Only the retro_* API leaves the library (libretro.h marks it default).
     set_target_properties(miniz PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+    set_target_properties(lua55 PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 
     add_library(sokol_gfx STATIC ${SRC}/sokol_gfx_impl.c)
     set_target_properties(sokol_gfx PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
@@ -311,7 +335,7 @@ if(M2HLE_LIBRETRO)
         # default visibility. retro_* are in main_libretro.c, not a library.
         target_link_options(m2hle_libretro PRIVATE -Wl,--exclude-libs,ALL)
     endif()
-    target_link_libraries(m2hle_libretro PRIVATE sokol_gfx miniz)
+    target_link_libraries(m2hle_libretro PRIVATE sokol_gfx miniz lua55)
     target_compile_definitions(m2hle_libretro PRIVATE M2HLE_DEV_TOOLS=0)   # src/core/build_features.h
     target_include_directories(m2hle_libretro PRIVATE
         ${VENDOR}/stb
@@ -351,7 +375,7 @@ if(M2HLE_WEB)
 
     add_executable(m2hle ${SRC}/main_web.c)
     target_compile_definitions(m2hle PRIVATE M2HLE_WEB M2HLE_DEV_TOOLS=0)   # src/core/build_features.h
-    target_link_libraries(m2hle PRIVATE sokol miniz)
+    target_link_libraries(m2hle PRIVATE sokol miniz lua55)
     if(TARGET ggpo)
         target_link_libraries(m2hle PRIVATE ggpo)   # the GGPO panel (core/emu_ggpo.h)
     endif()
@@ -549,7 +573,7 @@ if(WIN32)
 else()
     add_executable(m2hle ${SRC}/main.c ${SRC}/ui/mem_edit.cpp)
 endif()
-target_link_libraries(m2hle PRIVATE sokol miniz imguifiledialog)
+target_link_libraries(m2hle PRIVATE sokol miniz imguifiledialog lua55)
 if(TARGET ggpo)
     target_link_libraries(m2hle PRIVATE ggpo)   # --ggpo-* (core/emu_ggpo.h)
 endif()
@@ -668,6 +692,10 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     # profile's role byte with the ROM's CRC, the reset into it. No ROM.
     add_executable(comm_role_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/comm_role_test.c)
     target_link_libraries(comm_role_test PRIVATE miniz sokol)
+    # The game scripts (core/m2lua.h): the bit helpers, the I960 and Romset
+    # calls on a bus, Options, the callbacks' order. No ROM.
+    add_executable(m2lua_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/m2lua_test.c)
+    target_link_libraries(m2lua_test PRIVATE miniz lua55)
     # Not a ctest: replays a MAME capture of the COP conversation (needs a capture file).
     add_executable(cop_replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/cop_replay.c)
     target_include_directories(cop_replay PRIVATE ${TEST_INCLUDES})
@@ -743,7 +771,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     target_link_libraries(audio_out_test PRIVATE sokol)
 
     foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test input_test net_test ps3net_test tile_test heat_test audio_out_test
-              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test sharc_cpu_test sfight_settings_test region_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test)
+              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test sharc_cpu_test sfight_settings_test region_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test m2lua_test)
         target_include_directories(${t} PRIVATE ${TEST_INCLUDES})
         if(MSVC)
             target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -756,7 +784,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(NOT WIN32)
         foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test
                   input_test net_test ps3net_test tile_test heat_test audio_out_test scsp_dsp_test scsp_dsp_test_masks
-                  scsp_lazy_test tgp_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test ps3ui_render m2comm_test comm_link_test comm_role_test)
+                  scsp_lazy_test tgp_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test ps3ui_render m2comm_test comm_link_test comm_role_test m2lua_test)
             target_link_libraries(${t} PRIVATE m)
         endforeach()
     endif()
