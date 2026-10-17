@@ -2085,12 +2085,30 @@ static inline void geo3d_flat_color_boost(float *fr, float *fg, float *fb, float
     }
 }
 
+/* A face's corners from the index array: false when A or B is not a vertex
+ * (the face does not draw); C or D out of range makes it a triangle. */
+static inline bool geo3d_decode_face_shape(const geo3d_ia_t *ia, const int c[4], bool tri_cnt,
+                                           geo3d_shape_t *s) {
+    const vec3_t *sv = ia->sv;
+    const int n_sv = ia->n_sv;
+    int ai = c[0], bi = c[1], ci = c[2], di = c[3];
+    if (ai < 0 || ai >= n_sv) return false;
+    if (bi < 0 || bi >= n_sv) return false;
+
+    bool has_C = (ci >= 0 && ci < n_sv);
+    bool has_D = (di >= 0 && di < n_sv);
+    *s = (geo3d_shape_t){
+        .P = { sv[ai], sv[bi], has_C ? sv[ci] : (vec3_t){0,0,0}, has_D ? sv[di] : (vec3_t){0,0,0} },
+        .is_tri = tri_cnt || !has_C || !has_D, .has_c = has_C,
+    };
+    return true;
+}
+
 /* One iteration of the face loop: the face at index-array position i. The
  * header and UV streams move on whether or not it draws. */
 static inline void geo3d_decode_face(geo3d_decode_walk_t *w, int i) {
     const geo3d_ia_t *ia = w->ia;
     const vec3_t *sv = ia->sv;
-    const int n_sv = ia->n_sv;
     int fi = i / 4;
     int ai = ia->idx[i], bi = ia->idx[i + 1], ci = ia->idx[i + 2], di = ia->idx[i + 3];
     const uint32_t at = geo3d_ia_attr(ia, fi);
@@ -2106,17 +2124,10 @@ static inline void geo3d_decode_face(geo3d_decode_walk_t *w, int i) {
     float uvu[4] = {0,0,0,0}, uvv[4] = {0,0,0,0};
     geo3d_decode_face_uv(w, fi, tri_cnt, nv, &h, &paint, uvu, uvv);
 
-    if (ai < 0 || ai >= n_sv) return;
-    if (bi < 0 || bi >= n_sv) return;
+    geo3d_shape_t s;
+    if (!geo3d_decode_face_shape(ia, c, tri_cnt, &s)) return;
 
-    bool has_C = (ci >= 0 && ci < n_sv);
-    bool has_D = (di >= 0 && di < n_sv);
-    geo3d_shape_t s = {
-        .P = { sv[ai], sv[bi], has_C ? sv[ci] : (vec3_t){0,0,0}, has_D ? sv[di] : (vec3_t){0,0,0} },
-        .is_tri = tri_cnt || !has_C || !has_D, .has_c = has_C,
-    };
-
-    geo3d_zsort_step(&w->zs, at, s.is_tri, has_C, c);
+    geo3d_zsort_step(&w->zs, at, s.is_tri, s.has_c, c);
     geo3d_face_depth(sv, w->zs.src, w->zs.mode, w->flat, w->have_lay ? &w->lay[fi] : NULL, w->matrix);
 
     bool board_cull;
