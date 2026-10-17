@@ -281,6 +281,18 @@ In RetroArch, set the core option Online play to GGPO and fill `m2hle-ggpo.cfg` 
 back), `challenge=NAME` and `accept=NAME|any`, and optionally `url=`. In the game, L + R lists who is
 free to challenge.
 
+## Game scripts (Lua)
+
+M2emulator's scripts run here too, in Lua 5.5: put `<set>.lua` (`sfight.lua`, `vonj.lua`, ...)
+in a `scripts` folder in the working directory or beside the executable, or name another with
+`--scripts DIR` (`--no-scripts` turns them off). `Init`, `Reset`, `Frame`, `PostDraw`, `End`, the
+`Options` table (the **Script** menu), `I960_Read*/Write*`, `Romset_Read*/Patch*`, `Video_DrawText`
+and `Input_IsKeyPressed` work as they did there, and Lua 5.5's own `& | ~ << >>` work beside
+`AND`/`OR`/`SHL`. On the web the drawer's **Cheats** tab is the script: type it in, press Run, and
+it is kept in that browser for the game. A script never runs during an online match, a replay
+or a follow; its ROM patches come off and it starts again when that ends.
+[docs/invariants/scripts.md](docs/invariants/scripts.md) has the details.
+
 ## Picture filters
 
 A filter goes over the game's 4:3 picture only, never over the rest of the window. Filters draw

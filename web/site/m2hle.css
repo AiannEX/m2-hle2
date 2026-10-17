@@ -817,6 +817,9 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--sel-line); }
 .replay { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0.2rem 16px 0.8rem; max-width: 46rem; }
 .replay p { margin: 0.25rem 0; }
 .replay-label { margin: 0.4rem 0; padding: 0.4rem 0.6rem; border-left: 2px solid var(--text); }
+.cheats-text { box-sizing: border-box; width: 100%; min-height: 14rem; margin: 0.4rem 0; resize: vertical; font: 0.85rem/1.35 "PS3 Mono", monospace; color: var(--text); background: rgba(0, 0, 0, 0.35); border: 1px solid var(--text); padding: 0.4rem; tab-size: 4; }
+.cheats-options label { display: flex; gap: 0.6rem; align-items: center; margin: 0.25rem 0; }
+.cheats-draw { position: fixed; pointer-events: none; z-index: 1; }
 .replay-steps { padding-left: 1.2rem; }
 .replay-steps li { margin: 0.2rem 0; }
 .replay-steps-icon { vertical-align: -2px; }

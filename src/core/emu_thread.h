@@ -393,6 +393,25 @@ static inline const char *emu_state_flat_load(emu_thread_ctx_t *ctx, const void 
 #include "follow.h"
 #include "replay.h"   /* recorded online matches, and their playback (Pinboard #572) */
 
+/* A game script's hooks (core/m2lua.h, Pinboard #958), set by a host that runs
+ * scripts and called with the emu mutex held: at each vblank, and before and
+ * after every board reset. NULL: no scripts. A script writes the board and
+ * patches its ROM, so may_run is false while a session, a replay or a follow
+ * owns it: the script stops and its patches come off. */
+static void (*g_emu_script_frame)(bool may_run);
+static void (*g_emu_script_reset)(bool may_run, bool before);
+static inline bool emu_ggpo_active(void);
+static inline bool emu_script_may_run(void) {
+    return !netplay_active() && !emu_ggpo_active() && !replay_playing() &&
+           !follow_following() && !follow_leading();
+}
+static inline void emu_script_frame(bool frame) {
+    if (frame && g_emu_script_frame) g_emu_script_frame(emu_script_may_run());
+}
+static inline void emu_script_reset(bool before) {
+    if (g_emu_script_reset) g_emu_script_reset(emu_script_may_run(), before);
+}
+
 /* ---- The sound UART ---------------------------------------------------------
  *
  * The game's sound handler (STF send_sound_code) sends ONE byte of a queued
@@ -643,6 +662,7 @@ static inline netplay_step_t emu_netplay_pump(emu_thread_ctx_t *ctx) {
 
     if (step == NETPLAY_STEP_RESET || asked || alone) {
         emu_mutex_lock(&ctx->mutex);
+        emu_script_reset(true);
         replay_rec_break("board reset");
         replay_play_yield();   /* a session takes the board from a replay */
         if (alone)      netplay_restart_alone();
@@ -663,6 +683,7 @@ static inline netplay_step_t emu_netplay_pump(emu_thread_ctx_t *ctx) {
         /* After the step count is zeroed: the replay's state carries it, and
          * every frame check of the feed hashes it. */
         if (step == NETPLAY_STEP_RESET && !asked && !alone) replay_session_reset(ctx);
+        emu_script_reset(false);
         emu_mutex_unlock(&ctx->mutex);
         if (asked) ctx->reset_count++;
     }
@@ -923,6 +944,7 @@ static inline void emu_slice_body(emu_thread_ctx_t *ctx) {
     follow_slice_end(ctx, frame);
     replay_slice_end(ctx, frame);
     if (frame) emu_slice_frame_edge(ctx);
+    emu_script_frame(frame);
     emu_slice_after(ctx, frame, prof_t0, steps);
     hprof_leave(hzone);
 }
