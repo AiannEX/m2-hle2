@@ -85,11 +85,17 @@ if(M2HLE_GEMS_DIR)
 endif()
 
 # Sega's own C for Fighting Vipers' patched i960 functions, from Sega Ages 2500
-# Vol. 19 (src/core/ages.h; --ages-i960, --ages-verify). The owner's ages-c
-# repository, which carries ages-decomp as its submodule decomp/: point this
-# at a checkout holding ages_impl.h. Empty (the default): none. As with Gems,
-# its ages_all.h is generated, not tracked: gen_all.py writes it beside itself.
-set(M2HLE_AGES_DIR "" CACHE PATH "Directory with ages_impl.h (Sega Ages 2500 Fighting Vipers C); empty: none")
+# Vol. 19 (src/core/ages.h; --ages-i960, --ages-verify). It is the submodule
+# vendor/ages-c (Pinboard #1043; it carries ages-decomp as its own submodule
+# decomp/, so init it with --recursive), not part of this tree: on when that
+# is checked out, or point this at another directory holding ages_impl.h.
+# Empty: none. As with Gems, its ages_all.h is generated, not tracked:
+# gen_all.py writes it beside itself.
+set(M2HLE_AGES_DEFAULT "")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/ages-c/ages_impl.h")
+    set(M2HLE_AGES_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/vendor/ages-c")
+endif()
+set(M2HLE_AGES_DIR "${M2HLE_AGES_DEFAULT}" CACHE PATH "Directory with ages_impl.h (Sega Ages 2500 Fighting Vipers C); empty: none")
 if(M2HLE_AGES_DIR)
     if(NOT EXISTS "${M2HLE_AGES_DIR}/ages_impl.h")
         message(FATAL_ERROR "M2HLE_AGES_DIR: no ages_impl.h in ${M2HLE_AGES_DIR}")
@@ -99,7 +105,7 @@ if(M2HLE_AGES_DIR)
                     RESULT_VARIABLE _ages_rc OUTPUT_QUIET ERROR_VARIABLE _ages_err)
     if(NOT _ages_rc EQUAL 0)
         message(FATAL_ERROR "M2HLE_AGES_DIR: gen_all.py failed: ${_ages_err}"
-                "(it needs the decomp/ submodule: git submodule update --init decomp)")
+                "(a submodule checkout needs: git submodule update --init --recursive vendor/ages-c)")
     endif()
     file(GLOB _ages_inputs CONFIGURE_DEPENDS "${M2HLE_AGES_DIR}/fn/*.h")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_ages_inputs}
