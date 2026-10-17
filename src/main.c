@@ -62,12 +62,20 @@
 #include "overlay_host.h"    /* --overlay: a plugin paints layers over the picture */
 #include "post_shader.h"     /* the CRT filter and libretro presets over the picture */
 #include "shader_window.h"   /* ...and the Video menu that picks one */
+#include "m2lua_ui.h"        /* M2emulator's game scripts: their drawing, keys and menu */
+#include "m2lua_mcp.h"       /* ...and the bridge's script_* commands */
+#if defined(__linux__)
+#include <unistd.h>          /* readlink: scripts/ beside the executable */
+#endif
+#include <sys/stat.h>
 
 /* registry.h is the single TU that defines g_profiles[] / g_profile_count /
  * g_active_profile and pulls in every per-game profile header. */
 #include "registry.h"
 
 static char g_rom_path[512] = {0};
+static char g_scripts_dir[512] = {0};  /* --scripts DIR: the game scripts' folder */
+static int  g_no_scripts = 0;          /* --no-scripts: run none */
 static char g_export_roms[512] = {0};   /* --export-roms DIR: write the set's region images, then quit */
 static char g_profile_arg[64] = {0};   /* --profile <id>: e.g. sfight for STF's arcade game */
 static int  g_autorun = 0;
@@ -253,6 +261,50 @@ static void load_sound_board(void) {
     }
 }
 
+/* ---- Game scripts (core/m2lua.h, Pinboard #958) ---------------------------- */
+
+static bool scripts_is_dir(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && (st.st_mode & S_IFDIR);
+}
+
+/* scripts/ in the working directory, else beside the executable. */
+static void scripts_default_dir(char *out, size_t cap) {
+    snprintf(out, cap, "scripts");
+    if (scripts_is_dir(out)) return;
+    char exe[512] = "";
+#if defined(_WIN32)
+    long n = (long)GetModuleFileNameA(NULL, exe, (DWORD)sizeof exe);
+#elif defined(__linux__)
+    long n = (long)readlink("/proc/self/exe", exe, sizeof exe - 1);
+#else
+    long n = 0;
+#endif
+    if (n <= 0 || n >= (long)sizeof exe) return;
+    exe[n] = 0;
+    char *slash = strrchr(exe, '/'), *back = strrchr(exe, '\\');
+    if (back > slash) slash = back;
+    if (slash) snprintf(out, cap, "%.*s/scripts", (int)(slash - exe), exe);
+}
+
+/* The folder, the switch, and the emu thread's and the bridge's hooks. */
+static void scripts_setup(void) {
+    char dir[512];
+    if (g_scripts_dir[0]) snprintf(dir, sizeof dir, "%s", g_scripts_dir);
+    else                  scripts_default_dir(dir, sizeof dir);
+    m2lua_set_dir(dir);
+    g_m2lua.disabled   = g_no_scripts != 0;
+    g_emu_script_frame = m2lua_frame_hook;
+    g_emu_script_reset = m2lua_reset_hook;
+    g_mcp_script_cmd   = m2lua_mcp_cmd;
+    g_m2lua_decode_image = m2lua_ui_decode;
+}
+
+/* End(), once the emu thread has gone (its mutex with it). */
+static void scripts_shutdown(void) {
+    m2lua_unload();
+}
+
 static void load_active_profile(const char *primary_zip) {
     if (!select_profile_for_zip(primary_zip)) return;
     if (!g_active_profile) { LOG_ERROR("no active profile selected"); return; }
@@ -266,6 +318,7 @@ static void load_active_profile(const char *primary_zip) {
     sound_settle();   /* load_fn frees the sample ROMs the sound thread reads */
     emu_mutex_lock(&state.emu.mutex);
     replay_game_loaded();   /* a recording ends; a replay lets go of the board */
+    m2lua_unload();         /* the script's ROM patches come off the set going */
     emu_mutex_unlock(&state.emu.mutex);
 
     g_mcp.installing = 1;              /* get_status: not rom_loaded until the end */
@@ -298,6 +351,9 @@ static void load_active_profile(const char *primary_zip) {
             state.geo3d.fov_auto = true;
         }
         emu_ensure_started();
+        emu_mutex_lock(&state.emu.mutex);
+        m2lua_load(profile_rom_set(g_active_profile), &state.bus, &state.romset);
+        emu_mutex_unlock(&state.emu.mutex);
         emu_update_snapshots(&state.emu);
         kiosk_set_label(g_active_profile->display_name);
         LOG_INFO("profile '%s' loaded; reset IP = 0x%08X",
@@ -770,6 +826,7 @@ static void draw_menu_bar(void) {
     shader_ui_menu(state.file_dialog);
     menu_netplay();
     replay_ui_menu(&state.emu, state.file_dialog);
+    m2lua_ui_menu(&state.emu.mutex);
     menu_bar_status();
     igEndMainMenuBar();
 }
@@ -1274,6 +1331,7 @@ static void headless_shutdown(void) {
     LOG_INFO("headless: shutting down");
     av_stream_shutdown();
     if (state.emu_started) emu_thread_shutdown(&state.emu);
+    scripts_shutdown();
     backup_ram_flush();
     gems_verify_report();
     netplay_shutdown();
@@ -1573,6 +1631,10 @@ static void frame(void) {
          * stream. simgui_render() is below, outside this block. */
         if (win_overlay) overlay_host_draw();
 
+        /* What the game's script drew (PostDraw), over the game and under the
+         * debug windows. Not on the A/V stream: that is the board's picture. */
+        if (!win_overlay) m2lua_ui_draw(ox, oy, w, h);
+
         extract_model_tick();
     }
 
@@ -1603,6 +1665,7 @@ static void cleanup(void) {
      * target goes with the rest of the GPU resources further down. */
     av_stream_shutdown();
     if (state.emu_started) emu_thread_shutdown(&state.emu);
+    scripts_shutdown();
     backup_ram_flush();   /* the board has stopped: what it holds now is final */
     gems_verify_report();
     netplay_shutdown();   /* after the emu thread: it is the only thing that pumps it */
@@ -1610,6 +1673,7 @@ static void cleanup(void) {
     if (state.file_dialog) { IGFD_Destroy(state.file_dialog); state.file_dialog = NULL; }
     romset_free(&state.romset);
     objview_shutdown();
+    m2lua_ui_shutdown();
     overlay_host_shutdown();   /* before game_render_shutdown: it owns sg images */
     av_capture_shutdown();
     post_shader_shutdown();
@@ -1637,6 +1701,7 @@ static void event(const sapp_event* ev) {
      * focus so arcade muscle-memory isn't eaten by a debug window. */
     if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && !ev->key_repeat) input_key_down((int)ev->key_code);
     if (ev->type == SAPP_EVENTTYPE_KEY_UP)                      input_key_up((int)ev->key_code);
+    m2lua_ui_event(ev);
 
     if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) return;
     switch (ev->key_code) {
@@ -1800,6 +1865,10 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             i++;                                /* taken above, before anything logged */
         } else if (strcmp(argv[i], "--headless") == 0) {
             g_headless = 1;
+        } else if (strcmp(argv[i], "--scripts") == 0 && i + 1 < argc) {
+            snprintf(g_scripts_dir, sizeof g_scripts_dir, "%s", argv[++i]);  /* <set>.lua's folder */
+        } else if (strcmp(argv[i], "--no-scripts") == 0) {
+            g_no_scripts = 1;
         } else if (strcmp(argv[i], "--no-sound-board") == 0) {
             g_no_sound_board = 1;
         } else if (strcmp(argv[i], "--sound-hle") == 0) {
@@ -1989,6 +2058,7 @@ sapp_desc sokol_main(int argc, char* argv[]) {
     /* The record switch is the player's (replay.cfg); a headless run keeps
      * only what its command line says, as the graders boot blank. */
     if (!g_headless && !g_replay_cli_set) replay_settings_load();
+    scripts_setup();
     if (g_headless) exit(headless_main());
     /* Capture mode wants the game moving, not a first frame held on pause. */
     if (g_kiosk_on) g_autorun = 1;
