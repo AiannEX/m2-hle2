@@ -226,3 +226,11 @@ are **silently wrong** rather than loudly wrong when you get them half right.
   There is no barrier, input exchange or desync check; a watcher's board runs alone, and
   `netplay_end_match` closes the link. Each board sends nothing before its comm board starts
   (`netplay_status` `comm.early`, 0 on the RPCN pair test, `tools/von-rpcn-pair.mjs`).
+- **A Versus on one machine is two processes, not two boards** (`net/comm_local.h`,
+  `core/child_proc.h`, SDL3 `--versus`, Pinboard #987). The board is one set of globals, so the
+  MASTER's m2hle starts a second one (`--versus-slave PORT:TOKEN`) and the two link as a room's
+  pair does: the same `comm_link.h` datagrams, role boot and pace, over a UDP socket on
+  127.0.0.1 with no RPCN. The MASTER sends nothing until the SLAVE's hello (magic and the token
+  from its command line) pins its port, then takes datagrams from that port only. The child dies
+  with its parent (`PR_SET_PDEATHSIG`; a kill-on-close job on Windows) and the MASTER quits when
+  it is gone. No board path changes, so the proto does not move.

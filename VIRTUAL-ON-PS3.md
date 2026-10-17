@@ -9,8 +9,9 @@ its hook table patches match vonj's (0x18AB4 `ld 0x5039F4`, 0x1871C
 
 What came of it: the libretro core's PS3 shell runs for `vonj` with the PS3's
 Arcade settings (`ps3ui_rules_von`, `vonj_apply_menu_settings`). Online Battle
-opens the RPCN lobby, and a room's match links two cabinets (step 6). Versus is
-refused, for the reason below.
+opens the RPCN lobby, and a room's match links two cabinets (step 6). The
+shell's Versus row is refused, for the reason below; on the desktop (SDL3),
+`--versus` plays a Versus as two m2hle on one machine (step 7).
 
 ## Landmarks in the EBOOT (addresses as Ghidra loads it)
 
@@ -67,7 +68,8 @@ one process**:
 - Online, it sends the pads (lockstep) and each PS3 runs both boards.
 
 m2-hle2 runs one board: its state is in globals (g_m2bc, g_shc, g_m2comm,
-g_sound, ...). So Offline Versus needs a two-board core first.
+g_sound, ...). So Offline Versus needs a two-board core first, or two
+processes: step 7 does the second on the desktop.
 
 ## RPCN: the plan (from YAMP's notes)
 
@@ -223,7 +225,34 @@ Steps:
    own machine; guest SELECT, No goes back to the fight, Yes leaves, and the
    owner gets "match 1 called off" and waits for an opponent again.
 
-Still to do: Versus (two boards in one process) still refuses.
+7. Done (#987). Versus on one machine, as two processes (the owner's choice:
+   no second board in one process). The SDL3 frontend's `--versus` makes this
+   m2hle the MASTER cabinet: it opens a UDP socket on 127.0.0.1
+   (`net/comm_local.h`) and starts itself again (`core/child_proc.h`) with
+   `--versus-slave PORT:TOKEN --pad 1 --window-at X,Y`, the SLAVE, in a
+   640x480 window beside its own. The SLAVE's hello, with the token, pins its
+   port at the MASTER; from then on the two run the room pair's link: the same
+   `comm_link.h` datagrams, `comm_role_begin` and the role boot through the
+   reset hook, and `link_pace.h`. Each window plays one pad (`--pad N`, MASTER
+   the first, SLAVE the second), read with the focus on either window; the
+   keyboard plays the window that has it. The SLAVE's `--log` and `--shot`
+   files get `-slave` before the extension. Closing either window ends both:
+   the child dies with its parent (PR_SET_PDEATHSIG, or a kill-on-close job on
+   Windows) and the MASTER quits once its child has gone. Not with `--netplay`.
+   No board path changes: proto stays 23. Tested under Xvfb with vonj
+   (`--no-nvram`): coin and Start in each window, each picks a machine, and the
+   two fight on one arena, each seeing its own machine, the other its enemy,
+   their clocks a second apart (74/73, 57/56 s), as step 6's pair. 3023
+   messages each way in 3600 frames, every one taken (one in flight at the
+   end), none torn, too big or overflowed; ring up, nodes 1 and 2 of 2.
+   Killing either process ends the other. `tests/comm_local_test.c`: the
+   hello, both ways, a wrong token, a second hello and another port's
+   datagrams dropped. Not tested: gamepads (none in the container) and the
+   Windows path (it builds the child's command line by CommandLineToArgvW's
+   rules; checked on Linux, not compiled).
+
+Still to do: the libretro shell's Versus row still refuses (RetroArch runs one
+core, one board).
 
 ## GGPO: not for Virtual-On
 
