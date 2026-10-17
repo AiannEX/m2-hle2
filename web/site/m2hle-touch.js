@@ -57,6 +57,69 @@ m2hleLang.add({
   },
 });
 
+/* Where each control sits: its centre as a fraction of the canvas, a size of its
+ * own (1 = the global size) and whether it is shown. Sideways, the picture fills
+ * the height and leaves bars at the sides; upright, it sits in the middle with
+ * room below. STF plays on three buttons, so Button 4 starts hidden, and so
+ * do the macros: the editor shows hidden buttons, and "Show" puts one back.
+ * P+K takes Button 4's place, which STF does not use. */
+const M2HLE_TOUCH_LAYOUTS = {
+  solo: {
+    landscape: {
+      dpad:  { x: 0.13, y: 0.66, s: 1, on: true },
+      b1:    { x: 0.82, y: 0.80, s: 1, on: true },
+      b2:    { x: 0.93, y: 0.64, s: 1, on: true },
+      b3:    { x: 0.82, y: 0.48, s: 1, on: true },
+      b4:    { x: 0.93, y: 0.32, s: 1, on: false },
+      start: { x: 0.94, y: 0.10, s: 1, on: true },
+      coin:  { x: 0.06, y: 0.10, s: 1, on: true },
+      pk:    { x: 0.93, y: 0.32, s: 1, on: false },
+      pb:    { x: 0.71, y: 0.80, s: 1, on: false },
+      kb:    { x: 0.71, y: 0.60, s: 1, on: false },
+      pkb:   { x: 0.82, y: 0.16, s: 1, on: false },
+    },
+    portrait: {
+      dpad:  { x: 0.25, y: 0.86, s: 1, on: true },
+      b1:    { x: 0.66, y: 0.92, s: 1, on: true },
+      b2:    { x: 0.86, y: 0.84, s: 1, on: true },
+      b3:    { x: 0.66, y: 0.78, s: 1, on: true },
+      b4:    { x: 0.86, y: 0.745, s: 1, on: false },
+      start: { x: 0.85, y: 0.12, s: 1, on: true },
+      coin:  { x: 0.15, y: 0.12, s: 1, on: true },
+      pk:    { x: 0.86, y: 0.745, s: 1, on: false },
+      pb:    { x: 0.49, y: 0.93, s: 1, on: false },
+      kb:    { x: 0.49, y: 0.78, s: 1, on: false },
+      pkb:   { x: 0.86, y: 0.64, s: 1, on: false },
+    },
+  },
+  /* Twin sticks: a lever under each thumb, its shot above it on the outside (the
+   * lever's trigger, under the index finger on a cabinet) and its dash on the
+   * inside (the thumb button), mirrored left and right. Sideways, Start sits
+   * beside Coin: the page's buttons take the top right corner. */
+  twin: {
+    landscape: {
+      dpad:  { x: 0.12, y: 0.70, s: 1, on: true },
+      rpad:  { x: 0.88, y: 0.70, s: 1, on: true },
+      b1:    { x: 0.06, y: 0.34, s: 1, on: true },
+      b2:    { x: 0.19, y: 0.40, s: 1, on: true },
+      rshot: { x: 0.94, y: 0.34, s: 1, on: true },
+      rdash: { x: 0.81, y: 0.40, s: 1, on: true },
+      start: { x: 0.17, y: 0.10, s: 1, on: true },
+      coin:  { x: 0.06, y: 0.10, s: 1, on: true },
+    },
+    portrait: {
+      dpad:  { x: 0.23, y: 0.87, s: 1, on: true },
+      rpad:  { x: 0.77, y: 0.87, s: 1, on: true },
+      b1:    { x: 0.10, y: 0.71, s: 1, on: true },
+      b2:    { x: 0.30, y: 0.71, s: 1, on: true },
+      rshot: { x: 0.90, y: 0.71, s: 1, on: true },
+      rdash: { x: 0.70, y: 0.71, s: 1, on: true },
+      start: { x: 0.85, y: 0.12, s: 1, on: true },
+      coin:  { x: 0.15, y: 0.12, s: 1, on: true },
+    },
+  },
+};
+
 const m2hleTouch = (() => {
   const $ = (id) => document.getElementById(id);
   const TWIN = !!m2hleGame.twin;
@@ -107,67 +170,7 @@ const m2hleTouch = (() => {
   const DEAD = 0.2;           /* of the d-pad's radius: a thumb resting in the middle holds nothing */
   const SLOP = 1.1;           /* a button answers a little outside its circle */
 
-  /* Where each control sits: its centre as a fraction of the canvas, a size of its
-   * own (1 = the global size) and whether it is shown. Sideways, the picture fills
-   * the height and leaves bars at the sides; upright, it sits in the middle with
-   * room below. STF plays on three buttons, so Button 4 starts hidden, and so
-   * do the macros: the editor shows hidden buttons, and "Show" puts one back.
-   * P+K takes Button 4's place, which STF does not use. */
-  const SOLO_DEFAULTS = {
-    landscape: {
-      dpad:  { x: 0.13, y: 0.66, s: 1, on: true },
-      b1:    { x: 0.82, y: 0.80, s: 1, on: true },
-      b2:    { x: 0.93, y: 0.64, s: 1, on: true },
-      b3:    { x: 0.82, y: 0.48, s: 1, on: true },
-      b4:    { x: 0.93, y: 0.32, s: 1, on: false },
-      start: { x: 0.94, y: 0.10, s: 1, on: true },
-      coin:  { x: 0.06, y: 0.10, s: 1, on: true },
-      pk:    { x: 0.93, y: 0.32, s: 1, on: false },
-      pb:    { x: 0.71, y: 0.80, s: 1, on: false },
-      kb:    { x: 0.71, y: 0.60, s: 1, on: false },
-      pkb:   { x: 0.82, y: 0.16, s: 1, on: false },
-    },
-    portrait: {
-      dpad:  { x: 0.25, y: 0.86, s: 1, on: true },
-      b1:    { x: 0.66, y: 0.92, s: 1, on: true },
-      b2:    { x: 0.86, y: 0.84, s: 1, on: true },
-      b3:    { x: 0.66, y: 0.78, s: 1, on: true },
-      b4:    { x: 0.86, y: 0.745, s: 1, on: false },
-      start: { x: 0.85, y: 0.12, s: 1, on: true },
-      coin:  { x: 0.15, y: 0.12, s: 1, on: true },
-      pk:    { x: 0.86, y: 0.745, s: 1, on: false },
-      pb:    { x: 0.49, y: 0.93, s: 1, on: false },
-      kb:    { x: 0.49, y: 0.78, s: 1, on: false },
-      pkb:   { x: 0.86, y: 0.64, s: 1, on: false },
-    },
-  };
-  /* Twin sticks: a lever under each thumb, its shot above it on the outside (the
-   * lever's trigger, under the index finger on a cabinet) and its dash on the
-   * inside (the thumb button), mirrored left and right. Sideways, Start sits
-   * beside Coin: the page's buttons take the top right corner. */
-  const TWIN_DEFAULTS = {
-    landscape: {
-      dpad:  { x: 0.12, y: 0.70, s: 1, on: true },
-      rpad:  { x: 0.88, y: 0.70, s: 1, on: true },
-      b1:    { x: 0.06, y: 0.34, s: 1, on: true },
-      b2:    { x: 0.19, y: 0.40, s: 1, on: true },
-      rshot: { x: 0.94, y: 0.34, s: 1, on: true },
-      rdash: { x: 0.81, y: 0.40, s: 1, on: true },
-      start: { x: 0.17, y: 0.10, s: 1, on: true },
-      coin:  { x: 0.06, y: 0.10, s: 1, on: true },
-    },
-    portrait: {
-      dpad:  { x: 0.23, y: 0.87, s: 1, on: true },
-      rpad:  { x: 0.77, y: 0.87, s: 1, on: true },
-      b1:    { x: 0.10, y: 0.71, s: 1, on: true },
-      b2:    { x: 0.30, y: 0.71, s: 1, on: true },
-      rshot: { x: 0.90, y: 0.71, s: 1, on: true },
-      rdash: { x: 0.70, y: 0.71, s: 1, on: true },
-      start: { x: 0.85, y: 0.12, s: 1, on: true },
-      coin:  { x: 0.15, y: 0.12, s: 1, on: true },
-    },
-  };
-  const DEFAULTS = TWIN ? TWIN_DEFAULTS : SOLO_DEFAULTS;
+  const DEFAULTS = TWIN ? M2HLE_TOUCH_LAYOUTS.twin : M2HLE_TOUCH_LAYOUTS.solo;
   const APPEARANCE = { size: 1, opacity: 0.5, outline: true };
 
   const clone = (o) => JSON.parse(JSON.stringify(o));
