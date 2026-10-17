@@ -132,6 +132,10 @@ static mcp_bridge_t g_mcp = {0};
 #define mcp_json_get_int  json_get_int
 #define mcp_json_escape   json_escape
 
+/* The game scripts' script_* commands (ui/m2lua_mcp.h, Pinboard #958): set by
+ * a host that runs them; NULL elsewhere, and they are unknown. */
+static void (*g_mcp_script_cmd)(const char *cmd, const char *req, char *resp, int cap);
+
 /* ---- Command handlers ---------------------------------------------------- */
 
 /* A linked comm board's 60 Hz clock (link_pace.h): frames run on it, the owed
@@ -3004,6 +3008,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
     else if (strcmp(cmd, "enemy_rank")               == 0) mcp_cmd_enemy_rank(req, resp, cap);
     else if (strcmp(cmd, "follow_lead")              == 0) mcp_cmd_follow_lead(req, resp, cap);
     else if (strcmp(cmd, "replay")                   == 0) mcp_cmd_replay(req, resp, cap);
+    else if (strncmp(cmd, "script_", 7) == 0 && g_mcp_script_cmd) g_mcp_script_cmd(cmd, req, resp, cap);
     else snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"unknown cmd: %s\"}", cmd);
     mcp_follow_break_after(cmd);
 }

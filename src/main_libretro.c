@@ -85,6 +85,7 @@
 
 /* registry.h is the single TU that defines g_profiles[] / g_active_profile. */
 #include "registry.h"
+#include "m2lua.h"         /* M2emulator's game scripts, their options as RetroArch cheats */
 
 /* The largest picture the frontend's framebuffer is made for: it allocates this
  * much once, colour and depth. Full screen draws at the output's size, up to it. */
@@ -186,7 +187,8 @@ static struct {
     int         draw_every;     /* 1 = every frame, 2 = every second frame (cooler) */
     int         heat_limit;     /* degrees C above which drawing drops to every second frame; 0 = off */
     const char *profile;        /* a profile id, or NULL for the ROM set's default (read at load) */
-} opt = { .scale = 0, .sound = true, .online = LR_ONLINE_RETROARCH, .net_delay = 2, .draw_every = 1 };
+    bool        scripts;        /* run the game's Lua script (read at load) */
+} opt = { .scripts = true, .scale = 0, .sound = true, .online = LR_ONLINE_RETROARCH, .net_delay = 2, .draw_every = 1 };
 
 /* The heat guard's stages (core/heat_guard.h); lr_heat_tick feeds it once a retro_run. */
 static heat_guard_t g_heat;
@@ -284,6 +286,14 @@ static struct retro_core_option_v2_definition option_defs[] = {
       NULL, "online",
       { { "1", NULL }, { "2", NULL }, { "3", NULL }, { "4", NULL }, { "5", NULL }, { "6", NULL }, { "8", NULL }, { NULL, NULL } },
       "2" },
+    { "m2hle_scripts", "Game scripts", NULL,
+      "Run the game's M2emulator Lua script, m2hle/scripts/<set>.lua in RetroArch's system folder (sfight.lua for "
+      "Sonic the Fighters). Its options are cheats: the core writes <set>.cht beside the script, which Quick Menu > "
+      "Cheats > Load Cheat File opens; switch them on there. A script stops during online play and starts over "
+      "after it. Takes effect when the game is next loaded.",
+      NULL, NULL,
+      { { "enabled", NULL }, { "disabled", NULL }, { NULL, NULL } },
+      "enabled" },
     { "m2hle_wheel_range", "Wheel: full lock", NULL,
       "Sega Rally's wheel pot: how far from centre the wheel reads at full lock, in A/D steps. Less is a gentler "
       "wheel. The owner's manual's spec is past 0x2D left and 0xD3 right of a 0x80 centre, which 0x58 meets. "
@@ -355,6 +365,7 @@ static void lr_read_load_options(void) {
     if ((v = lr_var("m2hle_online")))
         opt.online = !strcmp(v, "rpcn") ? LR_ONLINE_RPCN : !strcmp(v, "ggpo") ? LR_ONLINE_GGPO : LR_ONLINE_RETROARCH;
     if ((v = lr_var("m2hle_stf_version"))) opt.profile = strcmp(v, "arcade") ? NULL : "sfight";
+    if ((v = lr_var("m2hle_scripts")))     opt.scripts = strcmp(v, "disabled") != 0;
 }
 
 /* at_load: also the options that only take effect when a game is loaded. */
@@ -399,6 +410,7 @@ static void lr_set_options(void) {
         { "m2hle_heat_guard", "Heat guard; " LR_DEFAULT_HEAT "|off|80|85|90" },
         { "m2hle_online",     "Online play; retroarch|rpcn|ggpo" },
         { "m2hle_net_delay",  "Input delay (frames); 2|1|3|4|5|6|8" },
+        { "m2hle_scripts",    "Game scripts; enabled|disabled" },
         { "m2hle_wheel_range", "Wheel: full lock; 0x58|0x30|0x40|0x4C|0x68|0x7F" },
         { "m2hle_wheel_speed", "Wheel: turn speed; 10|4|6|8|14|20|255" },
         { NULL, NULL },
@@ -1469,6 +1481,124 @@ static bool lr_draw_dupe(bool ran, bool lobby, bool overlay, int w, int h) {
     return false;
 }
 
+/* ---- Game scripts: M2emulator's Lua (core/m2lua.h, Pinboard #967) ------------------------
+ *
+ * The game's script, m2hle/scripts/<set>.lua in RetroArch's system folder, runs as
+ * it does on the desktop. RetroArch's Cheats menu is its option menu: at load the
+ * core writes <set>.cht beside the script (m2lua_cht_text), and the codes of the
+ * cheats switched on arrive in retro_cheat_set. Never while a session owns the
+ * board (lr_sound_may_go's test), nor under RetroArch's own rollback netplay,
+ * which a savestate taken in that context gives away. PostDraw's text is drawn
+ * over the game; its images are not. */
+
+#define LR_LUA_ROLLBACK_HOLD 120   /* frames a rollback-netplay savestate holds the script off */
+#define LR_LUA_CHT_MAX (128 * 1024)
+
+static int  g_lr_lua_want[M2LUA_OPTION_MAX];   /* each option's value, as the cheats on ask */
+static bool g_lr_lua_dirty;                    /* g_lr_lua_want has news for the script */
+static int  g_lr_lua_rollback;                 /* frames left of a rollback netplay's hold */
+
+static bool lr_lua_may_run(bool may_run) {
+    return may_run && lr_sound_may_go() && g_lr_lua_rollback == 0;
+}
+
+/* The emu's frame edge: the cheats' news first, then the script's frame. */
+static void lr_lua_frame(bool may_run) {
+    if (g_lr_lua_rollback > 0) g_lr_lua_rollback--;
+    may_run = lr_lua_may_run(may_run);
+    if (may_run && g_lr_lua_dirty && g_m2lua.loaded && !g_m2lua.suspended) {
+        m2lua_cheat_apply(g_lr_lua_want);
+        g_lr_lua_dirty = false;
+    }
+    m2lua_frame_hook(may_run);
+}
+
+static void lr_lua_reset(bool may_run, bool before) {
+    m2lua_reset_hook(lr_lua_may_run(may_run), before);
+}
+
+/* A savestate RetroArch takes for its rollback netplay: the script holds off. */
+static void lr_lua_note_state(void) {
+    int ctx = RETRO_SAVESTATE_CONTEXT_NORMAL;
+    if (env_cb(RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT, &ctx) && ctx == RETRO_SAVESTATE_CONTEXT_ROLLBACK_NETPLAY)
+        g_lr_lua_rollback = LR_LUA_ROLLBACK_HOLD;
+}
+
+/* <set>.cht beside the script, unless it already says the same. */
+static void lr_lua_write_cht(void) {
+    static char text[LR_LUA_CHT_MAX], old[LR_LUA_CHT_MAX];
+    int len = m2lua_cht_text(text, (int)sizeof text);
+    if (len <= 0) return;
+    char path[sizeof g_m2lua.dir + sizeof g_m2lua.set + 8];
+    snprintf(path, sizeof path, "%s/%s.cht", g_m2lua.dir, g_m2lua.set);
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        size_t n = fread(old, 1, sizeof old, f);
+        fclose(f);
+        if (n == (size_t)len && memcmp(old, text, n) == 0) return;
+    }
+    f = fopen(path, "wb");
+    if (!f) { lr_log(RETRO_LOG_WARN, "script: cannot write %s", path); return; }
+    fwrite(text, 1, (size_t)len, f);
+    fclose(f);
+    lr_log(RETRO_LOG_INFO, "script: its options as cheats in %s", path);
+}
+
+/* At load: the folder, the hooks, the game's script if it has one. */
+static void lr_lua_load(void) {
+    const char *sys = NULL;
+    char dir[sizeof g_m2lua.dir] = "scripts";
+    if (env_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sys) && sys && sys[0])
+        snprintf(dir, sizeof dir, "%s/m2hle/scripts", sys);
+    m2lua_set_dir(dir);
+    g_m2lua.disabled   = !opt.scripts;
+    g_emu_script_frame = lr_lua_frame;
+    g_emu_script_reset = lr_lua_reset;
+    g_lr_lua_dirty = false;
+    if (!m2lua_load(profile_rom_set(g_active_profile), &state.bus, &state.romset)) {
+        if (g_m2lua.error[0]) {
+            char msg[300];
+            snprintf(msg, sizeof msg, "m2hle: script not run: %s", g_m2lua.error);
+            lr_message(msg, 600);
+        }
+        return;
+    }
+    m2lua_cheat_defaults(g_lr_lua_want);
+    lr_lua_write_cht();
+    char msg[200];
+    if (g_m2lua.noptions)
+        snprintf(msg, sizeof msg, "m2hle: script %s.lua; its options: Quick Menu > Cheats > Load Cheat File > %s.cht",
+                 g_m2lua.set, g_m2lua.set);
+    else
+        snprintf(msg, sizeof msg, "m2hle: script %s.lua", g_m2lua.set);
+    lr_notify(msg, 5000);
+}
+
+/* PostDraw's text over the game, in board pixels scaled to the frame: one
+ * pen origin per item, the canvas put back after. True when it drew. */
+static bool lr_lua_draw(ps3ui_canvas_t *cv, int w, int h) {
+    static m2lua_draw_t list[M2LUA_DRAW_MAX];
+    int n = 0;
+    m2lua_take_draw(list, &n);
+    float sx = (float)w / (float)VIDEO_WIDTH, sy = (float)h / (float)VIDEO_HEIGHT;
+    bool drew = false;
+    for (int i = 0; i < n; i++) {
+        const m2lua_draw_t *d = &list[i];
+        if (d->kind != M2LUA_DRAW_TEXT) continue;
+        bool font = d->font >= 0 && d->font < M2LUA_FONT_MAX;
+        float size = font ? g_m2lua.fonts[d->font].size : M2LUA_TEXT_SIZE;
+        ps3ui_text_style_t st = { font && g_m2lua.fonts[d->font].bold ? PS3UI_FONT_TITLE : PS3UI_FONT_TEXT,
+                                  size * 0.7f, 0, 0, d->color & 0xFFFFFFu, 0, NULL, 0, 0 };
+        cv->k  = sy;
+        cv->ox = d->x * sx;
+        cv->oy = d->y * sy;
+        ps3ui_text(cv, &st, 0, size * 0.8f, d->text, (float)(d->color >> 24) / 255.0f);
+        drew = true;
+    }
+    ps3ui_canvas_size(cv, w, h);
+    return drew;
+}
+
 /* A new frame size goes to the frontend before the frame does. */
 static void lr_draw_geometry(int w, int h, bool lobby) {
     if (w == g_geom_w && h == g_geom_h) return;
@@ -1480,13 +1610,13 @@ static void lr_draw_geometry(int w, int h, bool lobby) {
 }
 
 /* The lobby's (or the shell's) draw list, recorded before the pass. */
-static void lr_draw_record_lobby(ps3ui_canvas_t *cv, int w, int h) {
-    ps3ui_gpu_record(cv, w, h);
+static void lr_draw_record_lobby(ps3ui_canvas_t *cv) {
     if (g_shell_on) ps3ui_shell_draw(&g_ps3ui_shell, cv);
     else            ps3ui_app_draw(&g_ps3ui_app, cv);
 }
 
-/* The pass into the frontend's framebuffer: the game, then the lobby over it. */
+/* The pass into the frontend's framebuffer: the game, then the script's text
+ * and the lobby over it (overlay: cv has something to draw). */
 static void lr_draw_pass(int w, int h, bool lobby, bool overlay, ps3ui_canvas_t *cv) {
     sg_begin_pass(&(sg_pass){
         .action = {
@@ -1520,9 +1650,11 @@ static void lr_draw(bool ran) {
     if (ran && !lobby) game_frame_prepare(&state.video, &state.geo3d, &state.bus, &state.romset, true);
     hprof_phase(3);
     static ps3ui_canvas_t lobby_cv;
-    if (lobby || overlay) lr_draw_record_lobby(&lobby_cv, w, h);
+    ps3ui_gpu_record(&lobby_cv, w, h);
+    bool text = !lobby && lr_lua_draw(&lobby_cv, w, h);
+    if (lobby || overlay) lr_draw_record_lobby(&lobby_cv);
 
-    lr_draw_pass(w, h, lobby, overlay, &lobby_cv);
+    lr_draw_pass(w, h, lobby, overlay || text, &lobby_cv);
     hprof_phase(4);
     int zone = hprof_enter(HPROF_PRESENT);   /* host_prof.h */
     sg_end_pass();
@@ -2123,6 +2255,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game) {
 
     emu_ctx_init(&state.emu, &state.cpu, &state.bus);
     emu_run(&state.emu);
+    lr_lua_load();
     g_game_loaded = true;
     g_lr_state_size = 0;   /* a state's size depends on the profile */
     /* A state is the build's struct layouts: it does not cross to another
@@ -2147,6 +2280,7 @@ RETRO_API void retro_unload_game(void) {
     ps3ui_app_close(&g_ps3ui_app);
     netplay_release_inputs();
     sound_settle();   /* the sound thread reads the sample ROMs */
+    m2lua_unload();   /* End(), and the script's ROM patches off the set going */
     romset_free(&state.romset);
     g_game_loaded = false;
 }
@@ -2271,6 +2405,7 @@ RETRO_API size_t retro_serialize_size(void) {
 
 RETRO_API bool retro_serialize(void *data, size_t size) {
     if (!g_game_loaded || !data || size < retro_serialize_size()) return false;
+    lr_lua_note_state();
     const char *err = emu_state_flat_save(&state.emu, data, &g_lr_state_rom);
     if (err) { lr_log(RETRO_LOG_WARN, "savestate: %s", err); return false; }
     size_t len = rollback_flat_size();
@@ -2298,9 +2433,19 @@ RETRO_API bool retro_unserialize(const void *data, size_t size) {
     return true;
 }
 
-RETRO_API void   retro_cheat_reset(void) {}
+/* The cheats are the game script's options (lr_lua_load): RetroArch resets them,
+ * then hands over the code of each one switched on. The script sees the result
+ * at its next frame. */
+RETRO_API void   retro_cheat_reset(void) {
+    m2lua_cheat_defaults(g_lr_lua_want);
+    g_lr_lua_dirty = true;
+}
 RETRO_API void   retro_cheat_set(unsigned index, bool enabled, const char *code) {
-    (void)index; (void)enabled; (void)code;
+    (void)index;
+    if (!enabled || !code) return;
+    if (!m2lua_cheat_code(code, g_lr_lua_want))
+        lr_log(RETRO_LOG_WARN, "cheat \"%s\": not one of the game script's options (<option>=<value>)", code);
+    g_lr_lua_dirty = true;
 }
 
 /* Save RAM is the board's backup RAM as the player's own boards left it: a
