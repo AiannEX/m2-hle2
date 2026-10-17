@@ -13,12 +13,13 @@
 #include "sfight.h"
 #include "sfight_console.h"
 /* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
- * play over RPCN, and Sega Rally (the page's ?game=srallyc,
+ * play over RPCN, Sega Rally, Virtual-On and Dynamite Cop (the page's ?game=,
  * web/site/m2hle-games.js). Any other set is only download size:
  * left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. */
 #include "srallyc.h"
 #include "vonj.h"
+#include "dynamcop.h"
 #ifndef M2HLE_WEB
 #include "fvipers.h"
 #include "m2snake.h"
@@ -38,6 +39,10 @@ const game_profile_t *const g_profiles[] = {
     &sfight_profile,
     &srallyc_profile,
     &vonj_profile,
+    &dynamcopb_profile,
+    &dyndeka2b_profile,
+    &dynamcop_profile,
+    &dyndeka2_profile,
 #ifndef M2HLE_WEB
     &fvipers_profile,
     &m2snake_profile,
@@ -53,6 +58,7 @@ const game_profile_t *const g_prepared_profiles[] = {
     &vcop_profile,
     &daytona_profile,
     &hotd_profile,
+    &dynamcopc_profile,
 };
 
 const size_t g_prepared_count = sizeof(g_prepared_profiles) / sizeof(g_prepared_profiles[0]);

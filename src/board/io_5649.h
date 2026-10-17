@@ -41,6 +41,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "eeprom_93c46.h"
 #include "irq_timer.h"
 #include "memory.h"
 
@@ -162,13 +163,10 @@ static inline uint8_t io5649_read_byte(mem_region_t *r, uint32_t off) {
     switch (off) {
         case 0x02: {                                  /* IN0 system */
             uint8_t in0 = (uint8_t)~(held & 0xFFu);
-            /* Port A bit 0 (the EEPROM's control byte) switches IN0's top half:
-             * bits 7, 6 and 4 read high and bit 5 is the EEPROM's DO, which
-             * reads 1 here (no EEPROM yet; MAME `in0_r`). Sega Rally clocks
-             * its EEPROM with the bit up, and a START (bit 6) held then took it
-             * to the test menu. */
-            if (r->data && (r->data[0] & 0x01)) in0 = (uint8_t)(0xF0 | (in0 & 0x0F));
-            return in0;
+            /* Port A bit 0 switches IN0's top half to the EEPROM's
+             * (eeprom_93c46.h). Sega Rally clocks its EEPROM with the bit up,
+             * and a START (bit 6) held then took it to the test menu. */
+            return eeprom_in0(in0);
         }
         case 0x04: io5649_advance(); return io5649_gearbox();
         case 0x06: return 0x00;                       /* IN2: hand brake, unused */
@@ -193,6 +191,7 @@ static void io5649_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int si
     for (int i = 0; i < size; i++) {
         uint8_t b = (uint8_t)(val >> (8 * i));
         if (off + (uint32_t)i == 0x1E) g_io5649.channel = b & 7;
+        if (off + (uint32_t)i == 0x00) eeprom_port_a(b);
         if (r->data && off + (uint32_t)i < r->size) r->data[off + (uint32_t)i] = b;
     }
 }

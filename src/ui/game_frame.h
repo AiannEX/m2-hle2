@@ -134,11 +134,12 @@ static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
      * back layer there is opaque everywhere (the backdrop is its pen 0), so the
      * back colour quad under it would be drawn over whole: it is left out, and
      * the layer drawn without blending (alpha 1 blends to the source exactly). */
+    const game_rect_t bg = game_render_tile_rect(vp, g_game_wide.stretch_low);
     if (video->gpu) {
-        game_render_draw_indexed(video->bg_view, video->pal_rgba_view, true, ox, oy, w, h);
+        game_render_draw_indexed(video->bg_view, video->pal_rgba_view, true, bg.x, bg.y, bg.w, bg.h);
     } else {
-        game_render_draw_game(video->back_view, ox, oy, w, h);
-        game_render_draw_game(video->bg_view, ox, oy, w, h);
+        game_render_draw_game(video->back_view, bg.x, bg.y, bg.w, bg.h);
+        game_render_draw_game(video->bg_view, bg.x, bg.y, bg.w, bg.h);
     }
     int64_t t2 = emu_now_us();
     hprof_enter(HPROF_DRAW3D);
@@ -183,8 +184,9 @@ static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
                                - (gl0.size_update_buffer + gl0.size_append_buffer);
     }
     hprof_enter(HPROF_TILES);
-    if (video->gpu) game_render_draw_indexed(video->fg_view, video->pal_rgba_view, false, ox, oy, w, h);
-    else            game_render_draw_game(video->fg_view, ox, oy, w, h);
+    const game_rect_t fg = game_render_tile_rect(vp, g_game_wide.stretch_high);
+    if (video->gpu) game_render_draw_indexed(video->fg_view, video->pal_rgba_view, false, fg.x, fg.y, fg.w, fg.h);
+    else            game_render_draw_game(video->fg_view, fg.x, fg.y, fg.w, fg.h);
     g_game_frame_times.draw3d_us += t3 - t2;
     g_game_frame_times.tiles_us  += (t2 - t1) + (emu_now_us() - t3);
     g_game_frame_times.frames++;

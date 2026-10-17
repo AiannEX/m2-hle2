@@ -1262,11 +1262,33 @@ static void ps3ui_follow_online(ps3ui_app_t *a)
         ps3ui_app_go(a, PS3UI_SCR_MENU);
 }
 
+/* A linked match (Virtual-On's comm boards, netplay_member_start_link) runs no
+ * session: the room stays IN_ROOM. So the game is given the screen here, the
+ * room kept behind it for SELECT's question (ps3ui_app_ask_leave_link). A
+ * leave already answered (the menu) waits for the room to go. */
+static int ps3ui_follow_link(ps3ui_app_t *a)
+{
+    if (!a->st.comm.open)
+        return 0;
+    if (a->dialog != PS3UI_DLG_LEAVE && a->scr != PS3UI_SCR_MENU)
+        a->scr = PS3UI_SCR_NONE;
+    return 1;
+}
+
+/* SELECT in a linked match: there is no result to leave at, so ask now. */
+static void ps3ui_app_ask_leave_link(ps3ui_app_t *a)
+{
+    if (!a->open || !a->st.comm.open || a->scr != PS3UI_SCR_NONE || a->dialog)
+        return;
+    ps3ui_app_go(a, PS3UI_SCR_ROOM);
+    ps3ui_app_ask(a, PS3UI_DLG_LEAVE, "Do you want to exit this session?");
+}
+
 /* In a room or at its barrier: the result first, then the room or VS screen. */
 static void ps3ui_follow_room(ps3ui_app_t *a)
 {
     const netplay_status_t *st = &a->st;
-    if (a->scr == PS3UI_SCR_RESULT)
+    if (ps3ui_follow_link(a) || a->scr == PS3UI_SCR_RESULT)
         return;
     /* a result has come in: show it first */
     if (st->room.match != a->last_match) {

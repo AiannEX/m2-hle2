@@ -136,7 +136,7 @@ static inline uint8_t *savestate_buf_ptr(memory_bus_t *bus, const savestate_buf_
 /* The struct sizes a state was written with. */
 typedef struct {
     uint32_t version;
-    uint32_t cpu, cop, sharc, zanzou, irqt, m68k, scsp, uart, shle, geo_live, snaps;
+    uint32_t cpu, cop, sharc, zanzou, irqt, m68k, scsp, uart, shle, geo_live, snaps, eeprom;
 } savestate_layout_t;
 
 static inline savestate_layout_t savestate_layout(void) {
@@ -154,6 +154,7 @@ static inline savestate_layout_t savestate_layout(void) {
     l.shle     = (uint32_t)sizeof g_shle;
     l.geo_live = (uint32_t)sizeof g_geo_live;
     l.snaps    = (uint32_t)sizeof g_geodl_snaps;
+    l.eeprom   = (uint32_t)sizeof g_eeprom;
     return l;
 }
 
@@ -466,7 +467,8 @@ static inline bool savestate__add_board(mz_zip_archive *zp, mz_uint level, memor
         && savestate__add(zp, level, "GEO",      &geo, sizeof geo)
         && savestate__add(zp, level, "GEOLIST",  g_geodl_snaps, sizeof g_geodl_snaps)
         && savestate__add(zp, level, "GEOSTATE", &g_geo_live, sizeof g_geo_live)
-        && savestate__add(zp, level, "IRQT",     &g_irqt, sizeof g_irqt);
+        && savestate__add(zp, level, "IRQT",     &g_irqt, sizeof g_irqt)
+        && savestate__add(zp, level, "EEPROM",   &g_eeprom, sizeof g_eeprom);
 }
 
 /* The profile's own entries (savestate_reg.h). */
@@ -635,6 +637,7 @@ typedef struct {
     cop_state_t       *cop;
     zanzou_stream_t    zz;
     irq_timer_t        irqt;
+    eeprom_t           eeprom;
     savestate_geo_t    geo;
     void              *snaps;
     geo_raster_state_t *glive;
@@ -679,6 +682,7 @@ static inline bool savestate__scratch_read(mz_zip_archive *zp, savestate_scratch
         { "COP",      n->cop,   sizeof *n->cop },
         { "ZANZOU",   &n->zz,   sizeof n->zz },
         { "IRQT",     &n->irqt, sizeof n->irqt },
+        { "EEPROM",   &n->eeprom, sizeof n->eeprom },
         { "GEO",      &n->geo,  sizeof n->geo },
         { "GEOLIST",  n->snaps, sizeof g_geodl_snaps },
         { "GEOSTATE", n->glive, sizeof *n->glive },
@@ -719,6 +723,7 @@ static inline void savestate__scratch_commit(const savestate_scratch_t *n, i960_
     g_cop.ctl_w = ctl;
     g_zz   = n->zz;
     g_irqt = n->irqt;
+    g_eeprom = n->eeprom;
 
     for (size_t i = 0; i < SAVESTATE_NBUFS; i++)
         memcpy(savestate_buf_ptr(bus, &SAVESTATE_BUFS[i]), n->bufs[i], SAVESTATE_BUFS[i].size);

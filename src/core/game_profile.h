@@ -81,6 +81,41 @@ typedef struct {
 
 /* ---- Quirks -------------------------------------------------------------- */
 
+/*
+ * What a profile does with the region (game_quirks_t.region, Pinboard #942/#948).
+ *
+ * REGION_HOOKED takes two hooks, both named in the profile's hook table, at
+ * two different addresses:
+ *   factory_default  puts g_region in the factory default of the country
+ *                    setting (a cold boot, blank or failed backup RAM / EEPROM);
+ *   over_saved       runs once the game has accepted a saved settings block,
+ *                    and with g_region_over_saved up puts g_region in the
+ *                    working copy's country, which country() returns.
+ * A game keeps its country in backup RAM or an EEPROM, so a factory-default
+ * hook alone would let a kept save ignore the web page's ?lang=. region_test
+ * runs every over_saved hook on a bare bus: a saved country stays with the
+ * flag down and becomes g_region with it up, for every region.
+ *
+ * The others say why there is no hook; `why` is that reason, in words. Only
+ * the profiles region_test lists may take them, each as its listed kind, so a
+ * new game can skip the hooks only by editing that test.
+ */
+typedef enum {
+    REGION_UNDECLARED = 0,  /* region_test fails it */
+    REGION_HOOKED,
+    REGION_PROGRAM_ROM,     /* the country is the program ROM's (another set is another country) */
+    REGION_HOMEBREW,        /* no country setting at all */
+    REGION_TODO,
+} game_region_kind_t;
+
+typedef struct {
+    game_region_kind_t kind;
+    const char *factory_default;                     /* hook name (REGION_HOOKED) */
+    const char *over_saved;                          /* hook name (REGION_HOOKED) */
+    uint32_t  (*country)(struct memory_bus *bus);    /* the working copy's country byte */
+    const char *why;                                 /* the other kinds */
+} game_region_use_t;
+
 /* See game_quirks_t.attract_replay. */
 typedef struct {
     uint32_t step_addr;
@@ -123,6 +158,11 @@ typedef struct {
      * in. Netplay continues a session across that rematch only for a profile
      * that says so; any other board would keep the winner on against the CPU. */
     bool     vs_rematch;
+
+    /* The region (hle_hooks.h g_region; ?lang= on the web, Pinboard #942).
+     * Every game the emulator runs honours it, or says why it cannot: see
+     * game_region_use_t. tests/region_test.c fails a profile that does neither. */
+    game_region_use_t region;
 
     /* The profile carries a hook that honours g_enemy_rank (hle_hooks.h): the
      * CPU opponent's AI table, including STF's two unused ones. The desktop's
@@ -240,6 +280,14 @@ typedef const char *(*game_native_play_fn)(const game_native_round_t *rounds, in
  * session is recorded while it is. */
 typedef bool (*game_in_play_fn)(struct memory_bus *bus);
 
+/* A linked cabinet's role (Pinboard #969): what the room makes this machine's
+ * board on a comm-board link (VIRTUAL-ON-PS3.md, "RPCN"). */
+typedef enum { GAME_LINK_ALONE, GAME_LINK_MASTER, GAME_LINK_SLAVE } game_link_role_t;
+/* Write the role where the ROM reads it when it next boots. False while the
+ * board cannot hold one yet: Virtual-On's lives in a backup block the ROM
+ * factory-fills at its first boot, so a role written before that is lost. */
+typedef bool (*game_link_role_fn)(struct memory_bus *bus, game_link_role_t role);
+
 /* ---- Profile ------------------------------------------------------------- */
 
 typedef struct game_profile {
@@ -249,6 +297,8 @@ typedef struct game_profile {
      * the id. Several profiles can run one set (STF's Console and Arcade); the
      * first registered is the default, see profile_for_rom_set(). */
     const char       *rom_set;
+    /* The set's name in older MAME (dynmcopb for dynamcopb), picked too. */
+    const char       *rom_set_old;
     const char       *parent_zip_name; /* MAME parent set zip name, e.g. "schamp.zip" */
     board_variant_t   board;
 
@@ -276,6 +326,10 @@ typedef struct game_profile {
     game_native_play_fn native_play;
     game_in_play_fn     in_play;
 
+    /* The cabinet role for a comm-board link (net/comm_role.h). NULL: the game
+     * has no link. */
+    game_link_role_fn   link_role;
+
     /* A prepared profile (registry.h, g_prepared_profiles): the set's ROMs and
      * what is known of its data, with no board to run it yet. Says what the
      * board lacks; NULL for a runnable profile. */
@@ -297,6 +351,12 @@ extern const size_t              g_prepared_count;
 
 static inline const char *profile_rom_set(const game_profile_t *p) {
     return p->rom_set ? p->rom_set : p->id;
+}
+
+/* Whether `set` (a zip basename) is this profile's set, by its name or its
+ * older MAME name. */
+static inline bool profile_runs_set(const game_profile_t *p, const char *set) {
+    return strcmp(profile_rom_set(p), set) == 0 || (p->rom_set_old && strcmp(p->rom_set_old, set) == 0);
 }
 
 /* The quirks' model table as the board reads it (model_table.h). No quirks:
@@ -323,16 +383,16 @@ static inline const game_profile_t *profile_by_id(const char *id) {
 static inline const game_profile_t *profile_for_rom_set(const char *set,
                                                         const game_profile_t *preferred) {
     if (!set) return NULL;
-    if (preferred && strcmp(profile_rom_set(preferred), set) == 0) return preferred;
+    if (preferred && profile_runs_set(preferred, set)) return preferred;
     for (size_t i = 0; i < g_profile_count; i++)
-        if (strcmp(profile_rom_set(g_profiles[i]), set) == 0) return g_profiles[i];
+        if (profile_runs_set(g_profiles[i], set)) return g_profiles[i];
     return NULL;
 }
 
 /* The prepared profile for a ROM set, or NULL. */
 static inline const game_profile_t *profile_prepared_for_rom_set(const char *set) {
     for (size_t i = 0; set && i < g_prepared_count; i++)
-        if (strcmp(profile_rom_set(g_prepared_profiles[i]), set) == 0) return g_prepared_profiles[i];
+        if (profile_runs_set(g_prepared_profiles[i], set)) return g_prepared_profiles[i];
     return NULL;
 }
 

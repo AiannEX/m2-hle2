@@ -271,6 +271,10 @@ static const game_profile_t fvipers_profile = {
         .camera_struct_addr = 0x00515598,   /* eye x,y,z (g13+0x18) — confirmed MAME + IDA */
         .camera_angle_addr  = 0x00515584,   /* yaw = high16 (g13+0x06); camera_control ldos/stos 6(g13) */
         .irq_vectors        = true,         /* handlers from the ROM's own table */
+        /* Fighting Vipers' country setting is not found yet: the game runs as
+         * its ROM and backup RAM have it. Find the default's store, as
+         * sfight's country_default and srallyc's, and hook it. */
+        .region = { .kind = REGION_TODO, .why = "the country setting is not found yet" },
     },
 };
 

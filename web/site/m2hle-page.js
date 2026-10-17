@@ -8,6 +8,55 @@
  */
 'use strict';
 
+/* The words (m2hle-lang.js). rom.missing.* are m2hle-lang.js's own. */
+m2hleLang.add({
+  en: {
+    'page.gl.lost': 'The browser took the graphics away (the WebGL context was lost). Reload the page to carry on.',
+    'page.no.wasm': 'It does not support WebAssembly.',
+    'page.zip.bad': 'That file could not be read as a zip. Choose your {id}.zip.',
+    'page.zip.missing': 'This zip is missing {file}, which {title} needs.',
+    'page.sfight.bad': 'That file could not be read as a zip. Choose your merged sfight.zip or schamp.zip, ' +
+                       'or sfight.zip and schamp.zip together.',
+    'page.sfight.schamp': 'This zip does not have the Sonic the Fighters program files ({file}). ' +
+                          'It looks like a split "schamp" set: add sfight.zip too, or choose a merged set.',
+    'page.sfight.split': 'This zip is missing {file}, which the game needs. It looks like a split ' +
+                         '"sfight" set, which keeps those files in a separate schamp.zip: add schamp.zip too, ' +
+                         'or choose a merged set.',
+    'page.follow.bad': 'Cannot follow: {error}',
+    'page.memory': 'Not enough memory to read that file.',
+    'page.unreadable': 'That file could not be read.',
+    'page.fetch': 'Could not fetch {what}.',
+    'page.build': 'Build {version}',
+    'page.fs.enter': 'Fullscreen',
+    'page.fs.exit': 'Exit fullscreen',
+    'page.pause': 'Pause',
+    'page.resume': 'Resume',
+    'page.pause.key': '{action} ({key})',
+  },
+  ja: {
+    'page.gl.lost': 'ブラウザがグラフィックスを解放しました（WebGL コンテキストの消失）。続けるにはページを再読み込みしてください。',
+    'page.no.wasm': 'WebAssembly に対応していません。',
+    'page.zip.bad': 'このファイルは zip として読み込めませんでした。{id}.zip を選んでください。',
+    'page.zip.missing': 'この zip には {title} に必要な {file} がありません。',
+    'page.sfight.bad': 'このファイルは zip として読み込めませんでした。マージ済みの sfight.zip または schamp.zip、' +
+                       'もしくは sfight.zip と schamp.zip を一緒に選んでください。',
+    'page.sfight.schamp': 'この zip にはソニック・ザ・ファイターズのプログラムファイル（{file}）がありません。' +
+                          'スプリットの「schamp」セットのようです。sfight.zip も追加するか、マージ済みのセットを選んでください。',
+    'page.sfight.split': 'この zip にはゲームに必要な {file} がありません。スプリットの「sfight」セットのようです。' +
+                         'これらのファイルは別の schamp.zip にあるので、schamp.zip も追加するか、マージ済みのセットを選んでください。',
+    'page.follow.bad': 'フォローできません：{error}',
+    'page.memory': 'メモリが足りないため、ファイルを読み込めません。',
+    'page.unreadable': 'ファイルを読み込めませんでした。',
+    'page.fetch': '{what} を取得できませんでした。',
+    'page.build': 'ビルド {version}',
+    'page.fs.enter': '全画面',
+    'page.fs.exit': '全画面を終了',
+    'page.pause': 'ポーズ',
+    'page.resume': '再開',
+    'page.pause.key': '{action}（{key}）',
+  },
+});
+
 const $ = (id) => document.getElementById(id);
 
 /* The build this page belongs to, stamped into index.html (web/stamp-site.cmake).
@@ -42,7 +91,7 @@ $('canvas').addEventListener('webglcontextlost', (e) => {
   }
   $('fatal-reload').hidden = false;
   $('fatal-reload').onclick = () => location.reload();
-  fatal('The browser took the graphics away (the WebGL context was lost). Reload the page to carry on.');
+  fatal(m2hleLang.t('page.gl.lost'));
 });
 
 /* What a failed load means, in words a player can act on. The emulator matches
@@ -59,21 +108,13 @@ function explainMissing(missing) {
   }
   if (m2hleGame.id !== 'sfight') {
     return names.length === 0
-      ? 'That file could not be read as a zip. Choose your ' + m2hleGame.id + '.zip.'
-      : 'This zip is missing ' + names[0] + ', which ' + m2hleGame.title + ' needs.';
+      ? m2hleLang.t('page.zip.bad', { id: m2hleGame.id })
+      : m2hleLang.t('page.zip.missing', { file: names[0], title: m2hleGame.title });
   }
-  if (names.length === 0) {
-    return 'That file could not be read as a zip. Choose your merged sfight.zip or schamp.zip, ' +
-           'or sfight.zip and schamp.zip together.';
-  }
+  if (names.length === 0) return m2hleLang.t('page.sfight.bad');
   const first = names[0];
-  if (/^epr-1900[12]\./.test(first)) {
-    return 'This zip does not have the Sonic the Fighters program files (' + first + '). ' +
-           'It looks like a split "schamp" set: add sfight.zip too, or choose a merged set.';
-  }
-  return 'This zip is missing ' + first + ', which the game needs. It looks like a split ' +
-         '"sfight" set, which keeps those files in a separate schamp.zip: add schamp.zip too, ' +
-         'or choose a merged set.';
+  if (/^epr-1900[12]\./.test(first)) return m2hleLang.t('page.sfight.schamp', { file: first });
+  return m2hleLang.t('page.sfight.split', { file: first });
 }
 
 /* The zips the page can give the emulator at once (RL_MEM_ZIPS, rom_loader.h). */
@@ -88,7 +129,7 @@ function loadZip(zips) {
   /* ?follow= names the leader's profile before the game loads (m2hle-follow.js), and
    * the arcade (stf-arcade.mjs, if it loaded) puts the shared board in localStorage. */
   followReady.then(() => window.stfArcade && window.stfArcade.ready)
-    .then(() => loadZipNow(zips), (e) => romError('Cannot follow: ' + e.message));
+    .then(() => loadZipNow(zips), (e) => romError(m2hleLang.t('page.follow.bad', { error: e.message })));
 }
 
 /* A malloc'd copy of `bytes` in the emulator's heap, or 0. */
@@ -117,7 +158,7 @@ function loadZipNow(zips) {
     const ptrs = zips.map(heapCopy);
     if (ptrs.includes(0)) {
       ptrs.forEach((p) => p && Module._free(p));
-      romError('Not enough memory to read that file.');
+      romError(m2hleLang.t('page.memory'));
       return;
     }
     ptrs.slice(1).forEach((p, i) => Module._web_rom_extra(p, zips[i + 1].length));
@@ -141,6 +182,7 @@ function loadZipNow(zips) {
     if (m2hleFollow.active) m2hleFollow.onGame();   /* no netplay: the board is the leader's */
     else { m2hleNetplay.onGame(); m2hleGgpo.onGame(); }
     m2hleReport.onGame();
+    m2hleCheats.onGame();
     if (window.stfArcade) window.stfArcade.onGame(m2hleFollow.active ? 'follow' : 'solo');
     m2hleTouch.onGame();
     pauseOnGame();
@@ -187,7 +229,7 @@ function readFiles(files) {
   $('rom-error').hidden = true;
   Promise.all(files.map((f) => f.arrayBuffer()))
     .then((bufs) => loadZip(held.concat(bufs.map((b) => new Uint8Array(b))).slice(-MAX_ZIPS)),
-          () => romError('That file could not be read.'));
+          () => romError(m2hleLang.t('page.unreadable')));
 }
 
 /* ---- Sound ------------------------------------------------------------------
@@ -354,14 +396,16 @@ function debugStart() {
 function buildLine() {
   const el = $('build');
   const sha = /-([0-9a-f]{7,40})$/.exec(VERSION);
-  if (!sha) { el.textContent = 'Build ' + VERSION; return; }
-  el.textContent = 'Build ';
+  if (!sha) { el.textContent = m2hleLang.t('page.build', { version: VERSION }); return; }
+  /* The link goes where the language puts the version. */
+  const [before, after] = m2hleLang.t('page.build').split('{version}');
+  el.textContent = before;
   const a = document.createElement('a');
   a.href = 'https://github.com/biggestsonicfan/m2-hle2/commit/' + sha[1];
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
   a.textContent = VERSION;
-  el.appendChild(a);
+  el.append(a, after || '');
 }
 
 /* ---- Emscripten ------------------------------------------------------------ */
@@ -397,6 +441,7 @@ var Module = {
     m2hleShader.onReady();
     m2hleCrt.onReady();
     m2hleReplay.onReady(Module);
+    m2hleCheats.onReady(Module);
     m2hleReport.onReady(Module);
     m2hleNetplay.onReady(Module);
     m2hleGgpo.onReady(Module);
@@ -412,13 +457,13 @@ var Module = {
       Promise.all(urls.map((url) => fetch(url)
         .then((r) => r.ok ? r.arrayBuffer() : Promise.reject(new Error(url.pathname + ': ' + r.status)))))
         .then((bufs) => loadZip(bufs.map((b) => new Uint8Array(b))))
-        .catch((e) => romError('Could not fetch ' + e.message + '.'));
+        .catch((e) => romError(m2hleLang.t('page.fetch', { what: e.message })));
     }
   },
 };
 
 if (typeof WebAssembly !== 'object') {
-  fatal('It does not support WebAssembly.');
+  fatal(m2hleLang.t('page.no.wasm'));
 }
 
 /* ---- The file picker and the drop zone ------------------------------------- */
@@ -490,7 +535,7 @@ if (fsRequest && (document.fullscreenEnabled || document.webkitFullscreenEnabled
     if (p && p.catch) p.catch((e) => m2hleTools.add('fullscreen refused: ' + e.message, 'warning'));
   });
   const label = () => {
-    btn.textContent = fsElement() ? 'Exit fullscreen' : 'Fullscreen';
+    btn.textContent = m2hleLang.t(fsElement() ? 'page.fs.exit' : 'page.fs.enter');
     btn.setAttribute('aria-pressed', String(!!fsElement()));
     /* Going either way leaves this button focused, and a focused button in the
      * bar is one the keyboard could be driving: hand the keys back to the game. */
@@ -515,8 +560,9 @@ function pauseRender() {
   btn.hidden = !Module._web_pause_allowed();
   btn.setAttribute('aria-pressed', String(on));
   const key = m2hleKeys.binds.p1.pause[0];
-  btn.title = (on ? 'Resume' : 'Pause') + (key ? ' (' + m2hleKeys.keyName(key) + ')' : '');
-  btn.setAttribute('aria-label', on ? 'Resume' : 'Pause');
+  const action = m2hleLang.t(on ? 'page.resume' : 'page.pause');
+  btn.title = key ? m2hleLang.t('page.pause.key', { action, key: m2hleKeys.keyName(key) }) : action;
+  btn.setAttribute('aria-label', action);
   $('paused').hidden = how !== 1;   /* the PS3's menu says so itself */
 }
 

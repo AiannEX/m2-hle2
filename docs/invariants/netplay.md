@@ -192,3 +192,45 @@ are **silently wrong** rather than loudly wrong when you get them half right.
     and would relay an official-server login to ours; an unknown path is a 404 there. So the
     gateway must be deployed with its `upstreams` before a web build that offers the official
     server, and until then that choice fails cleanly.
+- **A linked comm board's datagrams are not lockstep traffic** (`LOCKSTEP_PACKET_COMM`,
+  `net/comm_link.h`, Virtual-On). Each board runs alone and reads the other cabinet's packets,
+  so nothing gates on them and no desync check covers them. A message must fit the gateway
+  relay's 1200-byte datagram (`WS_RELAY_DGRAM_MAX`, smaller than the web socket's 1400): the
+  window goes RLE-packed. Dedupe takes each seq once within 32 of the newest, not "newer than the
+  last": the master's ring size and its data frame leave in the same pass, and a strict
+  newest-wins drops the size when the two arrive swapped. The drain's buffer is a whole
+  datagram's (it was an input packet's 84 bytes, which truncated these).
+- **A linked board boots into the room's role; nothing pokes it into a running board**
+  (`net/comm_role.h`, the profile's `link_role`, Pinboard #969). The room's owner is the MASTER,
+  the other the SLAVE. Virtual-On reads its role (`0x1D00028`) only at boot, in the very frame a
+  blank board factory-fills its backup block (frame 285), so a write from outside never lands
+  between the two. `comm_role_begin` detaches the battery first (the role must not reach the
+  player's file); at each frame edge `link_role` writes the role into each copy the ROM made,
+  under the ROM's CRC (and the PS3 shell's Arcade writes, which leave the first copy's CRC stale,
+  are kept); then the board cold-boots with its backup RAM kept and only then gets its peer.
+  The ROM sends nothing until it starts its comm board (CN 1; `m2comm.h` makes no pass before).
+  The reset is not a lockstep barrier: `emu_comm_role_pump` runs only while no session steps.
+- **A linked board keeps 60 Hz of wall time, whatever the host** (`core/link_pace.h`,
+  Pinboard #978). Nothing waits for the other cabinet, so its speed is only kept by both hosts
+  running the board to the wall clock: a slow board loses the stage handshake (state 0x24, one
+  frame) and moves less often. While `m2comm_linked()`, the emu thread, `retro_run` and the
+  page's callback run the frames that are due (a late one owes up to 4; the rest is dropped),
+  and nothing runs it faster (fast-forward, unthrottled, a watcher's catch-up). Only the SLAVE
+  trims (one frame early after 30 frame edges with 2+ of the master's messages waiting): a
+  master that trimmed on the slave's answers would chase the slave's backlog. The board's
+  frame stays 416,667 cycles; a linked board refuses a state load and rewind.
+- **A linked game's room match opens the link, not a lockstep session** (`netplay_member_start_link`,
+  Pinboard #983). For a profile with a `link_role`, each fighter takes the match's side and
+  generation (the datagram header) and calls `netplay_comm_open`; the room stays in its lobby
+  state and no session steps, which is what lets `emu_comm_role_pump` boot the board into the role.
+  There is no barrier, input exchange or desync check; a watcher's board runs alone, and
+  `netplay_end_match` closes the link. Each board sends nothing before its comm board starts
+  (`netplay_status` `comm.early`, 0 on the RPCN pair test, `tools/von-rpcn-pair.mjs`).
+- **A Versus on one machine is two processes, not two boards** (`net/comm_local.h`,
+  `core/child_proc.h`, SDL3 `--versus`, Pinboard #987). The board is one set of globals, so the
+  MASTER's m2hle starts a second one (`--versus-slave PORT:TOKEN`) and the two link as a room's
+  pair does: the same `comm_link.h` datagrams, role boot and pace, over a UDP socket on
+  127.0.0.1 with no RPCN. The MASTER sends nothing until the SLAVE's hello (magic and the token
+  from its command line) pins its port, then takes datagrams from that port only. The child dies
+  with its parent (`PR_SET_PDEATHSIG`; a kill-on-close job on Windows) and the MASTER quits when
+  it is gone. No board path changes, so the proto does not move.
