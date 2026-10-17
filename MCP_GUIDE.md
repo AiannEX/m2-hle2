@@ -735,6 +735,19 @@ fly behind it.
 
 Test against a local ggpo-server, never the live one.
 
+### Game scripts (M2emulator's Lua)
+
+Bridge-only JSON commands for the game's script, `<scripts>/<set>.lua`
+(docs/invariants/scripts.md). The last three are refused while a session
+(netplay, GGPO, a replay, a follow) owns the board.
+
+| cmd | fields | does |
+|---|---|---|
+| `script_status` | | `loaded`, `running`, `frames`, `path`, `error`, `options` (`key`, `name`, `value`, `values`) |
+| `script_option` | `key`, `value` | sets an option to its `value`th value; `changefunc` runs |
+| `script_eval` | `code` | runs a chunk in the script's state; `result` is its return values, tab-joined |
+| `script_reload` | | reads the script again and runs it from the start |
+
 ### Captures and diagnostics
 
 `get_geo_captures` is an MCP tool; the rest are bridge-only JSON commands, used

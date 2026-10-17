@@ -182,6 +182,7 @@ function loadZipNow(zips) {
     if (m2hleFollow.active) m2hleFollow.onGame();   /* no netplay: the board is the leader's */
     else { m2hleNetplay.onGame(); m2hleGgpo.onGame(); }
     m2hleReport.onGame();
+    m2hleCheats.onGame();
     if (window.stfArcade) window.stfArcade.onGame(m2hleFollow.active ? 'follow' : 'solo');
     m2hleTouch.onGame();
     pauseOnGame();
@@ -440,6 +441,7 @@ var Module = {
     m2hleShader.onReady();
     m2hleCrt.onReady();
     m2hleReplay.onReady(Module);
+    m2hleCheats.onReady(Module);
     m2hleReport.onReady(Module);
     m2hleNetplay.onReady(Module);
     m2hleGgpo.onReady(Module);
