@@ -71,6 +71,7 @@
 #include "m2lua_wide.h"    /* and the picture it asks for (Model2_SetWideScreen) */
 #include "lightgun_sgl.h"   /* the mouse and touches as light guns, and their crosshairs */
 #include "ffb.h"            /* the drive board's force feedback, for the page to rumble */
+#include "wheel_host.h"     /* the page's analog wheel and pedals (Pinboard #1082) */
 
 /* The single TU that defines g_profiles[] / g_active_profile. Under M2HLE_WEB it
  * registers sfight alone. */
@@ -1030,6 +1031,15 @@ static int g_web_cheats_rect[4];   /* the picture on the canvas: web_cheats_plac
 EMSCRIPTEN_KEEPALIVE unsigned web_ffb(void) {
     ffb_out_t o = ffb_poll();
     return (unsigned)(o.strong >> 8) << 16 | (unsigned)(o.weak >> 8) << 8 | o.effect.cmd;
+}
+
+/* A driving game's analog wheel and pedals (wheel_host.h, Pinboard #1082):
+ * web_wheel_on says whether the game has them; the page then sends player 1's
+ * pad's turn (-32767 left .. 32767 right) and pedals (0 .. 32767) each poll
+ * (m2hle-pad.js), on = 0 when no pad has them. */
+EMSCRIPTEN_KEEPALIVE int web_wheel_on(void) { return wheel_host_on(); }
+EMSCRIPTEN_KEEPALIVE void web_wheel(int on, int steer, int accel, int brake) {
+    wheel_host_set(on != 0 && web_game_pad(), steer, accel, brake);
 }
 
 /* The page's canvas asks before its context menu: not while a right click reloads a gun. */

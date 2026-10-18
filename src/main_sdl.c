@@ -82,6 +82,14 @@
  *            plays the second. Closing either ends the Versus. Windowed
  *            (640x480 unless --window). Not with --netplay.
  * --pad N    only the Nth gamepad (0 the first) plays here; default all.
+ * --wheel-axes S,A,B  a racing wheel SDL sees only as a joystick: its wheel,
+ *            accelerator and brake axes (default 0,1,2; Sega Rally, Daytona).
+ *            Given, any joystick that is not a gamepad counts as a wheel.
+ *            A gamepad steers with its left stick and pedals with its
+ *            triggers (R2, L2); the wheel's force goes to whichever has it
+ *            (--ffb-gain N, 0-100).
+ * --wheel-buttons N=action,...  that wheel's buttons, e.g. "4=up,5=down" (the
+ *            gear lever), actions as --pad-map's.
  * --window-at X,Y  put the window there.
  * --versus-slave PORT:TOKEN  the SLAVE that --versus starts (not for players).
  * --scripts DIR  the game scripts' folder (M2emulator's Lua, core/m2lua.h):
@@ -145,7 +153,7 @@
  * g_active_profile and pulls in every per-game profile header. */
 #include "registry.h"
 #include "lightgun_sgl.h"   /* the mouse and touches as light guns (Pinboard #1040) */
-#include "ffb.h"           /* the drive board's force feedback (Pinboard #1047) */
+#include "sdl_pads.h"      /* gamepads, wheels, force feedback (Pinboard #1047, #1082) */
 
 #define MAX_SHOTS 16
 #define MAX_SCRIPT_OPTS 16
@@ -200,241 +208,6 @@ static struct {
 
 static bool g_sdtx_on;              /* sokol's debug text is set up: --osd, the lobby or a script's text */
 static bool g_sound_on;             /* the sound board is attached (sound_start succeeded) */
-
-/* ---- Gamepad ------------------------------------------------------------- */
-
-/* Button → action. Directions always come from the d-pad and the left stick. */
-typedef struct { const char *name; SDL_GamepadButton button; uint32_t acts; } pad_bind_t;
-
-/* acts is one bit per GAME_INPUT_* action; more than one is a combo. */
-#define ACT(a) (1u << (a))
-static pad_bind_t g_pad_binds[] = {
-    { "south", SDL_GAMEPAD_BUTTON_SOUTH,          ACT(GAME_INPUT_P1_B1)    },
-    { "east",  SDL_GAMEPAD_BUTTON_EAST,           ACT(GAME_INPUT_P1_B2)    },
-    { "west",  SDL_GAMEPAD_BUTTON_WEST,           ACT(GAME_INPUT_P1_B3)    },
-    { "north", SDL_GAMEPAD_BUTTON_NORTH,          ACT(GAME_INPUT_P1_B4)    },
-    { "start", SDL_GAMEPAD_BUTTON_START,          ACT(GAME_INPUT_P1_START) },
-    { "back",  SDL_GAMEPAD_BUTTON_BACK,           ACT(GAME_INPUT_P1_COIN)  },
-    { "l1",    SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,  0 },
-    { "r1",    SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, 0 },
-    { "l3",    SDL_GAMEPAD_BUTTON_LEFT_STICK,     0 },
-    { "r3",    SDL_GAMEPAD_BUTTON_RIGHT_STICK,    0 },
-    { "guide", SDL_GAMEPAD_BUTTON_GUIDE,          0 },
-};
-#define PAD_BIND_COUNT (int)(sizeof g_pad_binds / sizeof g_pad_binds[0])
-
-/* An action, or a combo of player-1 actions ("b1+b2"); false if neither. */
-static bool actions_by_name(const char *s, uint32_t *acts) {
-    if (!strcmp(s, "none"))    { *acts = 0; return true; }
-    if (!strcmp(s, "service")) { *acts = ACT(GAME_INPUT_SERVICE); return true; }
-    if (!strcmp(s, "test"))    { *acts = ACT(GAME_INPUT_TEST); return true; }
-    *acts = input_combo_parse(s);
-    return *acts && !(*acts >> GAME_INPUT_P2_UP);   /* the pad plays player 1 */
-}
-
-static bool apply_pad_map(const char *list) {
-    char buf[512];
-    snprintf(buf, sizeof buf, "%s", list);
-    for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
-        char *eq = strchr(tok, '=');
-        if (!eq) { fprintf(stderr, "--pad-map: '%s' is not button=action\n", tok); return false; }
-        *eq = '\0';
-        uint32_t acts;
-        bool ok = actions_by_name(eq + 1, &acts);
-        int b;
-        for (b = 0; b < PAD_BIND_COUNT && strcmp(g_pad_binds[b].name, tok); b++) {}
-        if (b == PAD_BIND_COUNT || !ok) {
-            fprintf(stderr, "--pad-map: unknown button or action in '%s=%s'\n", tok, eq + 1);
-            return false;
-        }
-        g_pad_binds[b].acts = acts;
-    }
-    return true;
-}
-
-/* The pad's contribution to each action, recomputed whole on every gamepad
- * event so the d-pad and stick cannot release each other's direction. */
-static bool g_pad_held[GAME_INPUT_COUNT];
-/* Players 3 and 4's (input_far_down), on a four-player cabinet (Air Walkers):
- * the third pad that plays here is player 3 on player 1's actions, the fourth
- * player 4 on player 2's. */
-static bool g_pad_far_held[GAME_INPUT_COUNT];
-
-/* --pad: only that gamepad plays this window; the others play another's. */
-static bool pad_plays_here(int i) {
-    return opt.pad < 0 || i == opt.pad;
-}
-
-static void pad_actions(SDL_Gamepad *pad, bool *now);
-
-static void pad_refresh(void) {
-    bool now[GAME_INPUT_COUNT] = {0}, far_now[GAME_INPUT_COUNT] = {0};
-    int count = 0, here = 0;
-    SDL_JoystickID *ids = SDL_GetGamepads(&count);
-    for (int i = 0; ids && i < count; i++) {
-        if (!pad_plays_here(i)) continue;
-        SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
-        if (!pad) continue;
-        int nth = here++;
-        if (nth >= 2 && nth < 4 && input_four_players()) {
-            bool p1[GAME_INPUT_COUNT] = {0};
-            pad_actions(pad, p1);
-            const int to = nth == 2 ? 0 : GAME_INPUT_P2_UP - GAME_INPUT_P1_UP;
-            for (int a = GAME_INPUT_P1_UP; a <= GAME_INPUT_P1_COIN; a++) if (p1[a]) far_now[a + to] = true;
-            continue;
-        }
-        pad_actions(pad, now);
-    }
-    SDL_free(ids);
-    for (int a = 0; a < GAME_INPUT_COUNT; a++) {
-        if (now[a] && !g_pad_held[a]) input_action_down(a);
-        if (!now[a] && g_pad_held[a]) input_action_up(a);
-        g_pad_held[a] = now[a];
-        if (far_now[a] && !g_pad_far_held[a]) input_far_down(a);
-        if (!far_now[a] && g_pad_far_held[a]) input_far_up(a);
-        g_pad_far_held[a] = far_now[a];
-    }
-}
-
-/* One pad's actions into now[]: the d-pad and left stick steer, the binds press. */
-static void pad_actions(SDL_Gamepad *pad, bool *now) {
-    const int dead = 16000;
-    int ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
-    int ay = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
-    now[GAME_INPUT_P1_UP]    |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)    || ay < -dead;
-    now[GAME_INPUT_P1_DOWN]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)  || ay >  dead;
-    now[GAME_INPUT_P1_LEFT]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)  || ax < -dead;
-    now[GAME_INPUT_P1_RIGHT] |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || ax >  dead;
-    for (int b = 0; b < PAD_BIND_COUNT; b++) {
-        if (!g_pad_binds[b].acts || !SDL_GetGamepadButton(pad, g_pad_binds[b].button)) continue;
-        for (int a = 0; a < GAME_INPUT_COUNT; a++)
-            if (g_pad_binds[b].acts & ACT(a)) now[a] = true;
-    }
-}
-
-/* Let go of everything the pad holds, as the game sees it: the netplay lobby
- * takes the pad, and a button held into it must not stay held in the game. */
-static void lobby_pad_release(void) {
-    for (int a = 0; a < GAME_INPUT_COUNT; a++) {
-        if (g_pad_held[a]) input_action_up(a);
-        if (g_pad_far_held[a]) input_far_up(a);
-        g_pad_held[a] = g_pad_far_held[a] = false;
-    }
-}
-
-/* ---- Force feedback (ffb.h, Pinboard #1047) ------------------------------- */
-
-/* The drive board's force on the pads that play here: a wheel SDL can drive
- * gets the push, the spring, the friction and the shake as haptic effects,
- * set when the command changes; every other pad rumbles, renewed each
- * rendered frame while it does. */
-#define FFB_PADS 4
-
-static struct {
-    SDL_JoystickID id;              /* 0: a free slot */
-    SDL_Haptic    *haptic;          /* NULL: rumble only */
-    int            fx[4];           /* constant, spring, friction, sine; -1 if none */
-    bool           on[4];
-} g_ffb_pad[FFB_PADS];
-static int  g_ffb_last = -1;        /* the command last played; -1: play it again */
-static bool g_ffb_rumbling;
-
-static const Uint32 g_ffb_type[4] = { SDL_HAPTIC_CONSTANT, SDL_HAPTIC_SPRING, SDL_HAPTIC_FRICTION, SDL_HAPTIC_SINE };
-
-/* Effect k (g_ffb_type) at strength v, along the wheel. */
-static SDL_HapticEffect ffb_effect(int k, int v) {
-    SDL_HapticEffect e;
-    SDL_zero(e);
-    e.type = (Uint16)g_ffb_type[k];
-    if (k == 0) {
-        e.constant.direction.type = SDL_HAPTIC_STEERING_AXIS;
-        e.constant.length = SDL_HAPTIC_INFINITY;
-        e.constant.level = (Sint16)v;
-    } else if (k == 3) {
-        e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
-        e.periodic.length = SDL_HAPTIC_INFINITY;
-        e.periodic.period = 60;   /* ms */
-        e.periodic.magnitude = (Sint16)v;
-    } else {
-        e.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
-        e.condition.length = SDL_HAPTIC_INFINITY;
-        e.condition.right_sat[0] = e.condition.left_sat[0] = 0xFFFF;
-        e.condition.right_coeff[0] = e.condition.left_coeff[0] = (Sint16)v;
-    }
-    return e;
-}
-
-static void ffb_close_pad(int s) {
-    if (g_ffb_pad[s].haptic) SDL_CloseHaptic(g_ffb_pad[s].haptic);
-    memset(&g_ffb_pad[s], 0, sizeof g_ffb_pad[s]);
-}
-
-/* A wheel's four effects, made once and updated in place. */
-static void ffb_open_haptic(int s, SDL_Gamepad *pad) {
-    SDL_Joystick *joy = SDL_GetGamepadJoystick(pad);
-    if (!joy || !SDL_IsJoystickHaptic(joy)) return;
-    SDL_Haptic *h = SDL_OpenHapticFromJoystick(joy);
-    if (!h) return;
-    Uint32 has = SDL_GetHapticFeatures(h);
-    int made = 0;
-    for (int k = 0; k < 4; k++) {
-        SDL_HapticEffect e = ffb_effect(k, 0);
-        g_ffb_pad[s].fx[k] = (has & g_ffb_type[k]) ? SDL_CreateHapticEffect(h, &e) : -1;
-        if (g_ffb_pad[s].fx[k] >= 0) made++;
-    }
-    if (!made) { SDL_CloseHaptic(h); return; }
-    if (has & SDL_HAPTIC_AUTOCENTER) SDL_SetHapticAutocenter(h, 0);   /* the game's spring centres it */
-    g_ffb_pad[s].haptic = h;
-    printf("m2hle: force feedback on %s\n", SDL_GetGamepadName(pad));
-}
-
-static void ffb_haptic_play(int s, const ffb_out_t *o) {
-    SDL_Haptic *h = g_ffb_pad[s].haptic;
-    const int v[4] = { o->push, o->spring, o->friction, o->shake };
-    for (int k = 0; k < 4; k++) {
-        int id = g_ffb_pad[s].fx[k];
-        if (id < 0) continue;
-        if (!v[k]) {
-            if (g_ffb_pad[s].on[k]) SDL_StopHapticEffect(h, id);
-            g_ffb_pad[s].on[k] = false;
-            continue;
-        }
-        SDL_HapticEffect e = ffb_effect(k, v[k]);
-        SDL_UpdateHapticEffect(h, id, &e);
-        if (!g_ffb_pad[s].on[k]) SDL_RunHapticEffect(h, id, 1);
-        g_ffb_pad[s].on[k] = true;
-    }
-}
-
-static void ffb_update(void) {
-    ffb_out_t o = ffb_poll();
-    bool rumble = o.strong || o.weak, changed = o.effect.cmd != g_ffb_last;
-    if (!changed && !rumble && !g_ffb_rumbling) return;
-    int count = 0;
-    SDL_JoystickID *ids = SDL_GetGamepads(&count);
-    for (int s = 0; s < FFB_PADS; s++) {   /* forget the pads that went */
-        bool here = false;
-        for (int i = 0; ids && i < count && !here; i++) here = ids[i] == g_ffb_pad[s].id;
-        if (g_ffb_pad[s].id && !here) ffb_close_pad(s);
-    }
-    for (int i = 0; ids && i < count; i++) {
-        SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
-        if (!pad || !pad_plays_here(i)) continue;
-        int s = 0;
-        while (s < FFB_PADS && g_ffb_pad[s].id != ids[i]) s++;
-        if (s == FFB_PADS) {
-            for (s = 0; s < FFB_PADS && g_ffb_pad[s].id; s++) {}
-            if (s == FFB_PADS) continue;
-            g_ffb_pad[s].id = ids[i];
-            ffb_open_haptic(s, pad);
-        }
-        if (g_ffb_pad[s].haptic) { if (changed) ffb_haptic_play(s, &o); }
-        else SDL_RumbleGamepad(pad, o.strong, o.weak, rumble ? 100 : 0);
-    }
-    SDL_free(ids);
-    g_ffb_last = o.effect.cmd;
-    g_ffb_rumbling = rumble;
-}
 
 /* Keyboard, for desktop runs: the debugger's layout (input.h). */
 static int key_to_action(SDL_Scancode sc) {
@@ -993,6 +766,8 @@ static bool parse_args(int argc, char **argv) {
         else if (more && io5649_wheel_option(a, argv[i + 1])) i++;
         else if (more && lightgun_host_option(a, argv[i + 1])) i++;   /* --gun-flash N */
         else if (more && ffb_option(a, argv[i + 1]))          i++;
+        else if (!strcmp(a, "--wheel-axes") && more)    { if (!wheel_axes_option(argv[++i])) return false; }
+        else if (!strcmp(a, "--wheel-buttons") && more) { if (!wheel_buttons_option(argv[++i])) return false; }
         else if (!strcmp(a, "--enemy-rank") && more) {  /* cabinet | easy..hardest | extra1 | extra2 */
             int r = enemy_rank_parse(argv[++i]);
             if (r < -1) return false;
@@ -1336,6 +1111,7 @@ static bool poll_events(void) {
     while (SDL_PollEvent(&ev)) {
         if (opt.netplay && lobby_event(&ev, &pad_changed)) continue;
         gun_event(&ev);
+        sdl_pads_event(&ev, &pad_changed);
         switch (ev.type) {
             case SDL_EVENT_QUIT: running = false; break;
             case SDL_EVENT_KEY_DOWN:
@@ -1344,21 +1120,6 @@ static bool poll_events(void) {
                 break;
             case SDL_EVENT_KEY_UP:
                 input_action_up(key_to_action(ev.key.scancode));
-                break;
-            case SDL_EVENT_GAMEPAD_ADDED:
-                g_ffb_last = -1;   /* give the new pad the force now */
-                if (SDL_OpenGamepad(ev.gdevice.which))
-                    printf("m2hle: gamepad %s\n", SDL_GetGamepadNameForID(ev.gdevice.which));
-                pad_changed = true;
-                break;
-            case SDL_EVENT_GAMEPAD_REMOVED:
-                SDL_CloseGamepad(SDL_GetGamepadFromID(ev.gdevice.which));
-                pad_changed = true;
-                break;
-            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-            case SDL_EVENT_GAMEPAD_BUTTON_UP:
-            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-                pad_changed = true;
                 break;
             default: break;
         }
@@ -1515,6 +1276,7 @@ static bool versus_start(int argc) {
     }
     if (master) {
         if (opt.pad < 0) opt.pad = 0;
+        g_sdl_pad_only = opt.pad;
         int sx, sy;
         versus_place(&sx, &sy);
         if (!versus_slave_argv(argc, sx, sy) || !child_proc_start(&g_versus_child, g_versus_argv)) {
@@ -1915,6 +1677,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (opt.pad_map && !apply_pad_map(opt.pad_map)) return 2;
+    g_sdl_pad_only = opt.pad;
 
     /* The session log flushes every line to disk and a running game warns
      * about unknown COP commands many times a second: off unless asked for. */
@@ -1933,7 +1696,7 @@ int main(int argc, char **argv) {
     scripts_load();
 
     versus_before_sdl();
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_HAPTIC)) {
         fprintf(stderr, "m2hle: SDL_Init: %s\n", SDL_GetError());
         return 1;
     }

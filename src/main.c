@@ -67,6 +67,9 @@
 #include "m2lua_mcp.h"       /* ...and the bridge's script_* commands */
 #include "lightgun_ui.h"      /* the mouse as a light gun, and its crosshairs */
 #include "net/comm_local.h"   /* --comm-master / --comm-slave: two boards linked on 127.0.0.1 */
+#if M2HLE_PADS
+#include "sdl_pads.h"         /* gamepads, racing wheels and force feedback through SDL3 (#1082) */
+#endif
 #if defined(__linux__)
 #include <unistd.h>          /* readlink: scripts/ beside the executable */
 #endif
@@ -104,6 +107,7 @@ static int  g_headless   = 0;      /* --headless: no window, GPU or audio device
 static int  g_net_window = 0;      /* --netplay: open the netplay window at startup */
 static int  g_kiosk_on   = 0;      /* --kiosk: capture mode from startup */
 static int  g_no_tray    = 0;      /* --no-tray: --headless without its icon */
+static int  g_no_pads    = 0;      /* --no-pads: no gamepads or wheels (and no SDL) */
 /* --no-sound-board (or M2HLE_NO_SOUND_BOARD=1): boot with the 68000 and SCSP
  * detached, for training runs that want frames, not sound. The sound board is
  * a third to a half of the emu thread. It is board state, not only audio: its
@@ -948,6 +952,41 @@ static void init_take_focus(void) {
 #endif
 }
 
+#if M2HLE_PADS
+/* Gamepads and racing wheels (Pinboard #1082): SDL3 for its joysticks and
+ * haptics only, sokol keeps the window. They play while the window has the
+ * focus (a second m2hle on the same desktop, a netplay test, keeps its own);
+ * capture mode and --no-pads take none. */
+static bool g_pads_on, g_pads_focused = true;
+
+static void pads_init(void) {
+    if (g_no_pads || g_kiosk_on) return;
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    if (!SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_HAPTIC)) {
+        LOG_WARN("pads: SDL_Init: %s; no gamepads or wheels", SDL_GetError());
+        return;
+    }
+    g_pads_on = true;
+}
+
+static void pads_frame(void) {
+    if (!g_pads_on) return;
+    SDL_Event ev;
+    bool changed = false;
+    while (SDL_PollEvent(&ev)) sdl_pads_event(&ev, &changed);
+    if (!g_pads_focused) return;
+    if (changed) pad_refresh();
+    ffb_update();
+}
+
+static void pads_focus(bool focused) {
+    if (!g_pads_on || focused == g_pads_focused) return;
+    g_pads_focused = focused;
+    if (focused) pad_refresh();
+    else { lobby_pad_release(); ffb_stop_all(); }
+}
+#endif
+
 static void init(void) {
     log_init();
     crash_trace_install();
@@ -1568,6 +1607,9 @@ static void frame(void) {
     /* `quit` over the bridge. Capture mode would otherwise swallow the close,
      * which is the point of capture mode -- so say we mean it. */
     if (mcp_quit_requested()) { kiosk_allow_quit(); sapp_request_quit(); }
+#if M2HLE_PADS
+    pads_frame();
+#endif
 
     simgui_new_frame(&(simgui_frame_desc_t){
         .width       = sapp_width(),
@@ -1693,6 +1735,9 @@ static void frame(void) {
 
 static void cleanup(void) {
     kiosk_shutdown();      /* take the tray icon down before the window goes */
+#if M2HLE_PADS
+    if (g_pads_on) { lobby_pad_release(); ffb_stop_all(); SDL_Quit(); g_pads_on = false; }
+#endif
     /* First: the writer thread is still sending out of slots the renderer owns
      * and the target below is about to go. It keeps both rings — the audio tap
      * runs on the emu thread, which is still going at this point, and that is
@@ -1739,6 +1784,10 @@ static void event(const sapp_event* ev) {
     if (ev->type == SAPP_EVENTTYPE_KEY_UP)                      input_key_up((int)ev->key_code);
     m2lua_ui_event(ev);
     lightgun_ui_event(ev);
+#if M2HLE_PADS
+    if (ev->type == SAPP_EVENTTYPE_FOCUSED)   pads_focus(true);
+    if (ev->type == SAPP_EVENTTYPE_UNFOCUSED) pads_focus(false);
+#endif
 
     if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) return;
     switch (ev->key_code) {
@@ -1841,6 +1890,14 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             } else LOG_WARN("--comm-slave %s: expected PORT:TOKEN", argv[i]);
         } else if (i + 1 < argc && lightgun_host_option(argv[i], argv[i + 1])) {
             i++;                      /* a light gun's flash on the trigger (lightgun_host.h) */
+        } else if (strcmp(argv[i], "--no-pads") == 0) {
+            g_no_pads = 1;            /* no gamepads or wheels */
+#if M2HLE_PADS
+        } else if (i + 1 < argc && sdl_pads_option(argv[i], argv[i + 1])) {
+            /* --pad-map, --pad N, --wheel-axes, --wheel-buttons, --ffb-gain (sdl_pads.h) */
+            if (sdl_pads_option(argv[i], argv[i + 1]) < 0) LOG_WARN("%s %s: not understood", argv[i], argv[i + 1]);
+            i++;
+#endif
         } else if (strcmp(argv[i], "--run") == 0) {
             g_autorun = 1;
         } else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc) {

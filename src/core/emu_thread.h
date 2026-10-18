@@ -1293,7 +1293,8 @@ static void *emu_thread_proc(void *p) {
  * with emu_slice_body / emu_slice_finish (the web build, which has one thread).
  * thread_alive stays 0, which is also what tells emu_sound_restart and
  * emu_sound_midi there is no run loop to lock out. */
-/* A light gun's host pointer aims only a board this host's hands drive (lightgun.h). */
+/* A light gun's host pointer and an analog wheel's position reach only a board
+ * this host's hands drive (lightgun.h, io_5649.h). */
 static int emu_board_remote(void) {
     return replay__session_live() || follow_following() || g_replay_play.on || g_native_play.on;
 }
@@ -1301,6 +1302,7 @@ static int emu_board_remote(void) {
 static inline void emu_ctx_init(emu_thread_ctx_t *ctx, i960_cpu_t *cpu, memory_bus_t *bus) {
     memset(ctx, 0, sizeof(*ctx));
     g_lightgun_remote_fn = emu_board_remote;
+    g_io5649_remote_fn   = emu_board_remote;
     ctx->cpu = cpu;
     ctx->bus = bus;
     ctx->run_state = EMU_STOPPED;
