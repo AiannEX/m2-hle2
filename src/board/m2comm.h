@@ -99,12 +99,14 @@ typedef struct {
  * recv returns the next one's length (at most cap bytes) or 0 if none has
  * come. pending (may be NULL) is how many are waiting: the host's link clock
  * reads it (core/link_pace.h). The link session owns it; it outlives the
- * board's resets. */
+ * board's resets. twin: the other cabinet is a board this process runs too
+ * (core/emu_twin.h, a GGPO match of a linked game). */
 typedef struct {
     void     *ctx;
     void     (*send)(void *ctx, const uint8_t *msg, uint32_t len);
     uint32_t (*recv)(void *ctx, uint8_t *msg, uint32_t cap);
     uint32_t (*pending)(void *ctx);
+    bool      twin;
 } m2comm_peer_t;
 
 enum { M2COMM_LINK_DOWN = 0, M2COMM_LINK_UP = 1 };
@@ -338,9 +340,10 @@ static inline void m2comm_set_peer(const m2comm_peer_t *peer) {
  * 0x2000 + offset (the ROM's ring of node slots), not just the window. */
 static inline void m2comm_set_whole_frame(bool on) { g_m2comm_link.whole_frame = on; }
 
-/* Whether the comm board is linked to another cabinet: its host then paces it
- * by the link's clock (core/link_pace.h). */
-static inline bool m2comm_linked(void) { return g_m2comm_link.peer != NULL; }
+/* Whether the comm board is linked to another host's cabinet: its host then
+ * paces it by the link's clock (core/link_pace.h). Not a twin's (the other
+ * cabinet runs in this process): GGPO paces the pair. */
+static inline bool m2comm_linked(void) { return g_m2comm_link.peer != NULL && !g_m2comm_link.peer->twin; }
 
 /* The master's messages waiting for a slave's next passes; 0 on the master.
  * The master's clock is the link's: it sends a window every pass, and the

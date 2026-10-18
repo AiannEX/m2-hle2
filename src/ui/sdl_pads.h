@@ -85,6 +85,10 @@ static bool apply_pad_map(const char *list) {
 /* The pad's contribution to each action, recomputed whole on every gamepad
  * event so the d-pad and stick cannot release each other's direction. */
 static bool g_pad_held[GAME_INPUT_COUNT];
+/* Players 3 and 4's (input_far_down), on a four-player cabinet (Air Walkers):
+ * the third pad that plays here is player 3 on player 1's actions, the fourth
+ * player 4 on player 2's. */
+static bool g_pad_far_held[GAME_INPUT_COUNT];
 
 /* --pad: only that gamepad plays this window; the others play another's. */
 static bool pad_plays_here(int i) {
@@ -162,9 +166,25 @@ static void wheel_close(SDL_JoystickID id) {
     if (joy && wheel_is(id)) SDL_CloseJoystick(joy);
 }
 
+/* One pad's actions into now[]: the d-pad and left stick steer, the binds press. */
+static void pad_actions(SDL_Gamepad *pad, bool *now) {
+    const int dead = 16000;
+    int ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
+    int ay = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
+    now[GAME_INPUT_P1_UP]    |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)    || ay < -dead;
+    now[GAME_INPUT_P1_DOWN]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)  || ay >  dead;
+    now[GAME_INPUT_P1_LEFT]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)  || ax < -dead;
+    now[GAME_INPUT_P1_RIGHT] |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || ax >  dead;
+    for (int b = 0; b < PAD_BIND_COUNT; b++) {
+        if (!g_pad_binds[b].acts || !SDL_GetGamepadButton(pad, g_pad_binds[b].button)) continue;
+        for (int a = 0; a < GAME_INPUT_COUNT; a++)
+            if (g_pad_binds[b].acts & ACT(a)) now[a] = true;
+    }
+}
+
 static void pad_refresh(void) {
-    bool now[GAME_INPUT_COUNT] = {0};
-    int count = 0;
+    bool now[GAME_INPUT_COUNT] = {0}, far_now[GAME_INPUT_COUNT] = {0};
+    int count = 0, here = 0;
     /* The wheel and pedals for a driving game: a racing wheel's, else a
      * gamepad's left stick and triggers (R2 accelerator, L2 brake). */
     bool an_on = false, an_wheel = false;
@@ -203,9 +223,15 @@ static void pad_refresh(void) {
         if (!pad_plays_here(i)) continue;
         SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
         if (!pad) continue;
-        const int dead = 16000;
+        int nth = here++;
+        if (nth >= 2 && nth < 4 && input_four_players()) {
+            bool p1[GAME_INPUT_COUNT] = {0};
+            pad_actions(pad, p1);
+            const int to = nth == 2 ? 0 : GAME_INPUT_P2_UP - GAME_INPUT_P1_UP;
+            for (int a = GAME_INPUT_P1_UP; a <= GAME_INPUT_P1_COIN; a++) if (p1[a]) far_now[a + to] = true;
+            continue;
+        }
         int ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
-        int ay = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
         if (!an_wheel) {
             int st = wheel_host_steer(ax, WHEEL_HOST_STICK_DEAD);
             if (!an_on || abs(st) > abs(an_steer)) an_steer = st;
@@ -219,15 +245,7 @@ static void pad_refresh(void) {
             now[GAME_INPUT_P1_B1] |= ac > 16000;
             now[GAME_INPUT_P1_B2] |= br > 16000;
         }
-        now[GAME_INPUT_P1_UP]    |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)    || ay < -dead;
-        now[GAME_INPUT_P1_DOWN]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)  || ay >  dead;
-        now[GAME_INPUT_P1_LEFT]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)  || ax < -dead;
-        now[GAME_INPUT_P1_RIGHT] |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || ax >  dead;
-        for (int b = 0; b < PAD_BIND_COUNT; b++) {
-            if (!g_pad_binds[b].acts || !SDL_GetGamepadButton(pad, g_pad_binds[b].button)) continue;
-            for (int a = 0; a < GAME_INPUT_COUNT; a++)
-                if (g_pad_binds[b].acts & ACT(a)) now[a] = true;
-        }
+        pad_actions(pad, now);
     }
     SDL_free(ids);
     wheel_host_set(an_on, an_steer, an_accel, an_brake);
@@ -235,6 +253,9 @@ static void pad_refresh(void) {
         if (now[a] && !g_pad_held[a]) input_action_down(a);
         if (!now[a] && g_pad_held[a]) input_action_up(a);
         g_pad_held[a] = now[a];
+        if (far_now[a] && !g_pad_far_held[a]) input_far_down(a);
+        if (!far_now[a] && g_pad_far_held[a]) input_far_up(a);
+        g_pad_far_held[a] = far_now[a];
     }
 }
 
@@ -244,7 +265,8 @@ static void lobby_pad_release(void) {
     wheel_host_set(false, 0, 0, 0);
     for (int a = 0; a < GAME_INPUT_COUNT; a++) {
         if (g_pad_held[a]) input_action_up(a);
-        g_pad_held[a] = false;
+        if (g_pad_far_held[a]) input_far_up(a);
+        g_pad_held[a] = g_pad_far_held[a] = false;
     }
 }
 

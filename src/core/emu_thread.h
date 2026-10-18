@@ -70,7 +70,7 @@ static volatile int g_idle_hold;
 #define EMU_CPU_HZ           25000000               /* i960 KB on Model 2 = 25 MHz */
 #define EMU_SLICES_PER_SEC   60
 #define EMU_SLICE_US         (1000000 / EMU_SLICES_PER_SEC)  /* ~16667 µs */
-/* EMU_STEPS_PER_SLICE is in constants.h (500,000): a cap above the 416,667
+/* EMU_STEPS_PER_SLICE is in constants.h (500,000): a cap above the 434,600
  * cycles to a vblank, so a slice reaches its vblank whatever the program does,
  * since an instruction costs at least a cycle. */
 

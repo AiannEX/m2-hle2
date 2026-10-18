@@ -270,6 +270,7 @@ static const game_profile_t vonj_profile = {
     .install_fn      = vonj_install,
     .hook_count      = 0,
     .link_role       = vonj_link_role,
+    .link_twin       = true,
     .match_info      = vonj_match_info,
     .in_play         = vonj_in_play,
     .input = {

@@ -213,6 +213,11 @@ typedef struct {
     bool     model1_io;
     uint32_t model1_io_vr4;
 
+    /* A four-player cabinet on the 315-5649 (MAME model2a_airwlkrs_state):
+     * port F bit 7 picks the side IN1 / IN2 and IN0's start bits answer for,
+     * players 1 and 2 or 3 and 4 (input.h, input_attach_sides). */
+    bool     four_player_sides;
+
     /* Two light guns on the 315-5649's second serial channel (lightgun.h):
      * input_attach serves their positions, off-screen bits and triggers. Each
      * gun's held bits (its pad walks it; reload is the shot off the screen)
@@ -357,6 +362,11 @@ typedef struct game_profile {
     /* The cabinet role for a comm-board link (net/comm_role.h). NULL: the game
      * has no link. */
     game_link_role_fn   link_role;
+
+    /* A GGPO match plays the link: both cabinets on each machine, one player
+     * on each (core/emu_twin.h). Two cabinets of the same program only: not
+     * Power Sled, whose role is a program of its own and whose race is three. */
+    bool                link_twin;
 
     /* A prepared profile (registry.h, g_prepared_profiles): the set's ROMs and
      * what is known of its data, with no board to run it yet. Says what the
