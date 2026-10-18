@@ -25,6 +25,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -95,36 +96,51 @@ static inline void input_release_all(void) {
 
 static inline void input_reset(void) { input_release_all(); g_input.net_held = 0; }
 
-/* Translate a sokol key code into the abstract action enum, or -1. */
+/* The keyboard's map (Pinboard #1147): up to INPUT_KEY_SLOTS sokol key codes
+ * per action, 0 for none. Host-side only, like the combos below: the board
+ * sees the actions, so a remap changes nothing a session or replay sends.
+ * The desktop's Controls window edits it and keeps it per profile
+ * (ui/controls_window.h); input_keys_default puts these back. */
+#define INPUT_KEY_SLOTS 2
+#define INPUT_KEYS_DEFAULT {                                                         \
+    [GAME_INPUT_P1_UP]    = { SAPP_KEYCODE_UP },     [GAME_INPUT_P1_DOWN]  = { SAPP_KEYCODE_DOWN },      \
+    [GAME_INPUT_P1_LEFT]  = { SAPP_KEYCODE_LEFT },   [GAME_INPUT_P1_RIGHT] = { SAPP_KEYCODE_RIGHT },     \
+    [GAME_INPUT_P1_B1]    = { SAPP_KEYCODE_Z },      [GAME_INPUT_P1_B2]    = { SAPP_KEYCODE_X },         \
+    [GAME_INPUT_P1_B3]    = { SAPP_KEYCODE_C },      [GAME_INPUT_P1_B4]    = { SAPP_KEYCODE_V },         \
+    [GAME_INPUT_P1_START] = { SAPP_KEYCODE_1 },      [GAME_INPUT_P1_COIN]  = { SAPP_KEYCODE_5 },         \
+    [GAME_INPUT_P2_UP]    = { SAPP_KEYCODE_I },      [GAME_INPUT_P2_DOWN]  = { SAPP_KEYCODE_K },         \
+    [GAME_INPUT_P2_LEFT]  = { SAPP_KEYCODE_J },      [GAME_INPUT_P2_RIGHT] = { SAPP_KEYCODE_L },         \
+    [GAME_INPUT_P2_B1]    = { SAPP_KEYCODE_DELETE }, [GAME_INPUT_P2_B2]    = { SAPP_KEYCODE_END },       \
+    [GAME_INPUT_P2_B3]    = { SAPP_KEYCODE_PAGE_DOWN }, [GAME_INPUT_P2_B4] = { SAPP_KEYCODE_HOME },      \
+    [GAME_INPUT_P2_START] = { SAPP_KEYCODE_2 },      [GAME_INPUT_P2_COIN]  = { SAPP_KEYCODE_6 },         \
+    [GAME_INPUT_SERVICE]  = { SAPP_KEYCODE_F2 },     [GAME_INPUT_TEST]     = { SAPP_KEYCODE_F3 },        \
+}
+static int g_input_keys[GAME_INPUT_COUNT][INPUT_KEY_SLOTS] = INPUT_KEYS_DEFAULT;
+
+static inline void input_keys_default(void) {
+    static const int def[GAME_INPUT_COUNT][INPUT_KEY_SLOTS] = INPUT_KEYS_DEFAULT;
+    memcpy(g_input_keys, def, sizeof def);
+}
+
+/* The actions' names in a controls file ("p1_b1", "service"), by GAME_INPUT_*. */
+static const char *const g_input_action_names[GAME_INPUT_COUNT] = {
+    "p1_up", "p1_down", "p1_left", "p1_right", "p1_b1", "p1_b2", "p1_b3", "p1_b4", "p1_start", "p1_coin",
+    "p2_up", "p2_down", "p2_left", "p2_right", "p2_b1", "p2_b2", "p2_b3", "p2_b4", "p2_start", "p2_coin",
+    "service", "test",
+};
+
+static inline int input_action_by_name(const char *s) {
+    for (int a = 0; a < GAME_INPUT_COUNT; a++) if (!strcmp(s, g_input_action_names[a])) return a;
+    return -1;
+}
+
+/* The first action key code kc presses, or -1. */
 static inline int input_keycode_to_action(int kc) {
-    switch (kc) {
-        /* P1 */
-        case SAPP_KEYCODE_UP:        return GAME_INPUT_P1_UP;
-        case SAPP_KEYCODE_DOWN:      return GAME_INPUT_P1_DOWN;
-        case SAPP_KEYCODE_LEFT:      return GAME_INPUT_P1_LEFT;
-        case SAPP_KEYCODE_RIGHT:     return GAME_INPUT_P1_RIGHT;
-        case SAPP_KEYCODE_Z:         return GAME_INPUT_P1_B1;
-        case SAPP_KEYCODE_X:         return GAME_INPUT_P1_B2;
-        case SAPP_KEYCODE_C:         return GAME_INPUT_P1_B3;
-        case SAPP_KEYCODE_V:         return GAME_INPUT_P1_B4;
-        case SAPP_KEYCODE_1:         return GAME_INPUT_P1_START;
-        case SAPP_KEYCODE_5:         return GAME_INPUT_P1_COIN;
-        /* P2 */
-        case SAPP_KEYCODE_I:         return GAME_INPUT_P2_UP;
-        case SAPP_KEYCODE_K:         return GAME_INPUT_P2_DOWN;
-        case SAPP_KEYCODE_J:         return GAME_INPUT_P2_LEFT;
-        case SAPP_KEYCODE_L:         return GAME_INPUT_P2_RIGHT;
-        case SAPP_KEYCODE_DELETE:    return GAME_INPUT_P2_B1;
-        case SAPP_KEYCODE_END:       return GAME_INPUT_P2_B2;
-        case SAPP_KEYCODE_PAGE_DOWN: return GAME_INPUT_P2_B3;
-        case SAPP_KEYCODE_HOME:      return GAME_INPUT_P2_B4;
-        case SAPP_KEYCODE_2:         return GAME_INPUT_P2_START;
-        case SAPP_KEYCODE_6:         return GAME_INPUT_P2_COIN;
-        /* System */
-        case SAPP_KEYCODE_F2:        return GAME_INPUT_SERVICE;
-        case SAPP_KEYCODE_F3:        return GAME_INPUT_TEST;
-        default:                     return -1;
-    }
+    if (kc <= 0) return -1;
+    for (int a = 0; a < GAME_INPUT_COUNT; a++)
+        for (int s = 0; s < INPUT_KEY_SLOTS; s++)
+            if (g_input_keys[a][s] == kc) return a;
+    return -1;
 }
 
 /* input_keycode_by_name's lower-cased copy of s in n (16 bytes): its length,
@@ -149,22 +165,49 @@ static inline int input_keycode_short(const char *n, size_t len) {
     return -1;
 }
 
-/* A sokol key code by name, for --macro: a-z, 0-9, f1-f12, kp0-kp9, space,
- * tab, insert, pageup, pagedown, home, end, delete. -1 if unknown. */
+/* The other keys' names, the ones input_keycode_short does not make. */
+static const struct { const char *name; int kc; } g_input_key_names[] = {
+    { "space", SAPP_KEYCODE_SPACE }, { "tab", SAPP_KEYCODE_TAB }, { "insert", SAPP_KEYCODE_INSERT },
+    { "pageup", SAPP_KEYCODE_PAGE_UP }, { "pagedown", SAPP_KEYCODE_PAGE_DOWN }, { "home", SAPP_KEYCODE_HOME },
+    { "end", SAPP_KEYCODE_END }, { "delete", SAPP_KEYCODE_DELETE },
+    { "up", SAPP_KEYCODE_UP }, { "down", SAPP_KEYCODE_DOWN }, { "left", SAPP_KEYCODE_LEFT },
+    { "right", SAPP_KEYCODE_RIGHT }, { "enter", SAPP_KEYCODE_ENTER }, { "backspace", SAPP_KEYCODE_BACKSPACE },
+    { "apostrophe", SAPP_KEYCODE_APOSTROPHE }, { "comma", SAPP_KEYCODE_COMMA }, { "minus", SAPP_KEYCODE_MINUS },
+    { "period", SAPP_KEYCODE_PERIOD }, { "slash", SAPP_KEYCODE_SLASH }, { "semicolon", SAPP_KEYCODE_SEMICOLON },
+    { "equal", SAPP_KEYCODE_EQUAL }, { "lbracket", SAPP_KEYCODE_LEFT_BRACKET },
+    { "backslash", SAPP_KEYCODE_BACKSLASH }, { "rbracket", SAPP_KEYCODE_RIGHT_BRACKET },
+    { "grave", SAPP_KEYCODE_GRAVE_ACCENT }, { "capslock", SAPP_KEYCODE_CAPS_LOCK },
+    { "kpdecimal", SAPP_KEYCODE_KP_DECIMAL }, { "kpdivide", SAPP_KEYCODE_KP_DIVIDE },
+    { "kpmultiply", SAPP_KEYCODE_KP_MULTIPLY }, { "kpsubtract", SAPP_KEYCODE_KP_SUBTRACT },
+    { "kpadd", SAPP_KEYCODE_KP_ADD }, { "kpenter", SAPP_KEYCODE_KP_ENTER },
+    { "lshift", SAPP_KEYCODE_LEFT_SHIFT }, { "lctrl", SAPP_KEYCODE_LEFT_CONTROL },
+    { "lalt", SAPP_KEYCODE_LEFT_ALT }, { "rshift", SAPP_KEYCODE_RIGHT_SHIFT },
+    { "rctrl", SAPP_KEYCODE_RIGHT_CONTROL }, { "ralt", SAPP_KEYCODE_RIGHT_ALT },
+};
+
+/* A sokol key code by name, for --macro and the controls files: a-z, 0-9,
+ * f1-f12, kp0-kp9 and g_input_key_names. -1 if unknown. */
 static inline int input_keycode_by_name(const char *s) {
     char n[16];
     int len = input_keycode_lower(s, n);
     if (len < 0) return -1;
     int kc = input_keycode_short(n, (size_t)len);
     if (kc >= 0) return kc;
-    static const struct { const char *name; int kc; } named[] = {
-        { "space", SAPP_KEYCODE_SPACE }, { "tab", SAPP_KEYCODE_TAB }, { "insert", SAPP_KEYCODE_INSERT },
-        { "pageup", SAPP_KEYCODE_PAGE_UP }, { "pagedown", SAPP_KEYCODE_PAGE_DOWN }, { "home", SAPP_KEYCODE_HOME },
-        { "end", SAPP_KEYCODE_END }, { "delete", SAPP_KEYCODE_DELETE },
-    };
-    for (size_t i = 0; i < sizeof named / sizeof named[0]; i++)
-        if (!strcmp(n, named[i].name)) return named[i].kc;
+    for (size_t i = 0; i < sizeof g_input_key_names / sizeof g_input_key_names[0]; i++)
+        if (!strcmp(n, g_input_key_names[i].name)) return g_input_key_names[i].kc;
     return -1;
+}
+
+/* kc's name as input_keycode_by_name reads it, in buf (16 bytes); NULL for a
+ * key with no name. */
+static inline const char *input_keycode_name(int kc, char *buf) {
+    if (kc >= SAPP_KEYCODE_A && kc <= SAPP_KEYCODE_Z) { buf[0] = (char)('a' + kc - SAPP_KEYCODE_A); buf[1] = 0; return buf; }
+    if (kc >= SAPP_KEYCODE_0 && kc <= SAPP_KEYCODE_9) { buf[0] = (char)('0' + kc - SAPP_KEYCODE_0); buf[1] = 0; return buf; }
+    if (kc >= SAPP_KEYCODE_F1 && kc <= SAPP_KEYCODE_F12) { snprintf(buf, 16, "f%d", kc - SAPP_KEYCODE_F1 + 1); return buf; }
+    if (kc >= SAPP_KEYCODE_KP_0 && kc <= SAPP_KEYCODE_KP_9) { snprintf(buf, 16, "kp%d", kc - SAPP_KEYCODE_KP_0); return buf; }
+    for (size_t i = 0; i < sizeof g_input_key_names / sizeof g_input_key_names[0]; i++)
+        if (g_input_key_names[i].kc == kc) { snprintf(buf, 16, "%s", g_input_key_names[i].name); return buf; }
+    return NULL;
 }
 
 /* Press / release an abstract action (GAME_INPUT_*) — the entry point for any
@@ -277,14 +320,47 @@ static inline uint32_t input_combo_for_key(int key) {
     return 0;
 }
 
+/* The actions key code kc presses (1 << GAME_INPUT_*): a key the map binds
+ * to more than one presses them all. */
+static inline uint32_t input_keycode_actions(int kc) {
+    uint32_t acts = 0;
+    if (kc <= 0) return 0;
+    for (int a = 0; a < GAME_INPUT_COUNT; a++)
+        for (int s = 0; s < INPUT_KEY_SLOTS; s++)
+            if (g_input_keys[a][s] == kc) acts |= 1u << a;
+    return acts;
+}
+
 static inline void input_key_down(int kc) {
-    input_action_down(input_keycode_to_action(kc));
+    input_actions_down(input_keycode_actions(kc));
     input_actions_down(input_combo_for_key(kc));
 }
 
 static inline void input_key_up(int kc) {
-    input_action_up(input_keycode_to_action(kc));
+    input_actions_up(input_keycode_actions(kc));
     input_actions_up(input_combo_for_key(kc));
+}
+
+/* acts as input_combo_parse (or sdl_pads.h's actions_by_name) reads it, in
+ * buf: "b1+b2", "p2:up", "service", "none". "" for a mix it cannot write
+ * (two players' actions, or SERVICE with another). */
+static inline const char *input_combo_format(uint32_t acts, char *buf, size_t cap) {
+    static const char *const names[] = { "up", "down", "left", "right", "b1", "b2", "b3", "b4", "start", "coin" };
+    const uint32_t p1 = (1u << GAME_INPUT_P2_UP) - 1, p2 = ((1u << GAME_INPUT_SERVICE) - 1) & ~p1;
+    acts &= ~INPUT_COMBO_FAR;
+    buf[0] = '\0';
+    if (!acts) { snprintf(buf, cap, "none"); return buf; }
+    if (acts == 1u << GAME_INPUT_SERVICE) { snprintf(buf, cap, "service"); return buf; }
+    if (acts == 1u << GAME_INPUT_TEST)    { snprintf(buf, cap, "test"); return buf; }
+    if ((acts & p1) && (acts & p2)) return buf;
+    if (acts & ~(p1 | p2)) return buf;
+    int base = (acts & p1) ? GAME_INPUT_P1_UP : GAME_INPUT_P2_UP;
+    size_t n = 0;
+    if (base == GAME_INPUT_P2_UP) n += (size_t)snprintf(buf, cap, "p2:");
+    for (int i = 0; i < 10 && n < cap; i++)
+        if (acts & (1u << (base + i)))
+            n += (size_t)snprintf(buf + n, cap - n, "%s%s", n && buf[n - 1] != ':' ? "+" : "", names[i]);
+    return buf;
 }
 
 /* ---- I/O port serving ---------------------------------------------------- */

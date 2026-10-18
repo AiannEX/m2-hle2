@@ -38,20 +38,32 @@ typedef struct { const char *name; SDL_GamepadButton button; uint32_t acts; } pa
 
 /* acts is one bit per GAME_INPUT_* action; more than one is a combo. */
 #define ACT(a) (1u << (a))
-static pad_bind_t g_pad_binds[] = {
-    { "south", SDL_GAMEPAD_BUTTON_SOUTH,          ACT(GAME_INPUT_P1_B1)    },
-    { "east",  SDL_GAMEPAD_BUTTON_EAST,           ACT(GAME_INPUT_P1_B2)    },
-    { "west",  SDL_GAMEPAD_BUTTON_WEST,           ACT(GAME_INPUT_P1_B3)    },
-    { "north", SDL_GAMEPAD_BUTTON_NORTH,          ACT(GAME_INPUT_P1_B4)    },
-    { "start", SDL_GAMEPAD_BUTTON_START,          ACT(GAME_INPUT_P1_START) },
-    { "back",  SDL_GAMEPAD_BUTTON_BACK,           ACT(GAME_INPUT_P1_COIN)  },
-    { "l1",    SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,  0 },
-    { "r1",    SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, 0 },
-    { "l3",    SDL_GAMEPAD_BUTTON_LEFT_STICK,     0 },
-    { "r3",    SDL_GAMEPAD_BUTTON_RIGHT_STICK,    0 },
-    { "guide", SDL_GAMEPAD_BUTTON_GUIDE,          0 },
-};
+#define PAD_BINDS_DEFAULT {                                                \
+    { "south", SDL_GAMEPAD_BUTTON_SOUTH,          ACT(GAME_INPUT_P1_B1)    },\
+    { "east",  SDL_GAMEPAD_BUTTON_EAST,           ACT(GAME_INPUT_P1_B2)    },\
+    { "west",  SDL_GAMEPAD_BUTTON_WEST,           ACT(GAME_INPUT_P1_B3)    },\
+    { "north", SDL_GAMEPAD_BUTTON_NORTH,          ACT(GAME_INPUT_P1_B4)    },\
+    { "start", SDL_GAMEPAD_BUTTON_START,          ACT(GAME_INPUT_P1_START) },\
+    { "back",  SDL_GAMEPAD_BUTTON_BACK,           ACT(GAME_INPUT_P1_COIN)  },\
+    { "l1",    SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,  0 },                     \
+    { "r1",    SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, 0 },                     \
+    { "l3",    SDL_GAMEPAD_BUTTON_LEFT_STICK,     0 },                     \
+    { "r3",    SDL_GAMEPAD_BUTTON_RIGHT_STICK,    0 },                     \
+    { "guide", SDL_GAMEPAD_BUTTON_GUIDE,          0 },                     \
+}
+static pad_bind_t g_pad_binds[] = PAD_BINDS_DEFAULT;
 #define PAD_BIND_COUNT (int)(sizeof g_pad_binds / sizeof g_pad_binds[0])
+
+/* Which host devices play besides the keyboard (the desktop's Controls
+ * window, Pinboard #1147): every pad and wheel, none, gamepads only or
+ * racing wheels only. */
+enum { PAD_DEVICE_ANY, PAD_DEVICE_NONE, PAD_DEVICE_GAMEPAD, PAD_DEVICE_WHEEL, PAD_DEVICE_COUNT };
+static int g_pad_device = PAD_DEVICE_ANY;
+static const char *const g_pad_device_names[PAD_DEVICE_COUNT] = { "any", "keyboard", "gamepad", "wheel" };
+
+static bool pad_device_takes(bool wheel) {
+    return g_pad_device == PAD_DEVICE_ANY || g_pad_device == (wheel ? PAD_DEVICE_WHEEL : PAD_DEVICE_GAMEPAD);
+}
 
 /* An action, or a combo of player-1 actions ("b1+b2"); false if neither. */
 static bool actions_by_name(const char *s, uint32_t *acts) {
@@ -106,13 +118,25 @@ static bool pad_plays_here(int i) {
  * at either end of its axis reads the right way round. */
 #define WHEEL_BUTTONS 32
 
-static struct {
+typedef struct {
     int  steer, accel, brake;          /* axis indices */
     bool forced;                       /* --wheel-axes given: any joystick */
     uint32_t button[WHEEL_BUTTONS];    /* acts */
-} g_wheel_opt = { 0, 1, 2, false,
-                  { [0] = ACT(GAME_INPUT_P1_B3), [4] = ACT(GAME_INPUT_P1_UP), [5] = ACT(GAME_INPUT_P1_DOWN),
-                    [8] = ACT(GAME_INPUT_P1_COIN), [9] = ACT(GAME_INPUT_P1_START) } };
+} wheel_opt_t;
+#define WHEEL_OPT_DEFAULT { 0, 1, 2, false,                                                                 \
+                  { [0] = ACT(GAME_INPUT_P1_B3), [4] = ACT(GAME_INPUT_P1_UP), [5] = ACT(GAME_INPUT_P1_DOWN), \
+                    [8] = ACT(GAME_INPUT_P1_COIN), [9] = ACT(GAME_INPUT_P1_START) } }
+static wheel_opt_t g_wheel_opt = WHEEL_OPT_DEFAULT;
+
+/* The gamepad's and the wheel's binds as they are without --pad-map,
+ * --wheel-axes, --wheel-buttons or a controls file; every device plays. */
+static void sdl_pads_default(void) {
+    static const pad_bind_t binds[] = PAD_BINDS_DEFAULT;
+    static const wheel_opt_t wheel = WHEEL_OPT_DEFAULT;
+    for (int b = 0; b < PAD_BIND_COUNT; b++) g_pad_binds[b].acts = binds[b].acts;
+    g_wheel_opt = wheel;
+    g_pad_device = PAD_DEVICE_ANY;
+}
 
 static bool wheel_axes_option(const char *val) {
     if (sscanf(val, "%d,%d,%d", &g_wheel_opt.steer, &g_wheel_opt.accel, &g_wheel_opt.brake) != 3) return false;
@@ -189,7 +213,7 @@ static void pad_refresh(void) {
      * gamepad's left stick and triggers (R2 accelerator, L2 brake). */
     bool an_on = false, an_wheel = false;
     int an_steer = 0, an_accel = 0, an_brake = 0;
-    SDL_JoystickID *jids = SDL_GetJoysticks(&count);
+    SDL_JoystickID *jids = pad_device_takes(true) ? SDL_GetJoysticks(&count) : NULL;
     for (int i = 0, w = 0; jids && i < count; i++) {
         if (!wheel_is(jids[i])) continue;
         SDL_Joystick *joy = SDL_GetJoystickFromID(jids[i]);
@@ -218,7 +242,7 @@ static void pad_refresh(void) {
         }
     }
     SDL_free(jids);
-    SDL_JoystickID *ids = SDL_GetGamepads(&count);
+    SDL_JoystickID *ids = pad_device_takes(false) ? SDL_GetGamepads(&count) : NULL;
     for (int i = 0; ids && i < count; i++) {
         if (!pad_plays_here(i)) continue;
         SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
@@ -369,7 +393,7 @@ static void ffb_update(void) {
         SDL_Gamepad  *pad = SDL_IsGamepad(ids[i]) ? SDL_GetGamepadFromID(ids[i]) : NULL;
         SDL_Joystick *joy = pad ? SDL_GetGamepadJoystick(pad)
                           : wheel_is(ids[i]) ? SDL_GetJoystickFromID(ids[i]) : NULL;
-        if (!joy || !pad_plays_here(pad ? np++ : nw++)) continue;
+        if (!joy || !pad_plays_here(pad ? np++ : nw++) || !pad_device_takes(!pad)) continue;
         int s = 0;
         while (s < FFB_PADS && g_ffb_pad[s].id != ids[i]) s++;
         if (s == FFB_PADS) {

@@ -70,6 +70,7 @@
 #if M2HLE_PADS
 #include "sdl_pads.h"         /* gamepads, racing wheels and force feedback through SDL3 (#1082) */
 #endif
+#include "controls_window.h"  /* the Controls window: devices and keys, per profile (#1147) */
 #if defined(__linux__)
 #include <unistd.h>          /* readlink: scripts/ beside the executable */
 #endif
@@ -171,6 +172,7 @@ static struct {
     bool             show_m68k_mem;
     bool             show_debug;
     bool             show_netplay;
+    bool             show_controls;   /* the Controls window (controls_window.h) */
     bool             always_show_menu;  /* Debug -> Always show menu bar */
     m68k_state_t     m68k_snapshot;   /* prev-frame 68K state for change highlights */
 } state;
@@ -732,6 +734,8 @@ static void menu_profile(void) {
         if (igMenuItemBoolPtr(g_profiles[i]->display_name, NULL, &sel, true))
             g_active_profile = g_profiles[i];
     }
+    igSeparator();
+    igMenuItemBoolPtr("Controls...", NULL, &state.show_controls, true);
     /* The CPU opponent's AI table, taken as each fight starts (sfight.h
      * sfight_hook_enemy_rank_table); a netplay session plays the cabinet's. */
     if (g_active_profile && g_active_profile->quirks.enemy_ranks) {
@@ -982,12 +986,18 @@ static void pads_frame(void) {
     ffb_update();
 }
 
+static bool pads_running(void) { return g_pads_on; }
+
 static void pads_focus(bool focused) {
     if (!g_pads_on || focused == g_pads_focused) return;
     g_pads_focused = focused;
     if (focused) pad_refresh();
     else { lobby_pad_release(); ffb_stop_all(); }
 }
+#endif
+
+#if !M2HLE_PADS
+static bool pads_running(void) { return false; }
 #endif
 
 static void init(void) {
@@ -1511,6 +1521,7 @@ static void draw_windows(void) {
     if (state.show_m68k_mem)    m68k_memview_draw(&state.show_m68k_mem);
     if (state.show_debug)       debug_window_draw(&state.show_debug);
     if (state.show_netplay)     netplay_window_draw(&state.show_netplay);
+    controls_window_draw(&state.show_controls, pads_running());
     netplay_empty_room_overlay();
     netplay_vs_again_overlay();
     if (state.show_demo)        igShowDemoWindow(&state.show_demo);
@@ -1613,6 +1624,7 @@ static void frame(void) {
     /* `quit` over the bridge. Capture mode would otherwise swallow the close,
      * which is the point of capture mode -- so say we mean it. */
     if (mcp_quit_requested()) { kiosk_allow_quit(); sapp_request_quit(); }
+    controls_frame(pads_running());   /* the profile's controls, when it changes */
 #if M2HLE_PADS
     pads_frame();
 #endif
@@ -1783,6 +1795,9 @@ static void event(const sapp_event* ev) {
         return;
     }
 
+    /* A key the Controls window is binding goes to it, not the game. */
+    if (controls_key_event(ev)) return;
+
     /* Game input flows through the emulated I/O ports (read by the game's vblank
      * interrupt) — set/clear the host held mask here. Routed regardless of ImGui
      * focus so arcade muscle-memory isn't eaten by a debug window. */
@@ -1902,6 +1917,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
         } else if (i + 1 < argc && sdl_pads_option(argv[i], argv[i + 1])) {
             /* --pad-map, --pad N, --wheel-axes, --wheel-buttons, --ffb-gain (sdl_pads.h) */
             if (sdl_pads_option(argv[i], argv[i + 1]) < 0) LOG_WARN("%s %s: not understood", argv[i], argv[i + 1]);
+            else if (!strcmp(argv[i], "--pad-map") || !strncmp(argv[i], "--wheel-", 8))
+                controls_cli_note(argv[i], argv[i + 1]);   /* over each profile's controls file */
             i++;
 #endif
         } else if (strcmp(argv[i], "--run") == 0) {

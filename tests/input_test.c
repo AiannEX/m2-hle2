@@ -80,6 +80,46 @@ int main(void) {
     input_reset();
     g_input_combo_count = 0;
 
+    /* ---- (A2) the keyboard's map (Pinboard #1147) ---- */
+    {
+        char buf[64];
+        bool names_ok = true;
+        for (int kc = 1; kc < 400; kc++)   /* every named key reads back as itself */
+            if (input_keycode_name(kc, buf) && input_keycode_by_name(buf) != kc) names_ok = false;
+        CHECK(names_ok && !strcmp(input_keycode_name(SAPP_KEYCODE_LEFT_SHIFT, buf), "lshift") &&
+              !strcmp(input_keycode_name(SAPP_KEYCODE_F12, buf), "f12") && !input_keycode_name(SAPP_KEYCODE_ESCAPE, buf),
+              "key names round-trip, and Escape has none (it cancels binding)");
+        const uint32_t combos[] = { 0, 1u << GAME_INPUT_P1_B1, (1u << GAME_INPUT_P1_B1) | (1u << GAME_INPUT_P1_B3),
+                                    (1u << GAME_INPUT_P2_UP) | (1u << GAME_INPUT_P2_COIN) };
+        bool combo_ok = true;
+        for (int i = 0; i < 4; i++) {
+            input_combo_format(combos[i], buf, sizeof buf);
+            if (combos[i] ? input_combo_parse(buf) != combos[i] : strcmp(buf, "none")) combo_ok = false;
+        }
+        CHECK(combo_ok && !strcmp(input_combo_format((1u << GAME_INPUT_P1_B1) | (1u << GAME_INPUT_P1_B2), buf, sizeof buf), "b1+b2") &&
+              !strcmp(input_combo_format(1u << GAME_INPUT_SERVICE, buf, sizeof buf), "service") &&
+              !strcmp(input_combo_format((1u << GAME_INPUT_P1_B1) | (1u << GAME_INPUT_P2_B1), buf, sizeof buf), ""),
+              "action masks write as the combo text that parses back to them");
+        CHECK(input_action_by_name("p2_start") == GAME_INPUT_P2_START && input_action_by_name("test") == GAME_INPUT_TEST &&
+              input_action_by_name("p3_up") == -1, "actions by their controls-file names");
+
+        g_input_keys[GAME_INPUT_P1_B1][0] = SAPP_KEYCODE_SPACE;   /* B1 on Space, Z free */
+        g_input_keys[GAME_INPUT_P1_B2][1] = SAPP_KEYCODE_SPACE;   /* ...and B2's second key too */
+        input_key_down(SAPP_KEYCODE_Z);
+        CHECK(g_input.held == 0, "a key taken off its action presses nothing");
+        input_key_down(SAPP_KEYCODE_SPACE);
+        CHECK(g_input.held == (bits[GAME_INPUT_P1_B1] | bits[GAME_INPUT_P1_B2]),
+              "a key on two actions presses both");
+        input_key_up(SAPP_KEYCODE_SPACE);
+        CHECK(g_input.held == 0 && input_keycode_to_action(SAPP_KEYCODE_SPACE) == GAME_INPUT_P1_B1,
+              "and lets both go");
+        input_keys_default();
+        input_key_down(SAPP_KEYCODE_Z);
+        CHECK(g_input.held == bits[GAME_INPUT_P1_B1] && input_keycode_to_action(SAPP_KEYCODE_SPACE) == -1,
+              "input_keys_default puts Z back on B1");
+        input_reset();
+    }
+
     /* ---- (A2) a light gun's flash: off by default, N drawn frames a pull ---- */
     {
         static game_profile_t gun_profile;
