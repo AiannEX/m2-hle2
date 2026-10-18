@@ -419,6 +419,7 @@ static void scripts_image_drop(int i) {
 
 /* Upload what the script loaded since the last frame, free what it released. */
 static void scripts_images_sync(void) {
+    m2lua_init_once();
     emu_mutex_lock(&g_m2lua.draw_mutex);
     for (int i = 0; i < M2LUA_SURFACE_MAX; i++) {
         m2lua_surface_t *s = &g_m2lua.surfaces[i];

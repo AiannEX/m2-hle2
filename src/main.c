@@ -962,6 +962,9 @@ static bool g_pads_on, g_pads_focused = true;
 static void pads_init(void) {
     if (g_no_pads || g_kiosk_on) return;
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    /* SDL would turn SIGINT/SIGTERM into a quit event that only it sees: the
+     * window then outlives Ctrl+C and `timeout`. */
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
     if (!SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_HAPTIC)) {
         LOG_WARN("pads: SDL_Init: %s; no gamepads or wheels", SDL_GetError());
         return;
@@ -1017,6 +1020,9 @@ static void init(void) {
 
     init_renderer();
     init_audio_av();
+#if M2HLE_PADS
+    pads_init();     /* #1082 made it and never called it: no pad ever opened */
+#endif
 
     /* The overlay plugin, if one was asked for. After game_render_init because
      * its layers are GPU images, and before the emu thread because a plugin
