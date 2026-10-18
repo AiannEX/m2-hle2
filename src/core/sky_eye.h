@@ -231,6 +231,19 @@ static inline int sky_eye_angle(double rad) {
     return a >= 0x8000 ? (int)(a - 0x10000) : (int)a;
 }
 
+/* The value of one `key=value` pair of `len` bytes at `s`, %-decoded into `out`. */
+static void sky_eye_param_value(const char *s, size_t kl, size_t len, char *out, size_t cap) {
+    size_t o = 0;
+    for (size_t i = kl + 1; i < len && o + 1 < cap; i++) {
+        if (s[i] == '%' && i + 2 < len && isxdigit((unsigned char)s[i + 1]) && isxdigit((unsigned char)s[i + 2])) {
+            char hx[3] = { s[i + 1], s[i + 2], 0 };
+            out[o++] = (char)strtol(hx, NULL, 16);
+            i += 2;
+        } else out[o++] = s[i] == '+' ? ' ' : s[i];
+    }
+    out[o] = 0;
+}
+
 /* One `key=` value out of a link's fragment or query, %-decoded. */
 static int sky_eye_param(const char *link, const char *key, char *out, size_t cap) {
     size_t kl = strlen(key);
@@ -240,15 +253,7 @@ static int sky_eye_param(const char *link, const char *key, char *out, size_t ca
         const char *amp = strchr(s, '&');
         size_t len = amp ? (size_t)(amp - s) : strlen(s);
         if (len > kl && !strncmp(s, key, kl) && s[kl] == '=') {
-            size_t o = 0;
-            for (size_t i = kl + 1; i < len && o + 1 < cap; i++) {
-                if (s[i] == '%' && i + 2 < len && isxdigit((unsigned char)s[i + 1]) && isxdigit((unsigned char)s[i + 2])) {
-                    char hx[3] = { s[i + 1], s[i + 2], 0 };
-                    out[o++] = (char)strtol(hx, NULL, 16);
-                    i += 2;
-                } else out[o++] = s[i] == '+' ? ' ' : s[i];
-            }
-            out[o] = 0;
+            sky_eye_param_value(s, kl, len, out, cap);
             return 1;
         }
         if (!amp) break;
