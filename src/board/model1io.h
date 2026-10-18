@@ -54,10 +54,10 @@
 #define MODEL1IO_DPRAM_SIZE    0x800u
 #define MODEL1IO_RAM_SIZE      0x2000u
 #define MODEL1IO_ROM_SIZE      0x4000u       /* what the map shows of the 64 KB EPROM */
-#define MODEL1IO_UNITS_PER_T   ((int64_t)IRQT_CPU_HZ * IRQT_VBLANK_HZ / 4000000)
-#define MODEL1IO_CATCHUP_MAX   ((int64_t)IRQT_CPU_HZ * 4)   /* four frames */
+#define MODEL1IO_UNITS_PER_T   ((int64_t)IRQT_CPU_HZ * IRQT_UNIT / 4000000)
+#define MODEL1IO_CATCHUP_MAX   (IRQT_FRAME_UNITS * 4)   /* four frames */
 
-_Static_assert((int64_t)IRQT_CPU_HZ * IRQT_VBLANK_HZ % 4000000 == 0, "a Z80 T-state is a whole number of board units");
+_Static_assert((int64_t)IRQT_CPU_HZ * IRQT_UNIT % 4000000 == 0, "a Z80 T-state is a whole number of board units");
 
 /* Board state (savestated by the profile, model1io_savestate). */
 typedef struct {
@@ -188,8 +188,8 @@ static inline void model1io_catch_up(void) {
     model1io_t *m = &g_model1io;
     if (!g_model1io_rom || m->running) return;
     irqt_flush();
-    int64_t now = (int64_t)g_irqt.vbl_count * IRQT_CPU_HZ + g_irqt.vbl_phase;
-    if (m->t > now + IRQT_CPU_HZ) m->t = now;            /* the clock was reset */
+    int64_t now = (int64_t)g_irqt.vbl_count * IRQT_FRAME_UNITS + g_irqt.vbl_phase;
+    if (m->t > now + IRQT_FRAME_UNITS) m->t = now;            /* the clock was reset */
     if (now - m->t > MODEL1IO_CATCHUP_MAX) m->t = now - MODEL1IO_CATCHUP_MAX;
     m->running = 1;
     g_eeprom_clock_fn = model1io_eeprom_clock;
