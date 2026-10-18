@@ -157,6 +157,21 @@ static inline void sky_eye_enter(int phase) {
     LOG_INFO("sky_eye: %s (frame %u of the request)", SKY_EYE_PHASE_NAME[phase], g_sky_eye.total_frames);
 }
 
+/* One settle poll: digest texture RAM, and go ready after enough polls with
+ * the same digest, or back to settling when it changes. */
+static inline void sky_eye_settle_poll(memory_bus_t *bus) {
+    uint32_t nz = 0;
+    uint64_t h = sky_eye_digest(bus->texram0, TEXRAM0_SIZE, 0xCBF29CE484222325ull, &nz);
+    g_sky_eye.nonzero = nz * 8u;
+    int same = h == g_sky_eye.digest && g_sky_eye.nonzero > SKY_EYE_MIN_NONZERO;
+    g_sky_eye.digest = h;
+    g_sky_eye.stable = same ? g_sky_eye.stable + 1 : 0;
+    if (g_sky_eye.phase == SKY_EYE_SETTLING && g_sky_eye.stable >= SKY_EYE_STABLE_POLLS)
+        sky_eye_enter(SKY_EYE_READY);
+    else if (g_sky_eye.phase == SKY_EYE_READY && !same)
+        sky_eye_enter(SKY_EYE_SETTLING);
+}
+
 /* The frame edge (emu_thread.h): hold the stage, watch it arrive and settle. */
 static inline void sky_eye_edge(memory_bus_t *bus) {
     if (g_sky_eye.phase == SKY_EYE_OFF) return;
@@ -187,16 +202,7 @@ static inline void sky_eye_edge(memory_bus_t *bus) {
         }
         if (g_sky_eye.phase_frames % SKY_EYE_POLL_FRAMES) break;
         if (!bus->texram0) break;
-        uint32_t nz = 0;
-        uint64_t h = sky_eye_digest(bus->texram0, TEXRAM0_SIZE, 0xCBF29CE484222325ull, &nz);
-        g_sky_eye.nonzero = nz * 8u;
-        int same = h == g_sky_eye.digest && g_sky_eye.nonzero > SKY_EYE_MIN_NONZERO;
-        g_sky_eye.digest = h;
-        g_sky_eye.stable = same ? g_sky_eye.stable + 1 : 0;
-        if (g_sky_eye.phase == SKY_EYE_SETTLING && g_sky_eye.stable >= SKY_EYE_STABLE_POLLS)
-            sky_eye_enter(SKY_EYE_READY);
-        else if (g_sky_eye.phase == SKY_EYE_READY && !same)
-            sky_eye_enter(SKY_EYE_SETTLING);
+        sky_eye_settle_poll(bus);
         break;
     default: break;
     }
