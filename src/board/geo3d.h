@@ -406,6 +406,11 @@ static uint32_t g_geo3d_zadjust = 0;
  * and is drawn after the cars, whose tyres and shadows reach below it: taken
  * at every pixel it cut their bottoms off, which neither the board nor MAME
  * does (Pinboard #1065).
+ * A checker face (the board's half transparency) keeps its key too: it is
+ * an effect the game places by its sort, not a surface. Daytona USA's dust
+ * (model 669, sorted by its nearest corner) leans back past the car's rear
+ * bumper; taken at every pixel the bumper hid it, where the board and MAME
+ * draw it over the car (Pinboard #1070).
  * The face carries its z_adjust exponent and its key (the fraction):
  * zl = -(GEO3D_PIXEL_ZL + exponent + key / 65536), exact while the sum is
  * under 256. Key 0 and 0xFFFF keep the face's one key: the board's "at the eye"
@@ -706,7 +711,8 @@ static inline void geo3d_emit_tri_uv(vec3_t P0, vec3_t P1, vec3_t P2, const floa
     T->tx=p->tx; T->ty=p->ty; T->tw=p->tw; T->th=p->th;
     T->lb=p->lb; T->pl=p->pl; T->fl=p->fl;
     T->texlod = g_geo3d_emit_texlod;
-    if (g_geo3d_emit_flat >= 0.0f && geo3d_pixel_face(g_geo3d_emit_flat)) {
+    if (g_geo3d_emit_flat >= 0.0f && geo3d_pixel_face(g_geo3d_emit_flat)
+        && !((uint32_t)p->fl & GEO3D_FACE_CHECKER)) {
         T->zs0 = T->zs1 = T->zs2 = GEO3D_ZSORT_NONE;
         T->zl  = -(GEO3D_PIXEL_ZL + (float)((g_geo3d_zadjust >> 23) & 0xffu)
                    + floorf(g_geo3d_emit_flat * 65536.0f) * (1.0f / 65536.0f));
