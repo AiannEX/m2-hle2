@@ -68,7 +68,11 @@ const m2hleShader = (() => {
   const MODE_OFF = 0, MODE_CRT = 1, MODE_CUSTOM = 2;
   const MODE_OLD_ARCADE = 3;
   const KEY_MODE = 'm2hle.shaderMode', KEY_PARAMS = 'm2hle.shaderParams', KEY_ARCADE = 'm2hle.arcade';
-  const KEY_PIXDEPTH = 'm2hle.pixelDepth';
+  /* Depth per pixel is kept per game (issue #421): it was made for Sonic the
+   * Fighters' Tornado (Pinboard #668), and one key for the whole site carried it
+   * into The House of the Dead, where it cuts Sophie open on the mansion doors. */
+  const KEY_PIXDEPTH_OLD = 'm2hle.pixelDepth';
+  const KEY_PIXDEPTH = 'm2hle.pixelDepth.' + m2hleGame.id;
   const DB_NAME = 'm2hle-shader', DB_STORE = 'preset', DB_KEY = 'current';
   const TEXT = /\.(glslp|glsl|inc|h)$/i;
   const IMAGE = /\.(png|jpe?g|bmp|tga)$/i;
@@ -85,6 +89,7 @@ const m2hleShader = (() => {
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } },
+    remove(k) { try { localStorage.removeItem(k); } catch (e) { /* private mode */ } },
   };
 
   function withString(s, fn) {
@@ -429,6 +434,12 @@ const m2hleShader = (() => {
       if (!loadInto(rec.preset, rec.files)) status(m2hleLang.t('shader.restore.bad', { error: $('shader-status').textContent }), 'bad');
       else status(m2hleLang.t('shader.restore.ok', { name: loadedName }));
     }
+    /* The site-wide key from before goes to Sonic the Fighters, the game it was for. */
+    const old = store.get(KEY_PIXDEPTH_OLD);
+    if (old !== null) {
+      if (store.get('m2hle.pixelDepth.sfight') === null) store.set('m2hle.pixelDepth.sfight', old);
+      store.remove(KEY_PIXDEPTH_OLD);
+    }
     setArcade(arcade, false);
     setPixelDepth(store.get(KEY_PIXDEPTH) === '1', false);
     setMode(mode === MODE_CUSTOM && !loadedName ? MODE_OFF : mode, false);
@@ -466,5 +477,14 @@ const m2hleShader = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { onReady, onGame, setMode, setArcade, setPixelDepth };
+  /* One line for a bug report (m2hle-tools.js systemInfo): what is drawn over the
+   * board's own picture. Depth per pixel is not the board, so a report says so. */
+  function summary() {
+    const mode = Number($('shader-mode').value);
+    const filter = mode === MODE_CRT ? 'CRT' : mode === MODE_CUSTOM ? 'custom (' + loadedName + ')' : 'none';
+    return 'filter ' + filter + ', Arcade ' + ($('shader-arcade').checked ? 'on' : 'off') +
+      ', depth per pixel ' + ($('shader-pixdepth').checked ? 'ON (not the board)' : 'off');
+  }
+
+  return { onReady, onGame, setMode, setArcade, setPixelDepth, summary };
 })();

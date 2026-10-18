@@ -176,7 +176,8 @@ static inline uint8_t io5649_read_byte(mem_region_t *r, uint32_t off) {
             g_io5649.channel = (g_io5649.channel + 1) & 7;
             return v;
         }
-        default:   return r->data && off < r->size ? r->data[off] : 0xFFu;
+        default:   if (off >= IO_BOARD_SPAN) return 0;       /* constants.h */
+                   return r->data && off < r->size ? r->data[off] : 0xFFu;
     }
 }
 
