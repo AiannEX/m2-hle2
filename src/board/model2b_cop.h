@@ -179,8 +179,14 @@ static uint32_t m2bc_copro_read_cb(mem_region_t *r, uint32_t addr, int size) {
 
 static void m2bc_copro_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int size) {
     (void)r;
-    if (size != 4) return;
     uint32_t off = addr - 0x00880000u;
+    /* Power Sled uploads its program with 16-bit stores to the FIFO: MAME's
+     * handler is 32-bit, so a halfword arrives in its lane of the word. */
+    if (size == 2 && off >= 0x4000u && off < 0x8000u) {
+        m2bc_fifo_w((val & 0xFFFFu) << (8u * (off & 2u)));
+        return;
+    }
+    if (size != 4) return;
     if (off < 0x4000u)      m2bc_push((val & 0x800FFFFFu) | (((off >> 4) & 0xFFu) << 23));
     else if (off < 0x8000u) m2bc_fifo_w(val);
 }
