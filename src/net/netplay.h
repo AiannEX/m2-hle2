@@ -3870,6 +3870,21 @@ static inline void netplay_save_own_settings(void) {
     g_netplay.own_hidden_chars  = g_hidden_chars;
 }
 
+/* The room's PLAYER MATCH rules, at the same cold boot. */
+static inline void netplay_adopt_room_rules(const room_state_t *r) {
+    if (g_rounds_to_win != (int)r->rounds_to_win || g_round_time != (int)r->round_time
+        || g_game_type != (int)r->game_type || g_hidden_chars != (int)r->hidden) {
+        g_rounds_to_win = r->rounds_to_win;
+        g_round_time    = r->round_time;
+        g_game_type     = r->game_type & 3;
+        g_hidden_chars  = r->hidden ? 1 : 0;
+        netplay_log("this room's rules: %u rounds to win, %u s a round, Type %c, secret characters %s",
+                    r->rounds_to_win ? (unsigned)r->rounds_to_win : 2u,
+                    r->round_time ? (unsigned)r->round_time : 30u,
+                    'A' + (r->game_type & 3), r->hidden ? "On" : "Off");
+    }
+}
+
 /* The owner's region and VS mode, before the reset that boots into
  * them: a board booted as another region is another game from frame 0,
  * and one in the other VS mode leaves the match a different way. */
@@ -3889,18 +3904,7 @@ static inline void netplay_adopt_room_settings(const room_state_t *r) {
                                    : "this room plays with DAMAGE: NORMAL (catch-up damage)");
         g_damage_real = r->damage_real ? 1 : 0;
     }
-    /* The room's PLAYER MATCH rules, at the same cold boot. */
-    if (g_rounds_to_win != (int)r->rounds_to_win || g_round_time != (int)r->round_time
-        || g_game_type != (int)r->game_type || g_hidden_chars != (int)r->hidden) {
-        g_rounds_to_win = r->rounds_to_win;
-        g_round_time    = r->round_time;
-        g_game_type     = r->game_type & 3;
-        g_hidden_chars  = r->hidden ? 1 : 0;
-        netplay_log("this room's rules: %u rounds to win, %u s a round, Type %c, secret characters %s",
-                    r->rounds_to_win ? (unsigned)r->rounds_to_win : 2u,
-                    r->round_time ? (unsigned)r->round_time : 30u,
-                    'A' + (r->game_type & 3), r->hidden ? "On" : "Off");
-    }
+    netplay_adopt_room_rules(r);
 }
 
 /* A fighter's match in a game whose cabinets link their comm boards (Virtual-On,
