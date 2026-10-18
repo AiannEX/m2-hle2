@@ -25,6 +25,7 @@
 #include "hotd.h"      /* runs since Pinboard #1034, on the web since #1040 */
 #include "daytona.h"   /* runs since Pinboard #1035, on the web since #1047 */
 #include "doa.h"       /* runs since Pinboard #1050; not on the site yet */
+#include "airwlkrs.h"  /* runs since Pinboard #1063; not on the site yet */
 #ifndef M2HLE_WEB
 #include "m2snake.h"
 #include "sfight_homebrew.h"
@@ -54,6 +55,7 @@ const game_profile_t *const g_profiles[] = {
     &doaa_profile,
     &doaab_profile,
     &doaae_profile,
+    &airwlkrs_profile,
 #ifndef M2HLE_WEB
     &m2snake_profile,
     &sfight_homebrew_profile,

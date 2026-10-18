@@ -38,6 +38,7 @@
 #include "lightgun.h"
 #include "log.h"
 #include "memory.h"
+#include "savestate_reg.h"
 
 typedef struct {
     volatile uint32_t held;   /* active-high, 0x500700 bit layout; the host keyboard */
@@ -332,6 +333,51 @@ static inline void input_attach_lightgun(mem_region_t *r) {
     r->write_cb = input_gun_write_cb;
 }
 
+/* A four-player cabinet (quirks.four_player_sides; Air Walkers): the program
+ * writes the side it reads into port F bit 7 (the 315-5649's register 5,
+ * IO+0x0A), and while it is up IN1 / IN2 answer players 3 and 4 and IN0's
+ * START bits (0x10, 0x20) START3 and START4 (MAME model2a_airwlkrs_state).
+ * The host has two players' controls, so the far side reads released; the
+ * switch itself is the board's, so player 1 never presses player 3's buttons.
+ * A two-player cabinet setting leaves the bit down. */
+static uint8_t g_io_side;
+
+#define IO_PORT_F 0x0Au   /* register 5: (5 / 2) * 4 + (5 & 1) * 2 */
+
+static uint32_t input_sides_read_cb(mem_region_t *r, uint32_t addr, int size) {
+    uint32_t off = addr - r->base, v = 0;
+    uint32_t held = input_board_held();
+    for (int i = 0; i < size; i++) {
+        uint8_t b;
+        switch (off + (uint32_t)i) {
+            case 0x02: b = eeprom_in0((uint8_t)(~(held & 0xFFu) | (g_io_side ? 0x30u : 0u))); break;
+            case 0x04: b = g_io_side ? 0xFF : (uint8_t)~((held >> 8)  & 0xFFu); break;
+            case 0x06: b = g_io_side ? 0xFF : (uint8_t)~((held >> 16) & 0xFFu); break;
+            default:   b = r->data && off + (uint32_t)i < r->size ? r->data[off + (uint32_t)i] : 0xFFu; break;
+        }
+        v |= (uint32_t)b << (8 * i);
+    }
+    return v;
+}
+
+static void input_sides_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int size) {
+    uint32_t off = addr - r->base;
+    for (int i = 0; i < size; i++) {
+        uint8_t b = (uint8_t)(val >> (8 * i));
+        if (off + (uint32_t)i == 0x00) eeprom_port_a(b);
+        if (off + (uint32_t)i == IO_PORT_F) g_io_side = (uint8_t)(b >> 7);
+        if (r->data && off + (uint32_t)i < r->size) r->data[off + (uint32_t)i] = b;
+    }
+}
+
+/* Power-on: players 1 and 2. The side is board state (savestates, rollback). */
+static inline void input_attach_sides(mem_region_t *r) {
+    g_io_side = 0;
+    savestate_extra(g_active_profile->id, "IOSIDE", &g_io_side, sizeof g_io_side);
+    r->read_cb  = input_sides_read_cb;
+    r->write_cb = input_sides_write_cb;
+}
+
 /* Install the I/O read callback on the bus's I/O region. Call after the ROM is
  * installed (install_fn re-inits the bus). Writes (coin-meter strobe at IO+0x00,
  * IO+0x40) keep hitting the plain buffer — harmless. */
@@ -352,6 +398,7 @@ static inline void input_attach(memory_bus_t *bus) {
         if (bus->regions[i].base == IO_BASE) {
             if (g_active_profile && g_active_profile->quirks.io_5649) input_attach_5649(&bus->regions[i]);
             else if (g_active_profile && g_active_profile->quirks.lightgun) input_attach_lightgun(&bus->regions[i]);
+            else if (g_active_profile && g_active_profile->quirks.four_player_sides) input_attach_sides(&bus->regions[i]);
             else { bus->regions[i].read_cb = input_io_read_cb; bus->regions[i].write_cb = input_io_write_cb; }
             mem_regions_changed(bus);
             LOG_INFO("input: I/O port read callback attached @ 0x%08X", IO_BASE);

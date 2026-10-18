@@ -118,6 +118,32 @@ int main(void) {
         g_active_profile = was;
     }
 
+    /* ---- (A3) a four-player cabinet's side switch (Air Walkers, Pinboard #1063) ---- */
+    {
+        static game_profile_t four_profile = { .id = "four" };
+        const game_profile_t *was = g_active_profile;
+        four_profile.quirks.four_player_sides = 1;
+        g_active_profile = &four_profile;
+        mem_region_t sio = { .name="IO", .base=IO_BASE, .size=IO_SIZE, .data=NULL };
+        input_attach_sides(&sio);
+        g_input.held = 0x00010330;   /* START1, START2, P1 B1 + B2, P2 B1 */
+        CHECK((sio.read_cb(&sio, IO_BASE+0x02,1)&0xFF)==0xCF &&
+              (sio.read_cb(&sio, IO_BASE+0x04,1)&0xFF)==0xFC &&
+              (sio.read_cb(&sio, IO_BASE+0x06,1)&0xFF)==0xFE,
+              "side 1/2: IN0 starts, IN1 P1, IN2 P2 as any game");
+        sio.write_cb(&sio, IO_BASE+0x0A, 0x80, 1);
+        CHECK(g_io_side == 1 &&
+              (sio.read_cb(&sio, IO_BASE+0x02,1)&0xFF)==0xFF &&
+              (sio.read_cb(&sio, IO_BASE+0x04,1)&0xFF)==0xFF &&
+              (sio.read_cb(&sio, IO_BASE+0x06,1)&0xFF)==0xFF,
+              "port F bit 7: players 3 and 4, who are not held, on IN1 / IN2 / the starts");
+        sio.write_cb(&sio, IO_BASE+0x0A, 0x7F, 1);
+        CHECK(g_io_side == 0 && (sio.read_cb(&sio, IO_BASE+0x04,1)&0xFF)==0xFC,
+              "bit 7 down: back to players 1 and 2");
+        g_input.held = 0;
+        g_active_profile = was;
+    }
+
     /* ---- (B) end-to-end through the game's read_sw interrupt ---- */
     static romset_t rs; static memory_bus_t bus; static i960_cpu_t cpu; static emu_thread_ctx_t ctx;
     if (sfight_load(&rs, test_rom("sfight.zip"), test_rom("schamp.zip")) != 0) {
