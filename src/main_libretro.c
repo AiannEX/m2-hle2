@@ -317,6 +317,13 @@ static struct retro_core_option_v2_definition option_defs[] = {
       { { "10", "10 (full lock in 9 frames)" }, { "4", NULL }, { "6", NULL }, { "8", NULL }, { "14", NULL },
         { "20", NULL }, { "255", "Instant" }, { NULL, NULL } },
       "10" },
+    { "m2hle_gun_flash", "Light gun: flash on each shot", NULL,
+      "The House of the Dead: the picture goes white for a frame or more when a trigger is pulled, for a light gun "
+      "that reads the screen (a Sinden, say). Only the picture you see flashes: the board never sees it.",
+      NULL, NULL,
+      { { "off", NULL }, { "1", "1 frame" }, { "2", "2 frames" }, { "3", "3 frames" }, { "4", "4 frames" },
+        { NULL, NULL } },
+      "off" },
     { "m2hle_ffb", "Force feedback", NULL,
       "Daytona USA's drive board, as the pad's rumble: the wheel's kicks and shakes. A pad has no spring or "
       "friction, so the weight the wheel has at speed is not in it.",
@@ -346,6 +353,7 @@ static void lr_read_wheel_options(void) {
     const char *v;
     if ((v = lr_var("m2hle_wheel_range"))) io5649_wheel_option("--wheel-range", v);
     if ((v = lr_var("m2hle_wheel_speed"))) io5649_wheel_option("--wheel-speed", v);
+    if ((v = lr_var("m2hle_gun_flash")))   lightgun_host_option("--gun-flash", v);
     if ((v = lr_var("m2hle_ffb")))         ffb_option("--ffb-gain", v);
 }
 
@@ -397,6 +405,38 @@ static bool lr_option_offered(const char *key) {
     return GEMS_AVAILABLE || strncmp(key, "m2hle_gems_", 11) != 0;
 }
 
+static bool g_game_loaded;
+
+/* A row that is one game's (its program, its I/O board) is hidden while
+ * another game is loaded (Pinboard #1058): Daytona showed STF's sound driver
+ * and Gems rows. With no game loaded every row shows. */
+static bool lr_option_applies(const char *key) {
+    const game_profile_t *p = g_game_loaded ? g_active_profile : NULL;
+    if (!p) return true;
+    if (!strcmp(key, "m2hle_stf_version") || !strcmp(key, "m2hle_sound_driver") || !strncmp(key, "m2hle_gems_", 11))
+        return !strcmp(profile_rom_set(p), "sfight");
+    if (!strncmp(key, "m2hle_wheel_", 12)) return p->quirks.io_5649;
+    if (!strcmp(key, "m2hle_ffb"))         return p->quirks.model1_io;
+    return true;
+}
+
+/* The frontend asks before it draws the list; the core also calls it at load
+ * and unload, for a frontend that never asks. True when a row changed. */
+static bool RETRO_CALLCONV lr_update_display(void) {
+    static bool shown[sizeof option_defs / sizeof option_defs[0]];
+    static bool sent;
+    bool changed = false;
+    for (size_t i = 0; option_defs[i].key; i++) {
+        bool on = lr_option_applies(option_defs[i].key);
+        struct retro_core_option_display d = { option_defs[i].key, on };
+        env_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d);
+        changed |= !sent || shown[i] != on;
+        shown[i] = on;
+    }
+    sent = true;
+    return changed;
+}
+
 static void lr_set_options(void) {
     static bool pruned;
     if (!pruned) {
@@ -411,6 +451,8 @@ static void lr_set_options(void) {
         /* Its answer says whether the frontend groups options into categories,
          * NOT whether it took them (libretro.h). */
         env_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options_v2);
+        static struct retro_core_options_update_display_callback display = { lr_update_display };
+        env_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &display);
         return;
     }
     /* An old frontend: the v0 table, first value is the default. */
@@ -431,6 +473,7 @@ static void lr_set_options(void) {
         { "m2hle_scripts",    "Game scripts; enabled|disabled" },
         { "m2hle_wheel_range", "Wheel: full lock; 0x58|0x30|0x40|0x4C|0x68|0x7F" },
         { "m2hle_wheel_speed", "Wheel: turn speed; 10|4|6|8|14|20|255" },
+        { "m2hle_gun_flash",  "Light gun: flash on each shot; off|1|2|3|4" },
         { "m2hle_ffb",        "Force feedback; 100|75|50|25|0" },
         { NULL, NULL },
     };
@@ -444,7 +487,6 @@ static void lr_set_options(void) {
 /* ---- The board ---------------------------------------------------------------- */
 
 static bool g_sound_on;
-static bool g_game_loaded;
 static bool g_halt_reported;
 static size_t g_lr_state_size;  /* retro_serialize_size, once a load */
 static savestate_rom_t g_lr_state_rom;  /* the loaded ROM's id, with g_lr_state_size */
@@ -571,11 +613,13 @@ static const lr_bind_t lr_binds[] = {
 static void lr_set_input_descriptors(void) {
     static const char *names[] = { "Up", "Down", "Left", "Right", "Button 1", "Button 2", "Button 3",
                                    "Button 4", "Start", "Coin", "Test", "Service" };
-    struct retro_input_descriptor desc[2 * LR_BIND_COUNT + 3];
+    struct retro_input_descriptor desc[4 * LR_BIND_COUNT + 3];
     int n = 0;
-    for (unsigned port = 0; port < 2; port++)
+    /* Ports 3 and 4 are players 3 and 4 of a four-player cabinet (Air Walkers). */
+    unsigned ports = input_four_players() ? 4 : 2;
+    for (unsigned port = 0; port < ports; port++)
         for (int i = 0; i < LR_BIND_COUNT; i++) {
-            if (port == 1 && lr_binds[i].p2 < 0) continue;
+            if (port > 0 && lr_binds[i].p2 < 0) continue;
             desc[n++] = (struct retro_input_descriptor){ port, RETRO_DEVICE_JOYPAD, 0, lr_binds[i].id, names[i] };
         }
     if (opt.online != LR_ONLINE_RETROARCH) {
@@ -626,7 +670,9 @@ static uint32_t lr_port_gun(unsigned port) {
     return held;
 }
 
-/* One port's pad as the board's held mask, the d-pad and left stick both steering. */
+/* One port's pad as the board's held mask, the d-pad and left stick both
+ * steering. Ports 3 and 4 (players 3 and 4, g_input.far_held) take player 1's
+ * and player 2's bits, as input_far_down does. */
 static uint32_t lr_port_held(unsigned port) {
     const game_input_map_t *in = &g_active_profile->input;
     const int dead = 16000;
@@ -634,8 +680,8 @@ static uint32_t lr_port_held(unsigned port) {
     int ay = input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
     uint32_t held = 0;
     for (int i = 0; i < LR_BIND_COUNT; i++) {
-        int act = port == 0 ? lr_binds[i].p1 : lr_binds[i].p2;
-        if (act < 0) continue;
+        int act = (port & 1) == 0 ? lr_binds[i].p1 : lr_binds[i].p2;
+        if (act < 0 || (port > 1 && lr_binds[i].p2 < 0)) continue;   /* test and service: port 1's */
         bool on = lr_btn(port, lr_binds[i].id);
         if (lr_binds[i].id == RETRO_DEVICE_ID_JOYPAD_UP)    on |= ay < -dead;
         if (lr_binds[i].id == RETRO_DEVICE_ID_JOYPAD_DOWN)  on |= ay >  dead;
@@ -2222,7 +2268,7 @@ RETRO_API void retro_set_environment(retro_environment_t cb) {
         { "Light gun", RETRO_DEVICE_LIGHTGUN },
     };
     static const struct retro_controller_info ports[] = {
-        { pads, 2 }, { pads, 2 }, { NULL, 0 },
+        { pads, 2 }, { pads, 2 }, { pads, 1 }, { pads, 1 }, { NULL, 0 },
     };
     cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void *)ports);
 }
@@ -2372,6 +2418,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game) {
     emu_run(&state.emu);
     lr_lua_load();
     g_game_loaded = true;
+    lr_update_display();   /* the rows of the game just loaded */
     g_lr_state_size = 0;   /* a state's size depends on the profile */
     /* A state is the build's struct layouts: it does not cross to another
      * architecture or byte order (savestate.h's LAYOUT refuses it). */
@@ -2403,6 +2450,7 @@ RETRO_API void retro_unload_game(void) {
     m2lua_unload();   /* End(), and the script's ROM patches off the set going */
     romset_free(&state.romset);
     g_game_loaded = false;
+    lr_update_display();
 }
 
 RETRO_API void retro_reset(void) {
@@ -2452,9 +2500,13 @@ RETRO_API void retro_run(void) {
      * each machine is one player. */
     bool in_session = lr_in_session();
     if (!in_session) held |= g_shell_on ? lr_port_held_shell(1) : lr_port_held(1);
+    /* Ports 3 and 4: players 3 and 4 of a four-player cabinet, only on this
+     * machine too (the board reads them only outside a session). */
+    uint32_t far_bits = !in_session && input_four_players() ? lr_port_held(2) | lr_port_held(3) : 0;
     bool board_paused = false;
-    if (g_shell_on && !lr_shell_input(&board_paused)) held = 0;
+    if (g_shell_on && !lr_shell_input(&board_paused)) held = far_bits = 0;
     if (!in_session) held = lr_script_held(held);
+    g_input.far_held = far_bits;
 
     if (opt.online == LR_ONLINE_RPCN) lr_rpcn_toasts();
 

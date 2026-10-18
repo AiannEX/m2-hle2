@@ -214,8 +214,13 @@
  *    versus match goes back to select with both players in (Pinboard #1031).
  * 30: The House of the Dead puts the session's region in its COUNTRY setting,
  *    where it always booted Japan (Pinboard #1040).
+ * 31: the sound 68000 runs BTST/BCHG/BCLR/BSET with D4-D7 as the bit number,
+ *    which were unknown opcodes; Power Sled's driver uses them (Pinboard #1052).
+ * 32: a frame is the board's 434,600 i960 cycles (16 MHz over 656 x 424 at
+ *    25 MHz), not 60 Hz's 416,667: every game gets MAME's time between
+ *    vblanks, and Fighting Vipers' texture loader keeps up (Pinboard #1075).
  */
-#define NETPLAY_PROTO_REV 30
+#define NETPLAY_PROTO_REV 32
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.

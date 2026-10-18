@@ -1022,6 +1022,7 @@ static void cleanup(void) {
 }
 
 static uint32_t g_web_pad;   /* the actions the page holds (gamepads, touch buttons, keyboard): web_pad_set */
+static uint32_t g_web_pad_far;   /* players 3 and 4's: web_pad_far_set */
 static int g_web_cheats_rect[4];   /* the picture on the canvas: web_cheats_place */
 
 /* The drive board's force (ffb.h, Pinboard #1047) for the page's pads to
@@ -1034,6 +1035,13 @@ EMSCRIPTEN_KEEPALIVE unsigned web_ffb(void) {
 
 /* The page's canvas asks before its context menu: not while a right click reloads a gun. */
 EMSCRIPTEN_KEEPALIVE int web_lightgun_on(void) { return lightgun_host_on(); }
+
+/* The Controls panel's flash on each shot (lightgun_host.h): frames of white, 0 off. */
+EMSCRIPTEN_KEEPALIVE void web_set_gun_flash(int frames) {
+    char v[12];
+    snprintf(v, sizeof v, "%d", frames);
+    lightgun_host_option("--gun-flash", v);
+}
 
 /* Player 1's light gun on the canvas (Pinboard #1040): the mouse aims it, the
  * left button is the trigger and the right one reloads; a finger aims and
@@ -1128,6 +1136,7 @@ static void web_value_arg(const char *a) {
         size_t n = (size_t)(strchr(a, '=') - a);
         if (n < sizeof opt) { memcpy(opt, a, n); opt[n] = 0; io5649_wheel_option(opt, a + n + 1); }
     }
+    else if (!strncmp(a, "--gun-flash=", 12)) lightgun_host_option("--gun-flash", a + 12);
     else if (!strncmp(a, "--ffb-gain=", 11)) ffb_option("--ffb-gain", a + 11);   /* 0-100 */
 }
 
@@ -1696,7 +1705,7 @@ EMSCRIPTEN_KEEPALIVE int web_state_load(uint8_t *data, int len) {
  * come yet) is pressed again by its next web_pad_set. */
 /* Only the local keyboard's mask: under netplay the board reads the composed mask,
  * which belongs to the lockstep and is rebuilt from both players' words each frame. */
-EMSCRIPTEN_KEEPALIVE void web_release_keys(void) { input_release_all(); g_web_pad = 0; }
+EMSCRIPTEN_KEEPALIVE void web_release_keys(void) { input_release_all(); g_web_pad = 0; g_web_pad_far = 0; }
 
 /* The page's gamepads, touch buttons and keyboard (web/site/m2hle-pad.js,
  * m2hle-touch.js, m2hle-keys.js), as one bit per GAME_INPUT_* action, sent whole
@@ -1722,6 +1731,25 @@ EMSCRIPTEN_KEEPALIVE void web_pad_set(uint32_t actions) {
         else                     input_action_up(a);
     }
     g_web_pad = actions;
+}
+
+/* Does the game seat four (m2hle-pad.js gives the third and fourth pads to
+ * players 3 and 4, web_pad_far_set)? */
+EMSCRIPTEN_KEEPALIVE int web_four_players(void) { return input_four_players(); }
+
+/* Players 3 and 4 of a four-player cabinet (Air Walkers): the page's third and
+ * fourth pads, as web_pad_set's bits, player 3 on player 1's and player 4 on
+ * player 2's (input_far_down). Only the changes are pressed or released; with
+ * the menus up they hold nothing. The board reads them only outside a session. */
+EMSCRIPTEN_KEEPALIVE void web_pad_far_set(uint32_t actions) {
+    if (!web_game_pad()) actions = 0;
+    uint32_t changed = actions ^ g_web_pad_far;
+    for (int a = 0; a < GAME_INPUT_COUNT; a++) {
+        if (!(changed & (1u << a))) continue;
+        if (actions & (1u << a)) input_far_down(a);
+        else                     input_far_up(a);
+    }
+    g_web_pad_far = actions;
 }
 
 /* The page's "Online" button: the lobby, as the PS3's Online Battle opens it. */

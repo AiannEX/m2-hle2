@@ -30,8 +30,8 @@
 #define EEPROM_WORDS      64
 #define EEPROM_ADDR_BITS  6
 
-/* Board time, 1/(IRQT_CPU_HZ * IRQT_VBLANK_HZ) s; MAME eeprom_base_device. */
-#define EEPROM_US(us)     ((int64_t)(us) * (IRQT_CPU_HZ / 1000000) * IRQT_VBLANK_HZ)
+/* Board time, 1/(IRQT_CPU_HZ * IRQT_UNIT) s; MAME eeprom_base_device. */
+#define EEPROM_US(us)     ((int64_t)(us) * (IRQT_CPU_HZ / 1000000) * IRQT_UNIT)
 #define EEPROM_T_WRITE    EEPROM_US(1750)
 #define EEPROM_T_ERASE    EEPROM_US(1000)
 #define EEPROM_T_ALL      EEPROM_US(8000)
@@ -66,7 +66,7 @@ static int64_t (*g_eeprom_clock_fn)(void);
 static inline int64_t eeprom_now(void) {
     if (g_eeprom_clock_fn) return g_eeprom_clock_fn();
     irqt_flush();
-    return (int64_t)g_irqt.vbl_count * IRQT_CPU_HZ + g_irqt.vbl_phase;
+    return (int64_t)g_irqt.vbl_count * IRQT_FRAME_UNITS + g_irqt.vbl_phase;
 }
 
 static inline int eeprom_ready(void) { return eeprom_now() >= g_eeprom.busy_until; }

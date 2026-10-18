@@ -106,6 +106,7 @@ static inline void rollback_layout(i960_cpu_t *cpu, memory_bus_t *bus) {
         rollback__add(SAVESTATE_BUFS[i].name, savestate_buf_ptr(bus, &SAVESTATE_BUFS[i]), SAVESTATE_BUFS[i].size, NULL, false);
     rollback__add("GEO.snaps", g_geodl_snaps, sizeof g_geodl_snaps, NULL, false);
     rollback__add("GEO.live", &g_geo_live, sizeof g_geo_live, NULL, false);
+    rollback__add("GEO.held", &g_geo_held, sizeof g_geo_held, NULL, false);
     rollback__add("IRQT", &g_irqt, sizeof g_irqt, NULL, false);
     rollback__add("EEPROM", &g_eeprom, sizeof g_eeprom, NULL, false);
     rollback__add("M68K", &g_sound.m68k.cpu, sizeof g_sound.m68k.cpu, NULL, false);

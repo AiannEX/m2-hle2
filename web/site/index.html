@@ -395,6 +395,7 @@
   <p class="fine left" data-i18n-html="ui.pad.how">Pick <strong>Add</strong>, then press the button or push the stick you want. Click a button's name to remove it. Rows light up while you hold them. <strong>Pause</strong> is unset to begin with: give it a button (binding one to Pause takes it off its game row, so Select can go from Coin to Pause).</p>
   <ul id="pad-rows" class="pad-rows"></ul>
   <label class="pad-check"><input id="pad-p2" type="checkbox" checked> <span data-i18n="ui.pad.p2">A second controller plays player 2</span></label>
+  <label id="gun-flash-row" class="pad-check" hidden><input id="gun-flash" type="checkbox"> <span data-i18n="ui.pad.gunflash">Flash the screen white on each shot, for a light gun that reads the screen</span></label>
   <p class="np-row"><button id="pad-reset" class="tool" data-i18n="ui.reset">Reset to defaults</button></p>
   <p class="fine left" data-i18n="ui.pad.kept">These settings are remembered in this browser and apply to every controller.</p>
   </section>
@@ -708,6 +709,7 @@
 <!-- The page's own words in the visit's language (m2hle-lang-menu.js), before the
      scripts below read or fill it; what they write later is theirs to translate. -->
 <script>m2hleLang.apply(document);</script>
+<script src="m2hle-nozoom.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-game.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-keys.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-tools.js?v=@M2HLE_VERSION@"></script>
