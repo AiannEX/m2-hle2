@@ -260,6 +260,40 @@ const m2hleGames = (() => {
         },
       },
     },
+    doa: {
+      title: 'Dead or Alive',
+      year: 1996, board: 'Model 2A/2B-CRX', colors: ['#c8102e', '#2a0a0e'],
+      blurb: 'Kasumi, Zack, Tina and the rest enter the DOA tournament. Hold to reverse, and mind the danger zone.',
+      /* src/profiles/doa.h: the 2B sets first, then the 2A ones (the same game
+       * on the TGP board); doaae is locked to Export. Every set but doa is a
+       * clone of doa.zip. */
+      profiles: [
+        { id: 'doa', name: 'Rev C', about: 'Model 2B, Revision C' },
+        { id: 'doab', name: 'Rev B', about: 'Model 2B, Revision B' },
+        { id: 'doaa', name: 'Rev A 2A', about: 'Model 2A, Revision A' },
+        { id: 'doaab', name: '2A', about: 'Model 2A, the first release' },
+        { id: 'doaae', name: 'Export 2A', about: 'Model 2A, Export, Revision A' },
+      ],
+      romHint: 'Your <code>doa.zip</code> (Revision C), or <code>doab.zip</code>, <code>doaa.zip</code>, <code>doaab.zip</code> or <code>doaae.zip</code> and its parent <code>doa.zip</code>, picked together',
+      /* src/profiles/doa.h: MAME's INPUT_PORTS(doa), B1 hold, B2 punch, B3 kick. */
+      labels: { b1: 'Hold', b2: 'Punch', b3: 'Kick', b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'デッド オア アライブ',
+          blurb: 'かすみ、ザック、ティナたちが DOA 大会に挑む。ホールドで切り返し、デンジャーゾーンに気をつけろ。',
+          profiles: { doa: { name: 'リビジョン C', about: 'Model 2B、リビジョン C' },
+                      doab: { name: 'リビジョン B', about: 'Model 2B、リビジョン B' },
+                      doaa: { name: 'リビジョン A 2A', about: 'Model 2A、リビジョン A' },
+                      doaab: { name: '2A', about: 'Model 2A、最初のリリース' },
+                      doaae: { name: '海外 2A', about: 'Model 2A、海外、リビジョン A' } },
+          romHint: 'お持ちの <code>doa.zip</code>（リビジョン C）、または <code>doab.zip</code>、<code>doaa.zip</code>、<code>doaab.zip</code>、<code>doaae.zip</code> と親セットの <code>doa.zip</code> を一緒に',
+          labels: { b1: 'ホールド', b2: 'パンチ', b3: 'キック', b4: '未使用' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
 
