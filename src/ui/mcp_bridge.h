@@ -204,8 +204,8 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
     ffb_out_t fo = ffb_poll();
     char dv[160];
     snprintf(dv, sizeof dv,
-             "{\"cmd\":%u,\"kind\":%u,\"level\":%u,\"dir\":%d,\"strong\":%u,\"weak\":%u}",
-             fo.effect.cmd, fo.effect.kind, fo.effect.level, fo.effect.dir, fo.strong, fo.weak);
+             "{\"cmd\":%u,\"kind\":%u,\"level\":%u,\"dir\":%d,\"strong\":%u,\"weak\":%u,\"push\":%d}",
+             fo.effect.cmd, fo.effect.kind, fo.effect.level, fo.effect.dir, fo.strong, fo.weak, fo.push);
 
     snprintf(resp, (size_t)cap,
              "{\"ok\":true,\"running\":%s,\"halted\":%s,"

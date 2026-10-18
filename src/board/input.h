@@ -285,6 +285,7 @@ static inline void input_attach_5649(mem_region_t *r) {
                                              q->wheel.brake, q->wheel.shift_up, q->wheel.shift_down };
     g_io5649_held_fn     = input_board_held;
     g_io5649_from_net_fn = input_board_from_net;
+    g_io5649_regs        = r->data;      /* port E: the drive board's command (ffb.h) */
     r->read_cb  = io5649_read_cb;
     r->write_cb = io5649_write_cb;
 }
@@ -379,6 +380,7 @@ static inline void input_attach_sled(mem_region_t *r) {
  * installed (install_fn re-inits the bus). Writes (coin-meter strobe at IO+0x00,
  * IO+0x40) keep hitting the plain buffer — harmless. */
 static inline void input_attach(memory_bus_t *bus) {
+    g_io5649_regs = NULL;
     if (g_active_profile && g_active_profile->quirks.model1_io) {
         /* The install put the board's window at IO_BASE (model1io.h); the
          * Z80 reads the controls through io_5649.h's model. */

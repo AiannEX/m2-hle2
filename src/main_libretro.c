@@ -87,7 +87,8 @@
 #include "registry.h"
 #include "m2lua.h"         /* M2emulator's game scripts, their options as RetroArch cheats */
 #include "lightgun_host.h" /* a port's light gun (The House of the Dead) */
-#include "ffb.h"           /* the drive board's force feedback as rumble (Daytona USA) */
+#include "ffb.h"           /* the drive board's force feedback as rumble (Daytona USA, Sega Rally) */
+#include "wheel_host.h"    /* the left stick and the analog triggers as the wheel and pedals */
 
 /* The largest picture the frontend's framebuffer is made for: it allocates this
  * much once, colour and depth. Full screen draws at the output's size, up to it. */
@@ -318,8 +319,8 @@ static struct retro_core_option_v2_definition option_defs[] = {
         { NULL, NULL } },
       "off" },
     { "m2hle_ffb", "Force feedback", NULL,
-      "Daytona USA's drive board, as the pad's rumble: the wheel's kicks and shakes. A pad has no spring or "
-      "friction, so the weight the wheel has at speed is not in it.",
+      "The drive board, as the pad's rumble: Daytona USA's kicks and shakes, Sega Rally's hard turns of the "
+      "wheel (a slide, a crash). A pad has no spring or friction, so the weight the wheel has is not in it.",
       NULL, NULL,
       { { "100", "100%" }, { "75", "75%" }, { "50", "50%" }, { "25", "25%" }, { "0", "Off" }, { NULL, NULL } },
       "100" },
@@ -408,7 +409,7 @@ static bool lr_option_applies(const char *key) {
     if (!strcmp(key, "m2hle_stf_version") || !strcmp(key, "m2hle_sound_driver") || !strncmp(key, "m2hle_gems_", 11))
         return !strcmp(profile_rom_set(p), "sfight");
     if (!strncmp(key, "m2hle_wheel_", 12)) return p->quirks.io_5649;
-    if (!strcmp(key, "m2hle_ffb"))         return p->quirks.model1_io;
+    if (!strcmp(key, "m2hle_ffb"))         return p->quirks.model1_io || p->quirks.io_5649;
     return true;
 }
 
@@ -677,6 +678,24 @@ static uint32_t lr_port_held(unsigned port) {
         if (on) held |= in->bits[act];
     }
     return held | lr_port_gun(port);
+}
+
+/* A driving game's wheel and pedals (wheel_host.h, Pinboard #1082): port 1's
+ * left stick turns the wheel as far as it is pushed, R2 and L2 press the
+ * accelerator and the brake as far as they are pulled (RetroArch's analog
+ * triggers; a pad without them presses all the way). Sessions and replays
+ * read the buttons, so the triggers also hold Button 1 / Button 2 past half:
+ * the held bits it adds. */
+static uint32_t lr_wheel(void) {
+    if (!wheel_host_on() || g_shell_on) { wheel_host_set(false, 0, 0, 0); return 0; }
+    int ax = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
+    int ac = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_BUTTON, RETRO_DEVICE_ID_JOYPAD_R2);
+    int br = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_BUTTON, RETRO_DEVICE_ID_JOYPAD_L2);
+    if (!ac && lr_btn(0, RETRO_DEVICE_ID_JOYPAD_R2)) ac = IO5649_AXIS_MAX;
+    if (!br && lr_btn(0, RETRO_DEVICE_ID_JOYPAD_L2)) br = IO5649_AXIS_MAX;
+    wheel_host_set(true, wheel_host_steer(ax, WHEEL_HOST_STICK_DEAD), ac, br);
+    const game_input_map_t *in = &g_active_profile->input;
+    return (ac > 16000 ? in->bits[GAME_INPUT_P1_B1] : 0) | (br > 16000 ? in->bits[GAME_INPUT_P1_B2] : 0);
 }
 
 /* A held mask as netplay.h's canonical word (NP_BIT_*): either side's bits count
@@ -2481,7 +2500,7 @@ RETRO_API void retro_run(void) {
     }
 
     input_poll_cb();
-    uint32_t held = g_shell_on ? lr_port_held_shell(0) : lr_port_held(0);
+    uint32_t held = g_shell_on ? lr_port_held_shell(0) : lr_port_held(0) | lr_wheel();
     /* Port 2 is the second player on this machine -- not in a session, where
      * each machine is one player. */
     bool in_session = lr_in_session();
