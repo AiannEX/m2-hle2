@@ -39,6 +39,7 @@
 #include "memory.h"
 #include "i960.h"
 #include "model2a.h"
+#include "hle_hooks.h"
 #include "savestate_reg.h"
 
 /* Everything but the program: data, polygons, textures, sound, and the TGP's
@@ -136,6 +137,54 @@ static inline void vf2_install(const romset_t *rs, i960_cpu_t *cpu, memory_bus_t
     LOG_INFO("vf2_install: PRCB=0x%08X initial IP=0x%08X", prcb, cpu->sfr.ip);
 }
 
+/*
+ * The region (Pinboard #1055). The settings live in backup RAM (0x1D00000,
+ * battery-backed SRAM), in a block at +0x3340 with its own checksum at +0x3302;
+ * COUNTRY is the byte at +0x3350 (0 JAPAN, 1 USA, 2 EXPORT: the test menu's
+ * strings at 2.1's 0x78092). 0x50016C holds the block's base: 0x1D00000 while
+ * the boot checks it, then the copy in work RAM at 0x599000, which the game
+ * reads from (`ldob 0x3350(base)`: Japan shows the "only in Japan" screen at
+ * 0xA804, USA changes the attract at 0x21F4).
+ *
+ * At boot (2.1's 0x6DDC8) a bad "VIRTUA FIGHTER 2" signature or block checksum
+ * runs the factory defaults (0x6010C), which store COUNTRY in both copies; then
+ * every boot copies backup RAM to 0x599000 and points 0x50016C at it (0x6E19C).
+ *
+ * country_default: the instruction after the defaults' two `stob r15` (r15 = 0,
+ * JAPAN) to 0x1D03350 and 0x59C350. Puts g_region in both before the checksum
+ * is taken, so the board saves it. Japan is the ROM's default and MAME's.
+ * settings_loaded: the instruction after the base becomes 0x599000. With
+ * g_region_over_saved, put g_region in the work-RAM copy over the one backup
+ * RAM brought; backup RAM keeps its own (rewriting it would fail the block's
+ * checksum and reset the other settings next boot).
+ *
+ * The clones' programs are other builds of the same code: the same stores at
+ * other addresses (found by their bytes).
+ */
+#define VF2_COUNTRY_BACKUP 0x01D03350u
+#define VF2_COUNTRY_WORK   0x0059C350u
+
+static int vf2_hook_country_default(i960_cpu_t *cpu, memory_bus_t *bus) {
+    (void)cpu;
+    mem_write8(bus, VF2_COUNTRY_BACKUP, (uint8_t)g_region);
+    mem_write8(bus, VF2_COUNTRY_WORK, (uint8_t)g_region);
+    return 1;
+}
+
+static uint32_t vf2_country(memory_bus_t *bus) { (void)bus; return VF2_COUNTRY_WORK; }
+
+static int vf2_hook_settings_loaded(i960_cpu_t *cpu, memory_bus_t *bus) {
+    (void)cpu;
+    if (g_region_over_saved) mem_write8(bus, vf2_country(bus), (uint8_t)g_region);
+    return 1;
+}
+
+/* country_default, settings_loaded: per program build. */
+#define VF2_HOOKS(dflt, loaded) .hook_count = 2, .hooks = { \
+    { dflt,   vf2_hook_country_default, "country_default" }, \
+    { loaded, vf2_hook_settings_loaded, "settings_loaded" }, \
+}
+
 #define VF2_INPUT { .bits = { \
     [GAME_INPUT_P1_COIN]  = 0x00000001, [GAME_INPUT_P2_COIN]  = 0x00000002, \
     [GAME_INPUT_TEST]     = 0x00000004, [GAME_INPUT_SERVICE]  = 0x00000008, \
@@ -162,28 +211,32 @@ static inline void vf2_install(const romset_t *rs, i960_cpu_t *cpu, memory_bus_t
     .mesh_ptr_add       = 0x10, \
     .model_table_offset = 0x000E0004, \
     .model_table_count  = 5125, \
-    .region             = { .kind = REGION_TODO, \
-                            .why  = "country setting not looked for yet" }, \
+    .region             = { .kind = REGION_HOOKED, .factory_default = "country_default", \
+                            .over_saved = "settings_loaded", .country = vf2_country }, \
 }
 
 static const game_profile_t vf2_profile = {
     .id = "vf2", .display_name = "Virtua Fighter 2 (Version 2.1)",
     .board = BOARD_MODEL2A_CRX, .load_fn = vf2_load, .install_fn = vf2_install,
+    VF2_HOOKS(0x0006029C, 0x0006E1A4),
     .input = VF2_INPUT, .quirks = VF2_QUIRKS,
 };
 static const game_profile_t vf2b_profile = {
     .id = "vf2b", .display_name = "Virtua Fighter 2 (Revision B)", .parent_zip_name = "vf2.zip",
     .board = BOARD_MODEL2A_CRX, .load_fn = vf2b_load, .install_fn = vf2_install,
+    VF2_HOOKS(0x0005E020, 0x0006BEEC),
     .input = VF2_INPUT, .quirks = VF2_QUIRKS,
 };
 static const game_profile_t vf2a_profile = {
     .id = "vf2a", .display_name = "Virtua Fighter 2 (Revision A)", .parent_zip_name = "vf2.zip",
     .board = BOARD_MODEL2A_CRX, .load_fn = vf2a_load, .install_fn = vf2_install,
+    VF2_HOOKS(0x0005C280, 0x0006A12C),
     .input = VF2_INPUT, .quirks = VF2_QUIRKS,
 };
 static const game_profile_t vf2o_profile = {
     .id = "vf2o", .display_name = "Virtua Fighter 2", .parent_zip_name = "vf2.zip",
     .board = BOARD_MODEL2A_CRX, .load_fn = vf2o_load, .install_fn = vf2_install,
+    VF2_HOOKS(0x0005C240, 0x0006A0EC),
     .input = VF2_INPUT, .quirks = VF2_QUIRKS,
 };
 
