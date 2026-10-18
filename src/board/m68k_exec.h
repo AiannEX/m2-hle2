@@ -956,8 +956,9 @@ static inline int m68k_step_core(m68k_state_t *s) {
         /* 0000 Dn 1 op ea: BTST/BCHG/BCLR/BSET register form            */
         {
             int bit_op, bit_num_from_reg, dn;
-            if ((op & 0x0100) && !(op & 0x0800)) {
-                /* Register form: 0000 Dn 1 xx ea */
+            if (op & 0x0100) {
+                /* Register form: 0000 Dn 1 xx ea. Dn is bits 11-9, so D4-D7 set
+                 * bit 11 too: Power Sled's driver runs btst/bclr d6,(d16,a0). */
                 dn              = (op >> 9) & 7;
                 bit_op          = (op >> 6) & 3;
                 bit_num_from_reg = 1;
