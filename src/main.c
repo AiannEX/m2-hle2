@@ -1344,6 +1344,32 @@ static void headless_shutdown(void) {
     tray_headless_stop();
 }
 
+/* --headless once the board is up: say what can drive it, then pump the
+ * snapshots, netplay and the tray (and the A/V server's frames) until the tray
+ * or the bridge asks to quit. */
+static void headless_loop(bool av_on) {
+    LOG_INFO("headless: running%s%s", g_mcp_enable ? " with the MCP bridge" : "",
+             av_on ? " with the A/V server"
+                   : (g_mcp_enable ? "" : " (no --mcp: nothing can drive it)"));
+    if (av_on && !g_autorun && !g_mcp_enable)
+        LOG_WARN("av: the board is stopped and nothing can start it - a client will "
+                 "get the stream header and then silence. Add --run.");
+    while (!tray_exit_requested() && !mcp_quit_requested()) {
+        emu_update_snapshots(&state.emu);
+        netplay_cli_pump();
+        netplay_room_announce();
+        netplay_ggpo_announce();
+        tray_headless_pump();
+        tray_headless_tick(g_emu_frames);
+        if (av_on) {
+            headless_av_frame();
+            headless_sleep_ms(1);
+        } else {
+            emu_sleep_ms(5);
+        }
+    }
+}
+
 /* --headless: the emulator and its MCP bridge and nothing else. The graders in
  * tools/ drive the game over the bridge and read what they need out of memory
  * and the display list, so a window, a GPU context and an audio device are only
@@ -1381,26 +1407,7 @@ static int headless_main(void) {
     if (g_autorun) emu_run(&state.emu);
 
     if (!g_no_tray) headless_tray_start();
-    LOG_INFO("headless: running%s%s", g_mcp_enable ? " with the MCP bridge" : "",
-             av_on ? " with the A/V server"
-                   : (g_mcp_enable ? "" : " (no --mcp: nothing can drive it)"));
-    if (av_on && !g_autorun && !g_mcp_enable)
-        LOG_WARN("av: the board is stopped and nothing can start it - a client will "
-                 "get the stream header and then silence. Add --run.");
-    while (!tray_exit_requested() && !mcp_quit_requested()) {
-        emu_update_snapshots(&state.emu);
-        netplay_cli_pump();
-        netplay_room_announce();
-        netplay_ggpo_announce();
-        tray_headless_pump();
-        tray_headless_tick(g_emu_frames);
-        if (av_on) {
-            headless_av_frame();
-            headless_sleep_ms(1);
-        } else {
-            emu_sleep_ms(5);
-        }
-    }
+    headless_loop(av_on);
 
     headless_shutdown();
     return 0;
