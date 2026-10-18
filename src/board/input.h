@@ -121,16 +121,21 @@ static inline int input_keycode_lower(const char *s, char *n) {
     return (int)len;
 }
 
-/* The keys named by a letter or digit, f1-f12 and kp0-kp9; -1 for the rest. */
-static inline int input_keycode_short(const char *n, size_t len) {
-    if (len == 1 && n[0] >= 'a' && n[0] <= 'z') return SAPP_KEYCODE_A + (n[0] - 'a');
-    if (len == 1 && n[0] >= '0' && n[0] <= '9') return SAPP_KEYCODE_0 + (n[0] - '0');
+/* The keys f1-f12 and kp0-kp9; -1 for the rest. */
+static inline int input_keycode_fn_kp(const char *n, size_t len) {
     if (n[0] == 'f' && len >= 2 && len <= 3) {
         int f = atoi(n + 1);
         if (f >= 1 && f <= 12) return SAPP_KEYCODE_F1 + (f - 1);
     }
     if (len == 3 && n[0] == 'k' && n[1] == 'p' && n[2] >= '0' && n[2] <= '9') return SAPP_KEYCODE_KP_0 + (n[2] - '0');
     return -1;
+}
+
+/* The keys named by a letter or digit, f1-f12 and kp0-kp9; -1 for the rest. */
+static inline int input_keycode_short(const char *n, size_t len) {
+    if (len == 1 && n[0] >= 'a' && n[0] <= 'z') return SAPP_KEYCODE_A + (n[0] - 'a');
+    if (len == 1 && n[0] >= '0' && n[0] <= '9') return SAPP_KEYCODE_0 + (n[0] - '0');
+    return input_keycode_fn_kp(n, len);
 }
 
 /* A sokol key code by name, for --macro: a-z, 0-9, f1-f12, kp0-kp9, space,
