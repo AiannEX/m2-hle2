@@ -731,6 +731,8 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     # A linked board's 60 Hz clock (core/link_pace.h): called and sleeping
     # hosts, and two cabinets whose clocks drift apart. No ROM.
     add_executable(link_pace_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/link_pace_test.c)
+    # The drive board's commands and the force the hosts play (core/ffb.h). No ROM.
+    add_executable(ffb_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/ffb_test.c)
     # The game scripts (core/m2lua.h): the bit helpers, the I960 and Romset
     # calls on a bus, Options, the callbacks' order. No ROM.
     add_executable(m2lua_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/m2lua_test.c)
@@ -818,7 +820,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     target_link_libraries(audio_out_test PRIVATE sokol)
 
     foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test input_test net_test ps3net_test tile_test heat_test audio_out_test
-              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test tgpx4_test z80_test sharc_cpu_test sfight_settings_test region_test srallyc_native_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
+              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test tgpx4_test z80_test sharc_cpu_test sfight_settings_test region_test srallyc_native_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test ffb_test m2lua_test)
         target_include_directories(${t} PRIVATE ${TEST_INCLUDES})
         if(MSVC)
             target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -831,7 +833,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(NOT WIN32)
         foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test
                   input_test net_test ps3net_test tile_test heat_test audio_out_test scsp_dsp_test scsp_dsp_test_masks
-                  scsp_lazy_test tgp_test tgpx4_test z80_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay sharc_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
+                  scsp_lazy_test tgp_test tgpx4_test z80_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay sharc_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test ffb_test m2lua_test)
             target_link_libraries(${t} PRIVATE m)
         endforeach()
     endif()

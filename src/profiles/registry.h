@@ -22,6 +22,7 @@
 #include "dynamcop.h"
 #include "fvipers.h"
 #include "hotd.h"      /* runs since Pinboard #1034, on the web since #1040 */
+#include "daytona.h"   /* runs since Pinboard #1035, on the web since #1047 */
 #ifndef M2HLE_WEB
 #include "m2snake.h"
 #include "sfight_homebrew.h"
@@ -30,7 +31,6 @@
  * board cannot run yet. A few hundred bytes of chip lists, so the web build
  * has them too. */
 #include "vcop.h"
-#include "daytona.h"
 
 /* Order matters: the first profile for a ROM set is its default
  * (profile_for_rom_set), so Console comes before Arcade. */
@@ -46,10 +46,10 @@ const game_profile_t *const g_profiles[] = {
     &dynamcopc_profile,
     &fvipers_profile,
     &hotd_profile,
+    &daytona_profile,
 #ifndef M2HLE_WEB
     &m2snake_profile,
     &sfight_homebrew_profile,
-    &daytona_profile,
 #endif
 };
 
@@ -59,9 +59,6 @@ const game_profile_t *g_active_profile = NULL;
 
 const game_profile_t *const g_prepared_profiles[] = {
     &vcop_profile,
-#ifdef M2HLE_WEB
-    &daytona_profile,   /* runs on the desktop builds (Pinboard #1035) */
-#endif
 };
 
 const size_t g_prepared_count = sizeof(g_prepared_profiles) / sizeof(g_prepared_profiles[0]);

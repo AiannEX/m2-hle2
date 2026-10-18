@@ -1,6 +1,6 @@
 /*
  * profiles/daytona.h — Daytona USA (daytona, Japan, Revision A). Runs on the
- * desktop builds (Pinboard #1035): attract, the test menu, coin to race, with
+ * desktop builds (Pinboard #1035) and the web (#1047): attract, the test menu, coin to race, with
  * the wheel, pedals and lever through the Model 1 I/O board, and the Model 1
  * sound board's music and effects (board/model1_sound.h).
  *
@@ -17,10 +17,12 @@
  * board/model1io.h (its Z80 runs model1io.zip's program), and M2COMM answers
  * as a link of one. The sound board is MAME's segam1audio: a 68000, two
  * MultiPCMs and a YM3438 whose timers run but whose FM voices are not made
- * (the game keys none on in attract or a race; a key-on is logged). What it
- * lacks: the drive board's force feedback and a second cabinet on the link.
- * The web build still lists it as prepared (`preliminary`): not built there yet. The comm board's Z80 program (epr-16726) and
- * the drive board's ROM are not loaded: nothing here would run them.
+ * (the game keys none on in attract or a race; a key-on is logged). The
+ * drive board's force feedback is its commands decoded (board/drive_board.h)
+ * and played on the host's pad or wheel (core/ffb.h, Pinboard #1047). What it
+ * lacks: a second cabinet on the link. The comm board's Z80 program
+ * (epr-16726) and the drive board's ROM are not loaded: nothing here would
+ * run them.
  */
 #ifndef PROFILES_DAYTONA_H
 #define PROFILES_DAYTONA_H
@@ -201,9 +203,6 @@ static const game_profile_t daytona_profile = {
             [GAME_INPUT_P1_LEFT]  = 0x00008000,
         },
     },
-#ifdef M2HLE_WEB
-    .preliminary  = "a web build (it runs on the desktop builds and the libretro core)",
-#endif
     .quirks = {
         .irq_vectors       = true,
         .enable_68k_sound  = true,
