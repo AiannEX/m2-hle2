@@ -147,6 +147,23 @@ static void mcp_link_pace_json(const emu_thread_ctx_t *emu, char *out, int cap) 
              (unsigned long long)emu->link_pace.dropped, emu->link_pace.trims);
 }
 
+/* get_status's game fields: the frame count, whether the ROM set is in, the
+ * attract's match replay, the idle hold, the texture loader and the CPU rank. */
+static void mcp_status_game_json(const mcp_bridge_t *b, char *out, int cap) {
+    snprintf(out, (size_t)cap,
+             "\"frames\":%u,\"rom_loaded\":%s,\"match_replay\":\"%s\",\"match_replay_frame\":%u,"
+             "\"idle_hold\":{\"on\":%s,\"holding\":%s},"
+             "\"texload\":{\"hle\":%s,\"rows\":%llu},"
+             "\"enemy_rank\":%d",
+             g_emu_frames,
+             (g_mcp.romset && g_mcp.romset->loaded && !g_mcp.installing) ? "true" : "false",
+             g_match_replay == 1 ? "armed" : g_match_replay == 2 ? "done" : g_match_replay < 0 ? "unsupported" : "off",
+             g_match_replay_frame,
+             g_idle_hold ? "true" : "false", b->emu && b->emu->idle_holding ? "true" : "false",
+             g_texload_hle ? "true" : "false", (unsigned long long)g_texload_rows,
+             (int)g_enemy_rank);
+}
+
 static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
     mcp_bridge_t *b = &g_mcp;
     int running = b->emu && emu_is_running(b->emu);
@@ -199,25 +216,18 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
     emu_times_json(et, (int)sizeof et, restart_max);
     char lp[160];
     mcp_link_pace_json(b->emu, lp, (int)sizeof lp);
+    char game[384];
+    mcp_status_game_json(b, game, (int)sizeof game);
 
     snprintf(resp, (size_t)cap,
              "{\"ok\":true,\"running\":%s,\"halted\":%s,"
              "\"ip\":\"0x%08X\",\"steps_per_second\":%u,\"steps\":%llu,\"profile\":\"%s\","
-             "\"frames\":%u,\"rom_loaded\":%s,\"match_replay\":\"%s\",\"match_replay_frame\":%u,"
-             "\"idle_hold\":{\"on\":%s,\"holding\":%s},"
-             "\"texload\":{\"hle\":%s,\"rows\":%llu},"
-             "\"enemy_rank\":%d,"
+             "%s,"
              "\"av\":%s,\"overlay\":%s,\"render\":%s,\"emu\":%s,\"link_pace\":%s,\"version\":\"%s\",\"build\":\"%s\"}",
              running ? "true" : "false",
              halted  ? "true" : "false",
              ip, sps, (unsigned long long)steps, profile_id,
-             g_emu_frames,
-             (g_mcp.romset && g_mcp.romset->loaded && !g_mcp.installing) ? "true" : "false",
-             g_match_replay == 1 ? "armed" : g_match_replay == 2 ? "done" : g_match_replay < 0 ? "unsupported" : "off",
-             g_match_replay_frame,
-             g_idle_hold ? "true" : "false", b->emu && b->emu->idle_holding ? "true" : "false",
-             g_texload_hle ? "true" : "false", (unsigned long long)g_texload_rows,
-             (int)g_enemy_rank,
+             game,
              av, ov, rt, et, lp, M2HLE_VERSION, M2HLE_BUILD_FLAVOR);
 }
 
