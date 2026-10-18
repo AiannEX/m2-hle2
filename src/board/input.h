@@ -260,7 +260,8 @@ static uint32_t input_io_read_cb(mem_region_t *r, uint32_t addr, int size) {
         case 0x02: return eeprom_in0((uint8_t)~(held & 0xFFu));  /* IN0 system */
         case 0x04: return (uint8_t)~((held >> 8)  & 0xFFu);  /* IN1 P1     */
         case 0x06: return (uint8_t)~((held >> 16) & 0xFFu);  /* IN2 P2     */
-        default:   return r->data ? r->data[off] : 0xFFu;    /* DIPs / idle */
+        default:   if (off >= IO_BOARD_SPAN) return 0;           /* no device there */
+                   return r->data ? r->data[off] : 0xFFu;    /* DIPs / idle */
     }
 }
 
@@ -301,7 +302,8 @@ static uint32_t input_gun_read_cb(mem_region_t *r, uint32_t addr, int size) {
             case 0x06: b = 0xFF; break;
             case 0x18: b = lightgun_data(); break;
             case 0x1A: b = 0x0C; break;
-            default:   b = r->data && off + (uint32_t)i < r->size ? r->data[off + (uint32_t)i] : 0xFFu; break;
+            default:   b = off + (uint32_t)i >= IO_BOARD_SPAN ? 0
+                             : r->data && off + (uint32_t)i < r->size ? r->data[off + (uint32_t)i] : 0xFFu; break;
         }
         v |= (uint32_t)b << (8 * i);
     }
