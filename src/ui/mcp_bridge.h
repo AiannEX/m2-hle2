@@ -2570,10 +2570,10 @@ static void mcp_cmd_ggpo_lobby(const char *req, char *resp, int cap) {
     if (len && resp[len - 1] == '}')
         snprintf(resp + len - 1, (size_t)cap - (len - 1),
                  ",\"vs_mode\":%s,\"results\":%u,\"winner\":%d,"
-                 "\"session\":{\"on\":%s,\"running\":%s,\"frames\":%u}}",
+                 "\"session\":{\"on\":%s,\"running\":%s,\"frames\":%u},\"solo\":%s}",
                  g_vs_mode ? "true" : "false", (unsigned)n, winner,
-                 g_ggpo.on ? "true" : "false", g_ggpo.on && g_ggpo.running ? "true" : "false",
-                 g_ggpo.on ? (unsigned)g_ggpo.frames : 0u);
+                 emu_ggpo_active() ? "true" : "false", emu_ggpo_active() && g_ggpo.running ? "true" : "false",
+                 emu_ggpo_active() ? (unsigned)g_ggpo.frames : 0u, emu_ggpo_solo() ? "true" : "false");
 #else
     (void)req;
     snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"this build has no GGPO\"}");

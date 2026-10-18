@@ -1223,8 +1223,8 @@ static uint32_t lr_port_held_shell(unsigned port) {
 /* The shell's frame; true when the game gets the pad. *board_paused: the
  * shell holds the board still (its offline menus). */
 static bool lr_shell_input(bool *board_paused) {
-    bool session = pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_wanted();
-    if (emu_ggpo_wanted() && g_ps3ui_shell.scr != PS3UI_SH_GAME) ps3ui_shell_go(&g_ps3ui_shell, PS3UI_SH_GAME);
+    bool session = pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_match();
+    if (emu_ggpo_match() && g_ps3ui_shell.scr != PS3UI_SH_GAME) ps3ui_shell_go(&g_ps3ui_shell, PS3UI_SH_GAME);
     ps3ui_shell_frame(&g_ps3ui_shell, lr_lobby_pad(), lr_lobby_pad_port(1), session);
     /* Online Battle in RetroArch's own netplay mode: say where it lives */
     if (g_ps3ui_shell.scr == PS3UI_SH_ONLINE && opt.online != LR_ONLINE_RPCN) {
@@ -1884,16 +1884,32 @@ static emu_slice_result_t lr_slice(void) {
 }
 
 /* RetroArch session: run the frame lockstep allows, waiting briefly for it. */
+/* RetroArch's lockstep from its barrier on: no SOLO under it (emu_ggpo.h). */
+static bool lr_pkt_busy(void) { return g_pkt.state != PKT_OFF && g_pkt.state != PKT_ENDED; }
+
+/* A frame with nobody else: a linked game's SOLO twin (emu_ggpo.h, Pinboard
+ * #1110) when it has one, else one slice. */
+static void lr_alone_slice(uint32_t held) {
+    if (emu_ggpo_wanted() && !emu_ggpo_match()) {
+        g_input.held = held;
+        if (state.emu.run_state != EMU_RUNNING) emu_run(&state.emu);
+        emu_ggpo_tick(&state.emu);
+        return;
+    }
+    lr_slice();
+}
+
 static bool lr_run_pkt(uint32_t local_held) {
     int64_t give_up = emu_now_us() + LR_NET_WAIT_US;
     for (;;) {
         uint32_t w0 = 0, w1 = 0;
         pkt_step_t step = pkt_lockstep_begin_frame(&g_pkt, lr_held_to_word(local_held), lr_now_ms(), &w0, &w1);
+        if (step != PKT_STEP_OFF && emu_ggpo_solo()) emu_ggpo_shutdown(&state.emu);
         switch (step) {
             case PKT_STEP_OFF:
                 netplay_release_inputs();
                 g_input.held = local_held;
-                lr_slice();
+                lr_alone_slice(local_held);
                 return true;
             case PKT_STEP_RESET:
                 lr_pkt_reset();
@@ -1939,6 +1955,7 @@ static bool lr_run_rpcn(uint32_t local_held) {
     int64_t give_up = emu_now_us() + LR_NET_WAIT_US;
     for (;;) {
         netplay_step_t step = emu_netplay_pump(&state.emu);
+        if (emu_ggpo_solo() && !emu_ggpo_solo_wanted()) emu_ggpo_shutdown(&state.emu);   /* a room has the board */
         if (step == NETPLAY_STEP_RESET) continue;   /* done inside the pump; ask again */
         if (step == NETPLAY_STEP_WAIT) {
             if (emu_now_us() >= give_up) return false;
@@ -1947,7 +1964,8 @@ static bool lr_run_rpcn(uint32_t local_held) {
         }
         if (step == NETPLAY_STEP_OFF && m2comm_linked()) return lr_run_linked();
         link_pace_stop(&state.emu.link_pace);
-        lr_slice();
+        if (step == NETPLAY_STEP_OFF) lr_alone_slice(local_held);
+        else lr_slice();
         /* A watcher behind the fighters runs a few extra slices a frame until it
          * has caught up (netplay_catching_up): one retro_run is one slice, and
          * nothing else would ever close the gap. */
@@ -2325,6 +2343,7 @@ RETRO_API void retro_init(void) {
     log_init();
     g_log.file_open_attempted = 1;
     mem_init(&state.bus, NULL, 0);
+    g_ggpo_solo_veto = lr_pkt_busy;
     i960_reset(&state.cpu);
     bp_init();
     wp_init();
@@ -2418,6 +2437,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game) {
     if (opt.online == LR_ONLINE_RETROARCH) {
         if (!env_cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, &lr_netpacket))
             lr_log(RETRO_LOG_WARN, "this frontend has no netpacket interface: no RetroArch netplay");
+        netplay_set_reset_hook(lr_netplay_reset_cb, NULL);   /* SOLO's cold boots (emu_ggpo.h) */
     } else if (opt.online == LR_ONLINE_GGPO) {
         lr_ggpo_init();
     } else {
@@ -2465,7 +2485,9 @@ RETRO_API void retro_unload_game(void) {
 
 RETRO_API void retro_reset(void) {
     /* Inside a session a reset on one machine is a desync by definition. */
-    if (pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_wanted()) return;
+    if (pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_match()) return;
+    /* SOLO's other cabinet boots again with this one (emu_ggpo_tick). */
+    if (emu_ggpo_solo()) emu_ggpo_shutdown(&state.emu);
     lr_install_board();
     if (state.emu.run_state != EMU_RUNNING) emu_run(&state.emu);
 }
@@ -2477,7 +2499,7 @@ static void lr_ggpo_paused(void) {
 
 /* A session of any kind: each machine is one player. */
 static bool lr_in_session(void) {
-    return pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_wanted();
+    return pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_match();
 }
 
 /* A retro_run's board with GGPO chosen: a session's frame (or its wait), or,

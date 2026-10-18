@@ -117,7 +117,12 @@ pick the same one to see each other's rooms.
 
 `powsled.zip` is a ride, the Slave unit. A ride races only on a comm-board ring with a Main
 unit, which runs the same program in another mode (MAME patches the Relay's program into a
-Main; here the ride's program is patched the same way). Run two copies, the Main first:
+Main; here the ride's program is patched the same way).
+
+Loaded alone (Pinboard #1110), the ride races by itself: the Main runs beside it in the
+same process, and its operator opens entry, closes it and starts the race when the rider
+presses **P1 Entry** (`P1 B1`). `--ggpo-solo 0` turns that off. For a Main of your own, or a
+second ride, run two copies, the Main first:
 
 ```bash
 m2hle --rom powsled.zip --run --comm-master                    # the Main; prints comm-link PORT:TOKEN

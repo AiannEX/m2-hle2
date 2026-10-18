@@ -345,6 +345,7 @@ static bool web_follow_ready(void) {
 static bool web_ggpo_slice(void);
 
 static bool web_slice(void) {
+    emu_ggpo_solo_netplay(&state.emu);
     if (emu_ggpo_wanted()) return web_ggpo_slice();
     netplay_step_t np = emu_netplay_pump(&state.emu);
     g_web_waited = (np == NETPLAY_STEP_WAIT);
@@ -400,7 +401,7 @@ static bool g_web_select_tap;   /* one shell frame of SELECT, from the page */
 static bool g_web_shot_want;    /* the page asked for a screenshot (web_shot_arm) */
 static bool g_web_shot_state;   /* ... and a savestate taken with it */
 
-static bool web_pause_refused(void) { return netplay_in_room() || netplay_active() || emu_ggpo_wanted(); }
+static bool web_pause_refused(void) { return netplay_in_room() || netplay_active() || emu_ggpo_match(); }
 
 /* 1 when the page may offer the button: a game is loaded, no room has us, and
  * the Console shell is not in one of its own menus (which hold the board). */

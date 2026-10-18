@@ -96,6 +96,18 @@ static inline void rollback__copy(void *dst, const void *src, size_t n) {
     }
 }
 
+/* A part and a buffer change places, 4 KB at a time, only where they differ
+ * (SOLO's twin, emu_twin.h: one pass where a save and a load take two). */
+static inline void rollback__swap(void *a, void *b, size_t n) {
+    uint8_t t[ROLLBACK_DIFF_CHUNK];
+    uint8_t *x = (uint8_t *)a, *y = (uint8_t *)b;
+    while (n) {
+        size_t k = n < ROLLBACK_DIFF_CHUNK ? n : ROLLBACK_DIFF_CHUNK;
+        if (memcmp(x, y, k)) { memcpy(t, x, k); memcpy(x, y, k); memcpy(y, t, k); }
+        x += k; y += k; n -= k;
+    }
+}
+
 static inline void rollback__add(const char *name, void *p, size_t n, void (*pack)(void *), bool ptrs) {
     if (g_rollback.n >= ROLLBACK_PARTS_MAX) {
         LOG_ERROR("rollback: more parts than ROLLBACK_PARTS_MAX");

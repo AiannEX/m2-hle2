@@ -369,6 +369,13 @@ typedef struct game_profile {
      * board. */
     bool                link_twin;
 
+    /* A linked game one board cannot play (Power Sled's ride needs a Main):
+     * with nothing else on the board it runs both cabinets, the player's live
+     * and this working the other's controls (emu_ggpo.h, SOLO). Returns the
+     * other cabinet's held mask from its RAM and the player's held keys.
+     * Needs link_twin. NULL: the board runs alone. */
+    uint32_t          (*link_solo)(struct memory_bus *bus, uint32_t held);
+
     /* A prepared profile (registry.h, g_prepared_profiles): the set's ROMs and
      * what is known of its data, with no board to run it yet. Says what the
      * board lacks; NULL for a runnable profile, or what a runnable one still
