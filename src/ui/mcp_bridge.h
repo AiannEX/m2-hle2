@@ -1326,6 +1326,24 @@ static void mcp_cmd_clear_all_breakpoints(char *resp, int cap) {
     snprintf(resp, (size_t)cap, "{\"ok\":true,\"removed\":%d}", removed);
 }
 
+/* The reply: why the board stopped, where, and what a watchpoint saw. */
+static void mcp_wait_stop_reply(char *resp, int cap, int running, int halted, uint32_t ip, uint32_t elapsed) {
+    const char *reason = running                  ? "timeout"
+                       : halted                   ? "halted"
+                       : g_wp.hit                 ? "watchpoint"
+                       : g_bp.hit_addr            ? "breakpoint"
+                       : g_sharc.unknown_trigger_cmd ? "cop_unknown"
+                       : "stopped";
+    snprintf(resp, (size_t)cap,
+             "{\"ok\":true,\"stopped\":%s,\"reason\":\"%s\","
+             "\"ip\":\"0x%08X\",\"elapsed_ms\":%u,"
+             "\"cop_cmd\":\"0x%08X\",\"cop_ip\":\"0x%08X\","
+             "\"wp_addr\":\"0x%08X\",\"wp_val\":\"0x%08X\",\"wp_ip\":\"0x%08X\",\"wp_write\":%s}",
+             running ? "false" : "true", reason, ip, elapsed,
+             g_sharc.unknown_trigger_cmd, g_sharc.unknown_trigger_ip,
+             g_wp.hit_addr, g_wp.hit_val, g_wp.hit_ip, g_wp.hit_write ? "true" : "false");
+}
+
 /*
  * Block until the emulator stops running (breakpoint, halt, or manual stop),
  * or until timeout_ms elapses.  Returns the stop reason and final IP.
@@ -1354,20 +1372,7 @@ static void mcp_cmd_wait_for_stop(const char *req, char *resp, int cap) {
         ip = g_mcp.emu->cpu_snapshot.sfr.ip;
         emu_mutex_unlock(&g_mcp.emu->mutex);
     }
-    const char *reason = running                  ? "timeout"
-                       : halted                   ? "halted"
-                       : g_wp.hit                 ? "watchpoint"
-                       : g_bp.hit_addr            ? "breakpoint"
-                       : g_sharc.unknown_trigger_cmd ? "cop_unknown"
-                       : "stopped";
-    snprintf(resp, (size_t)cap,
-             "{\"ok\":true,\"stopped\":%s,\"reason\":\"%s\","
-             "\"ip\":\"0x%08X\",\"elapsed_ms\":%u,"
-             "\"cop_cmd\":\"0x%08X\",\"cop_ip\":\"0x%08X\","
-             "\"wp_addr\":\"0x%08X\",\"wp_val\":\"0x%08X\",\"wp_ip\":\"0x%08X\",\"wp_write\":%s}",
-             running ? "false" : "true", reason, ip, elapsed,
-             g_sharc.unknown_trigger_cmd, g_sharc.unknown_trigger_ip,
-             g_wp.hit_addr, g_wp.hit_val, g_wp.hit_ip, g_wp.hit_write ? "true" : "false");
+    mcp_wait_stop_reply(resp, cap, running, halted, ip, elapsed);
 }
 
 /* ---- Command dispatch ---------------------------------------------------- */
