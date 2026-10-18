@@ -23,6 +23,15 @@
  * cabinet's (COIN1 0x01, COIN2 0x02, TEST 0x04, SERVICE 0x08, START1 0x10,
  * START2 0x20), IN1 player 1 and IN2 player 2 (Punch 0x01, Kick 0x02, Guard
  * 0x04, down 0x10, up 0x20, right 0x40, left 0x80).
+ *
+ * Against MAME (vf2, Japan, cold boot; Pinboard #1055): pictures paired by the
+ * game's frame counter, u32 at 0x500020, which both boards step alike (MAME
+ * reaches 641 ~116 board frames after we do). The SEGA logo ends one game
+ * frame later here (0x500018/0x500028 a frame behind from ~900 on), and the
+ * attract's first fight (counter ~950-4350) matches all but to the pixel
+ * (median 0.01% of pixels > 48 off). The second and third demo fights drift:
+ * the 0x500000 globals stay in step, the fighters do not, and MAME's attract loops back to
+ * the logo by counter ~8100 while ours is still at the ranking. Open.
  */
 #ifndef PROFILES_VF2_H
 #define PROFILES_VF2_H
