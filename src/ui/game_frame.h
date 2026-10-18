@@ -51,6 +51,7 @@ static inline float game_frame_lerp(void) {
 static inline void game_frame_prepare(video_state_t *video, geo3d_state_t *geo3d,
                                       memory_bus_t *bus, const romset_t *rs,
                                       bool read_camera) {
+    emu_mutex_t *twin = emu_twin_ui_enter();   /* a GGPO twin's hidden cabinet is not drawn */
     int64_t t0 = emu_now_us();
     int zone = hprof_enter(HPROF_COMPOSE);   /* host_prof.h */
     video_update(video, bus);
@@ -98,6 +99,7 @@ static inline void game_frame_prepare(video_state_t *video, geo3d_state_t *geo3d
     }
     g_game_frame_times.scan_us += emu_now_us() - t1;
     hprof_leave(zone);
+    emu_twin_ui_leave(twin);
 }
 
 /* Draw the game into the viewport vp of the current pass.
@@ -106,6 +108,7 @@ static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
                                    memory_bus_t *bus, const romset_t *rs,
                                    game_rect_t vp, float lerp_t) {
     const int ox = vp.x, oy = vp.y, w = vp.w, h = vp.h;
+    emu_mutex_t *twin = emu_twin_ui_enter();
     int64_t t0 = emu_now_us();
     int zone = hprof_enter(HPROF_UPLOAD);   /* host_prof.h */
     /* Decode both 4-bit luma texture banks → GPU atlas for textured fills, and
@@ -192,6 +195,7 @@ static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
     g_game_frame_times.tiles_us  += (t2 - t1) + (emu_now_us() - t3);
     g_game_frame_times.frames++;
     hprof_leave(zone);
+    emu_twin_ui_leave(twin);
 }
 
 #endif /* GAME_FRAME_H */

@@ -358,6 +358,11 @@ typedef struct game_profile {
      * has no link. */
     game_link_role_fn   link_role;
 
+    /* A GGPO match plays the link: both cabinets on each machine, one player
+     * on each (core/emu_twin.h). Two cabinets of the same program only: not
+     * Power Sled, whose role is a program of its own and whose race is three. */
+    bool                link_twin;
+
     /* A prepared profile (registry.h, g_prepared_profiles): the set's ROMs and
      * what is known of its data, with no board to run it yet. Says what the
      * board lacks; NULL for a runnable profile, or what a runnable one still
