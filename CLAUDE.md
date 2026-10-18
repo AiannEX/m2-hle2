@@ -54,7 +54,7 @@ Building, the tests, the graders and the STF disassembly: [docs/build.md](docs/b
 - An unknown COP command whose "opcodes" look like floats means an argument count is missing, not a new op. Log unknown COP commands and unhandled MMIO at WARN.
 - ROMs: use `$ROMS_DIR` in place, never copy a zip, never run from the ROM folder. Scripted runs use `--headless --mcp --rom <zip> --run`.
 - Netplay tests only on the container's RPCN (127.0.0.1:31313) or a local ggpo-server. A scripted session never writes memory or halts the board.
-- No Sega asset goes in the repo (PS3 menu art, decoded dumps), and no Gems C: it lives in the `vendor/gems-c` submodule.
+- No Sega asset goes in the repo (PS3 menu art, decoded dumps), and no Gems or Ages C: it lives in the `vendor/gems-c` and `vendor/ages-c` submodules.
 
 ## Conventions
 

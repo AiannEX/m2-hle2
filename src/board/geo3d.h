@@ -1200,8 +1200,11 @@ typedef struct {
     float   xoff, yoff;
 } geo3d__geol_t;
 
-/* Mode, LOD and z-adjust are the geometrizer's own state and outlive a list. */
-static struct { uint32_t mode; float lod; uint32_t zadj; } g_geol_held;
+/* Mode, LOD and z-adjust are the geometrizer's own state and outlive a list.
+ * The walk starts from the values published with its list (memory.h,
+ * g_geo_held: geo3d_scan_geo_list's caller sets them) and follows the list's
+ * own commands from there. */
+static geo_held_t g_geol_held;
 
 static inline uint32_t geo3d__geol_arg(const uint32_t *words, uint32_t nw, uint32_t p, uint32_t k) {
     return p + 1u + k < nw ? words[p + 1u + k] : 0u;

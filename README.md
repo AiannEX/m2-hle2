@@ -81,7 +81,7 @@ the next game cheaper instead of being spent on a single ROM set.
 | 3D pipeline | Index-array polygon decoder (J = 1.0 vs. reference meshes), textures, flat + luma shading, backface cull, shadows |
 | MC68000 sound CPU | Full opcode core with Motorola cycle timing, unit tests |
 | SCSP audio | Register-level chip (slots, timers, DSP) run one sample at a time in lockstep with the 68000; host output via sokol_audio |
-| Input | Interrupt-driven, through the real 315-5649 I/O ports; optional button macros (`--macros`, or `--macro a=b1+b2` per key; `--pad-map north=b1+b2` on the handheld; the Controls panel in the browser) |
+| Input | Interrupt-driven, through the real 315-5649 I/O ports; optional button macros (`--macros`, or `--macro a=b1+b2` per key; `--pad-map north=b1+b2` on the handheld; the Controls panel in the browser). Air Walkers' players 3 and 4 play from the third and fourth pad, or `--macro t=p3:up` |
 | Debug UI | CPU / memory / bus stats / COP / 3D / object viewer / 68K / breakpoint windows |
 | Netplay | RPCN matchmaking (our server or the official np.rpcs3.net) + direct peer-to-peer delay lockstep (`--netplay`); GGPO rollback through its own lobby (desktop, web and libretro builds); rooms of up to eight with a winner-stays queue; cross-play with the PS3 release on the official server |
 | PS3-release menus | The Console profile's title, main menu, Arcade / Offline Versus settings and online lobby, redrawn after the PS3 release (libretro core and web build) |
@@ -112,6 +112,23 @@ Game profiles live in [src/profiles/](src/profiles/): `sfight_console`, `sfight`
 
 The two profiles behave differently, so each has its own netplay lobby: two players have to
 pick the same one to see each other's rooms.
+
+### Power Sled
+
+`powsled.zip` is a ride, the Slave unit. A ride races only on a comm-board ring with a Main
+unit, which runs the same program in another mode (MAME patches the Relay's program into a
+Main; here the ride's program is patched the same way). Run two copies, the Main first:
+
+```bash
+m2hle --rom powsled.zip --run --comm-master                    # the Main; prints comm-link PORT:TOKEN
+m2hle --rom powsled.zip --run --comm-slave PORT:TOKEN           # the ride
+```
+
+The race starts from the Main's operator panel: on the Main, **P1 Call** (`P1 B2`) opens
+entry, then on the ride **P1 Entry** (`P1 B1`), then on the Main **P2 Call** (`P2 B2`) twice
+and **P2 B3** (the Main's IN1 bit 4) for the race. The ride steers with its two pedals, **P1
+Left** and **P1 Right**. The Main shows the race
+from the Relay's camera, behind the riders.
 
 ## Layout
 

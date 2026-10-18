@@ -74,6 +74,7 @@ static inline void game_frame_prepare(video_state_t *video, geo3d_state_t *geo3d
          * polygon RAM it reads are the ones published with it (memory.h). */
         const uint32_t *snap = g_geodl_snap;
         g_geo_rs = geodl_raster_for(snap);
+        g_geol_held = *geodl_held_for(snap);
         /* Set each frame, both ways: a game loaded after m2-snake in the same
          * process used to keep the homebrew's flat colours. */
         g_geo_flat_color = q->geo_displaylist ? 1 : 0;
