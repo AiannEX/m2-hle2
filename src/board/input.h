@@ -33,6 +33,7 @@
 #include "constants.h"
 #include "game_profile.h"
 #include "eeprom_93c46.h"
+#include "model1io.h"
 #include "io_5649.h"
 #include "lightgun.h"
 #include "log.h"
@@ -335,6 +336,18 @@ static inline void input_attach_lightgun(mem_region_t *r) {
  * installed (install_fn re-inits the bus). Writes (coin-meter strobe at IO+0x00,
  * IO+0x40) keep hitting the plain buffer — harmless. */
 static inline void input_attach(memory_bus_t *bus) {
+    if (g_active_profile && g_active_profile->quirks.model1_io) {
+        /* The install put the board's window at IO_BASE (model1io.h); the
+         * Z80 reads the controls through io_5649.h's model. */
+        const game_quirks_t *q = &g_active_profile->quirks;
+        g_io5649_controls = (io5649_controls_t){ q->wheel.left, q->wheel.right, q->wheel.accel,
+                                                 q->wheel.brake, q->wheel.shift_up, q->wheel.shift_down };
+        g_io5649_held_fn     = input_board_held;
+        g_io5649_from_net_fn = input_board_from_net;
+        g_model1io_vr4       = q->model1_io_vr4;
+        LOG_INFO("input: Model 1 I/O board");
+        return;
+    }
     for (int i = 0; i < bus->region_count; i++) {
         if (bus->regions[i].base == IO_BASE) {
             if (g_active_profile && g_active_profile->quirks.io_5649) input_attach_5649(&bus->regions[i]);

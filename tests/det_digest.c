@@ -451,6 +451,7 @@ static void install_board(void *ctx) {
     if (g_gems_i960 || g_gems_cop || g_gems_verify) gems_apply(profile_rom_set(g_active_profile));
     irqt_reset();
     if (g_active_profile->quirks.enable_68k_sound) {
+        sound_select_board(g_active_profile->quirks.model1_sound);
         sound_reset();
         sound_attach(&bus);
         if (romset.audiocpu && romset.audiocpu_size > 0) sound_load_rom(romset.audiocpu, (uint32_t)romset.audiocpu_size);
