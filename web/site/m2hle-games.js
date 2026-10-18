@@ -202,6 +202,34 @@ const m2hleGames = (() => {
         },
       },
     },
+    vf2: {
+      title: 'Virtua Fighter 2',
+      year: 1994, board: 'Model 2A-CRX', colors: ['#1d8fc8', '#0b2a3d'],
+      blurb: 'Akira, Sarah, Lau and the rest, joined by Lion and Shun Di: the fighter that set the pace for 3D.',
+      /* src/profiles/vf2.h: Version 2.1 and its three clones, each a clone of vf2.zip. */
+      profiles: [
+        { id: 'vf2', name: 'Version 2.1', about: 'Version 2.1' },
+        { id: 'vf2b', name: 'Rev B', about: 'Revision B' },
+        { id: 'vf2a', name: 'Rev A', about: 'Revision A' },
+        { id: 'vf2o', name: 'Original', about: 'The first release' },
+      ],
+      romHint: 'Your <code>vf2.zip</code> (Version 2.1), or <code>vf2b.zip</code>, <code>vf2a.zip</code> or <code>vf2o.zip</code> and its parent <code>vf2.zip</code>, picked together',
+      /* src/profiles/vf2.h: MAME's INPUT_PORTS(vf2), B1 punch, B2 kick, B3 guard. */
+      labels: { b1: 'Punch', b2: 'Kick', b3: 'Guard', b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'バーチャファイター2',
+          blurb: 'アキラ、サラ、ラウたちに、リオンとシュンディが加わった。3D 格闘の基準を作った一作。',
+          profiles: { vf2: { name: 'Ver.2.1', about: 'Ver.2.1' }, vf2b: { name: 'リビジョン B', about: 'リビジョン B' },
+                      vf2a: { name: 'リビジョン A', about: 'リビジョン A' }, vf2o: { name: '初期版', about: '最初のリリース' } },
+          romHint: 'お持ちの <code>vf2.zip</code>（Ver.2.1）、または <code>vf2b.zip</code>、<code>vf2a.zip</code>、<code>vf2o.zip</code> と親セットの <code>vf2.zip</code> を一緒に',
+          labels: { b1: 'パンチ', b2: 'キック', b3: 'ガード', b4: '未使用' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
 

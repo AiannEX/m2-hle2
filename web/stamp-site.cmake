@@ -34,7 +34,8 @@ foreach(want site_title site_desc)
 endforeach()
 foreach(game "sfight|Sonic the Fighters" "srallyc|Sega Rally Championship"
              "vonj|Cyber Troopers Virtual-On" "dynamcop|Dynamite Cop"
-             "fvipers|Fighting Vipers" "hotd|The House of the Dead")
+             "fvipers|Fighting Vipers" "hotd|The House of the Dead"
+             "vf2|Virtua Fighter 2")
   string(REPLACE "|" ";" game "${game}")
   list(GET game 0 id)
   list(GET game 1 title)

@@ -13,8 +13,9 @@
 #include "sfight.h"
 #include "sfight_console.h"
 /* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
- * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop, Fighting Vipers and
- * The House of the Dead (the page's ?game=, web/site/m2hle-games.js). Any other set is only
+ * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop, Fighting Vipers,
+ * The House of the Dead and Virtua Fighter 2 (the page's ?game=,
+ * web/site/m2hle-games.js). Any other set is only
  * download size: left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. */
 #include "srallyc.h"
@@ -22,8 +23,8 @@
 #include "dynamcop.h"
 #include "fvipers.h"
 #include "hotd.h"      /* runs since Pinboard #1034, on the web since #1040 */
+#include "vf2.h"       /* runs since Pinboard #1046, on the web since #1055 */
 #ifndef M2HLE_WEB
-#include "vf2.h"       /* runs since Pinboard #1046 */
 #include "m2snake.h"
 #include "sfight_homebrew.h"
 #endif
@@ -47,11 +48,11 @@ const game_profile_t *const g_profiles[] = {
     &dynamcopc_profile,
     &fvipers_profile,
     &hotd_profile,
-#ifndef M2HLE_WEB
     &vf2_profile,
     &vf2b_profile,
     &vf2a_profile,
     &vf2o_profile,
+#ifndef M2HLE_WEB
     &m2snake_profile,
     &sfight_homebrew_profile,
 #endif
