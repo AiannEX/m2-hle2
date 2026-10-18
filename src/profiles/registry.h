@@ -13,8 +13,8 @@
 #include "sfight.h"
 #include "sfight_console.h"
 /* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
- * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop, Fighting Vipers and
- * The House of the Dead (the page's ?game=, web/site/m2hle-games.js). Any other set is only
+ * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop, Fighting Vipers,
+ * The House of the Dead, Daytona USA and Air Walkers (the page's ?game=, web/site/m2hle-games.js). Any other set is only
  * download size: left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. Dead or Alive is here too, but not on the page yet:
  * det_digest builds with this list, and one 32 KB chip is no download size. */
@@ -25,7 +25,7 @@
 #include "hotd.h"      /* runs since Pinboard #1034, on the web since #1040 */
 #include "daytona.h"   /* runs since Pinboard #1035, on the web since #1047 */
 #include "doa.h"       /* runs since Pinboard #1050; not on the site yet */
-#include "airwlkrs.h"  /* runs since Pinboard #1063; not on the site yet */
+#include "airwlkrs.h"  /* runs since Pinboard #1063, on the site since #1063 */
 #ifndef M2HLE_WEB
 #include "m2snake.h"
 #include "sfight_homebrew.h"

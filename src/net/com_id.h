@@ -140,6 +140,10 @@ static const comid_entry_t g_comid_registry[] = {
     { "DYNAMCOP",           "DYNCOP", NULL },
     { "TOPSKATR",           "TOPSKT", NULL },
 
+    /* Data East's shooter on the 2A (Pinboard #1063). */
+    { "AIRWLKRS",           "ARWLKR", NULL },
+    { "AIRWALKERS",         "ARWLKR", NULL },
+
     /* The homebrew that runs on this board layer. */
     { "M2SNAKE",            "M2SNAK", NULL },
 };

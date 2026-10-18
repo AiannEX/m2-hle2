@@ -232,6 +232,29 @@ const m2hleGames = (() => {
         },
       },
     },
+    airwlkrs: {
+      title: 'Air Walkers',
+      year: 1997, board: 'Model 2A-CRX', colors: ['#2fa8c8', '#0b3a4c'],
+      blurb: 'Data East\'s basketball: sixteen cities, team select, tip-off. Two of the cabinet\'s four players here.',
+      profiles: [
+        { id: 'airwlkrs', name: 'Arcade', about: 'The only build MAME knows' },
+      ],
+      romHint: 'Your <code>airwlkrs.zip</code> (Air Walkers)',
+      /* src/profiles/airwlkrs.h: MAME's INPUT_PORTS(airwlkrs), three buttons a
+       * player. The cabinet's players 3 and 4 (port F) read released. */
+      labels: { b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          blurb: 'データイーストのバスケットボール。16都市からチームを選んでティップオフ。筐体は4人用、ここでは2人まで。',
+          profiles: { airwlkrs: { name: 'アーケード', about: 'MAME が知る唯一の版' } },
+          romHint: 'お持ちの <code>airwlkrs.zip</code>（エアーウォーカーズ）',
+          labels: { b4: '未使用' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
 
