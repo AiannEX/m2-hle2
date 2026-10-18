@@ -61,6 +61,7 @@ const m2hleGames = (() => {
        * UP/DOWN a gear, B3 VIEW CHANGE. */
       labels: { up: 'Shift up', down: 'Shift down', left: 'Steer left', right: 'Steer right',
                 b1: 'Accelerator', b2: 'Brake', b3: 'View change', b4: 'Unused' },
+      gears: true,                         /* a button per gate as well (io_5649.h) */
       /* No replay format of its own: a replay is always the buttons from the
        * game's start (src/core/replay.h, replay__saves_inputs). */
       ownReplay: false,
@@ -218,6 +219,8 @@ const m2hleGames = (() => {
        * VR3/VR4). The wheel's force is the pad's rumble (m2hle-pad.js). */
       labels: { up: 'Shift up', down: 'Shift down', left: 'Steer left', right: 'Steer right',
                 b1: 'Accelerator', b2: 'Brake', b3: 'View 1', b4: 'View 2' },
+      /* A button per gate of the lever as well as Shift up / down (io_5649.h). */
+      gears: true,
       ownReplay: false,
       /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
       arcade: false, keepSave: true,

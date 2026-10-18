@@ -16,8 +16,9 @@
  * --pad-map  comma-separated button=action pairs overriding the defaults, e.g.
  *            "south=b1,east=b2,west=b3". Buttons: south east west north start
  *            back l1 r1 l3 r3 guide; actions: b1 b2 b3 b4 start coin service
- *            test none, or a combo that holds several at once (a "macro"),
- *            e.g. "north=b1+b2,l3=b1+b2+b3".
+ *            test none, a racing cabinet's gearn gear1 gear2 gear3 gear4 (one
+ *            button a gate, Daytona and Sega Rally), or a combo that holds
+ *            several at once (a "macro"), e.g. "north=b1+b2,l3=b1+b2+b3".
  * --shot     save a PNG of the first rendered frame at or after game frame N.
  * --exit-after  quit after N game frames (for scripted checks).
  * --host-prof START:SECS[:FILE]  sample the process's own CPU time for SECS
@@ -223,13 +224,13 @@ static pad_bind_t g_pad_binds[] = {
 };
 #define PAD_BIND_COUNT (int)(sizeof g_pad_binds / sizeof g_pad_binds[0])
 
-/* An action, or a combo of player-1 actions ("b1+b2"); false if neither. */
+/* An action, or a combo of player-1 actions ("b1+b2") and the cabinet's own
+ * (service, test, gearn, gear1-gear4); false if neither. */
 static bool actions_by_name(const char *s, uint32_t *acts) {
     if (!strcmp(s, "none"))    { *acts = 0; return true; }
-    if (!strcmp(s, "service")) { *acts = ACT(GAME_INPUT_SERVICE); return true; }
-    if (!strcmp(s, "test"))    { *acts = ACT(GAME_INPUT_TEST); return true; }
     *acts = input_combo_parse(s);
-    return *acts && !(*acts >> GAME_INPUT_P2_UP);   /* the pad plays player 1 */
+    uint32_t p2 = ((1u << (GAME_INPUT_P2_COIN + 1)) - 1) & ~((1u << GAME_INPUT_P2_UP) - 1);
+    return *acts && !(*acts & p2);   /* the pad plays player 1 */
 }
 
 static bool apply_pad_map(const char *list) {
