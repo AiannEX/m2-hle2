@@ -16,6 +16,13 @@
  * front ends that draw rectangles (ps3ui's canvas, sokol_gl); the desktop's
  * ImGui draws its own.
  *
+ * The flash (Pinboard #1045), off unless asked for (--gun-flash N): the
+ * picture goes white for N drawn frames when a gun's trigger is pulled, as a
+ * light gun that reads the screen (a Sinden, say) wants. It is the host's
+ * picture only: the board and the A/V stream never see it, and it is no
+ * netplay change. The pull is the board's trigger bit, either gun's, so a
+ * pad's B1, a replay's and the other player's in a session flash too.
+ *
  * No ImGui, no sokol: only the board's input.
  */
 #ifndef M2HLE_LIGHTGUN_HOST_H
@@ -23,6 +30,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "game_profile.h"
 #include "input.h"
@@ -93,6 +102,35 @@ static inline bool lightgun_host_shown(int p) {
         || g_lightgun.y[p] != g_lightgun_range[p].y_rest;
 }
 
+#define LIGHTGUN_HOST_FLASH_MAX 8
+
+static int  g_lightgun_flash;              /* frames of white a pull draws; 0 = off */
+static int  s_lightgun_flash_left;
+static bool s_lightgun_flash_was[LIGHTGUN_PLAYERS];
+
+/* --gun-flash N (0..8 frames; "on" is 2, "off" 0): true when `opt` is it. */
+static inline bool lightgun_host_option(const char *opt, const char *val) {
+    if (strcmp(opt, "--gun-flash") != 0) return false;
+    int n = !strcmp(val, "on") ? 2 : !strcmp(val, "off") ? 0 : (int)strtol(val, NULL, 0);
+    g_lightgun_flash = n < 0 ? 0 : n > LIGHTGUN_HOST_FLASH_MAX ? LIGHTGUN_HOST_FLASH_MAX : n;
+    if (!g_lightgun_flash) s_lightgun_flash_left = 0;
+    return true;
+}
+
+/* Once a drawn frame: true when this one flashes. A trigger pulled starts N. */
+static inline bool lightgun_host_flash_tick(void) {
+    if (!lightgun_host_on()) return false;
+    uint32_t held = lightgun_held();
+    for (int p = 0; p < LIGHTGUN_PLAYERS; p++) {
+        bool down = (held & g_lightgun_controls[p].trigger) != 0;
+        if (down && !s_lightgun_flash_was[p] && g_lightgun_flash) s_lightgun_flash_left = g_lightgun_flash;
+        s_lightgun_flash_was[p] = down;
+    }
+    if (s_lightgun_flash_left <= 0) return false;
+    s_lightgun_flash_left--;
+    return true;
+}
+
 /* One solid bar of a crosshair, output pixels (x0, y0 top left). */
 typedef struct {
     float    x0, y0, x1, y1;
@@ -100,10 +138,12 @@ typedef struct {
     float    a;
 } lightgun_host_bar_t;
 
-#define LIGHTGUN_HOST_BARS (LIGHTGUN_PLAYERS * 8)
+#define LIGHTGUN_HOST_BARS (LIGHTGUN_PLAYERS * 8 + 1)
 
 /* The crosshairs over a picture at (ox, oy, w, h): four arms a gun, a dark
- * outline under each, P1 red and P2 blue. Returns how many bars. */
+ * outline under each, P1 red and P2 blue; under them, on a frame that
+ * flashes, the whole picture white. Returns how many bars. Call it once a
+ * drawn frame: it counts the flash down. */
 static inline int lightgun_host_crosshairs(float ox, float oy, float w, float h,
                                            lightgun_host_bar_t out[LIGHTGUN_HOST_BARS]) {
     if (!lightgun_host_on() || w <= 0.0f || h <= 0.0f) return 0;
@@ -111,6 +151,7 @@ static inline int lightgun_host_crosshairs(float ox, float oy, float w, float h,
     float t = h / 384.0f * 1.5f;
     if (t < 1.0f) t = 1.0f;
     int n = 0;
+    if (lightgun_host_flash_tick()) out[n++] = (lightgun_host_bar_t){ ox, oy, ox + w, oy + h, 0xFFFFFFu, 1.0f };
     for (int p = 0; p < LIGHTGUN_PLAYERS; p++) {
         if (!lightgun_host_shown(p)) continue;
         float fx, fy;
