@@ -27,6 +27,7 @@
 #include "doa.h"       /* runs since Pinboard #1050, on the web too */
 #include "vf2.h"       /* runs since Pinboard #1046, on the web since #1055 */
 #ifndef M2HLE_WEB
+#include "powsled.h"   /* Pinboard #1052 */
 #include "m2snake.h"
 #include "sfight_homebrew.h"
 #endif
@@ -60,6 +61,7 @@ const game_profile_t *const g_profiles[] = {
     &vf2a_profile,
     &vf2o_profile,
 #ifndef M2HLE_WEB
+    &powsled_profile,
     &m2snake_profile,
     &sfight_homebrew_profile,
 #endif
