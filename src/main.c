@@ -1546,6 +1546,33 @@ static void extract_model_tick(void) {
     }
 }
 
+/* The game into the swapchain pass: the stream's target when the window
+ * mirrors it, the filter's when there is one, else drawn here; then the
+ * overlay or the script's drawing over it. */
+static void window_draw_game(int ox, int oy, int w, int h, bool post, bool win_overlay, float lerp_t) {
+    /* Back colour → background tiles → 3D scene → foreground/HUD — unless
+     * the A/V pass above has already drawn this frame, in which case the
+     * window shows that target rather than redrawing it. */
+    if (s_av_mirror)
+        game_render_draw_target(av_capture_color_tex(), true, ox, oy, w, h);
+    else if (post)
+        post_shader_draw(ox, oy, w, h, sapp_width(), sapp_height());
+    else
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
+                        (game_rect_t){ox, oy, w, h}, lerp_t);
+
+    /* The overlay goes UNDER any debug window that is open, which is right:
+     * those are for the person at the keyboard and the overlay is for the
+     * stream. simgui_render() is below, outside this block. */
+    if (win_overlay) overlay_host_draw();
+
+    /* What the game's script drew (PostDraw), over the game and under the
+     * debug windows. Not on the A/V stream: that is the board's picture. */
+    if (!win_overlay) m2lua_ui_draw(ox, oy, w, h);
+
+    extract_model_tick();
+}
+
 static void frame(void) {
     /* `quit` over the bridge. Capture mode would otherwise swallow the close,
      * which is the point of capture mode -- so say we mean it. */
@@ -1629,29 +1656,7 @@ static void frame(void) {
 
     /* Draw the game letterboxed into the swapchain, then ImGui on top.
      * Layer order: back-back colour → background tiles → (3D, Phase 9) → FG/HUD. */
-    {
-        /* Back colour → background tiles → 3D scene → foreground/HUD — unless
-         * the A/V pass above has already drawn this frame, in which case the
-         * window shows that target rather than redrawing it. */
-        if (s_av_mirror)
-            game_render_draw_target(av_capture_color_tex(), true, ox, oy, w, h);
-        else if (post)
-            post_shader_draw(ox, oy, w, h, sapp_width(), sapp_height());
-        else
-            game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                            (game_rect_t){ox, oy, w, h}, lerp_t);
-
-        /* The overlay goes UNDER any debug window that is open, which is right:
-         * those are for the person at the keyboard and the overlay is for the
-         * stream. simgui_render() is below, outside this block. */
-        if (win_overlay) overlay_host_draw();
-
-        /* What the game's script drew (PostDraw), over the game and under the
-         * debug windows. Not on the A/V stream: that is the board's picture. */
-        if (!win_overlay) m2lua_ui_draw(ox, oy, w, h);
-
-        extract_model_tick();
-    }
+    window_draw_game(ox, oy, w, h, post, win_overlay, lerp_t);
 
     simgui_render();
     sg_end_pass();
