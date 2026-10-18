@@ -189,6 +189,8 @@ const m2hleGames = (() => {
       /* A light gun on the mouse or a finger (main_web.c, web_gun_event); the
        * pad's directions walk it, B1 fires, B2 reloads (board/lightgun.h). */
       labels: { b1: 'Trigger', b2: 'Reload', b3: 'Unused', b4: 'Unused' },
+      /* The Controls panel offers the flash on each shot (m2hle-pad.js, lightgun_host.h). */
+      gun: true,
       ownReplay: false,
       /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
       arcade: false, keepSave: true,

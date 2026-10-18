@@ -84,6 +84,12 @@ const m2hlePad = (() => {
    * mean something else by every button. */
   const TWIN = !!m2hleGame.twin;
   const STORE = TWIN ? 'm2hle.pad.' + m2hleGame.id : 'm2hle.pad';
+  /* A light-gun game's flash on each shot (lightgun_host.h), off unless asked for. */
+  const GUN = !!m2hleGame.gun;
+  const GUN_FLASH_KEY = 'm2hle.gunflash';
+  const GUN_FLASH_FRAMES = 2;
+  let gunFlash = false;
+  try { gunFlash = localStorage.getItem(GUN_FLASH_KEY) === '1'; } catch (e) { /* private mode */ }
 
   /* The rows of the panel. `act` is the GAME_INPUT_* index for player 1
    * (src/core/game_profile.h), `acts` a macro's; player 2's is 10 further on. */
@@ -552,6 +558,13 @@ const m2hlePad = (() => {
     $('btn-online').addEventListener('click', () => toggle(false));
     $('pad-reset').addEventListener('click', () => { sets = defaultSets(); secondIsP2 = true; save(); stopListening(); });
     $('pad-p2').addEventListener('change', (e) => { secondIsP2 = e.target.checked; save(); render(); });
+    $('gun-flash-row').hidden = !GUN;
+    $('gun-flash').checked = gunFlash;
+    $('gun-flash').addEventListener('change', (e) => {
+      gunFlash = e.target.checked;
+      try { localStorage.setItem(GUN_FLASH_KEY, gunFlash ? '1' : '0'); } catch (err) { /* private mode */ }
+      if (ready) Module._web_set_gun_flash(gunFlash ? GUN_FLASH_FRAMES : 0);
+    });
     $('controls').addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { if (listening) stopListening(); else toggle(false); }
     });
@@ -567,7 +580,10 @@ const m2hlePad = (() => {
   }
 
   /* Called from Module.onM2hleReady. */
-  function onReady() { ready = true; }
+  function onReady() {
+    ready = true;
+    if (GUN) Module._web_set_gun_flash(gunFlash ? GUN_FLASH_FRAMES : 0);
+  }
 
   document.addEventListener('DOMContentLoaded', init);
 
