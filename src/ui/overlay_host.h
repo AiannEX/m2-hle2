@@ -1158,9 +1158,9 @@ static inline void overlay_host_draw(void) {
 
 /* ---- status -------------------------------------------------------------- */
 
-/* The "overlay" block of get_status, so broadcast.py can say on its own
- * console whether the thing is actually running and a probe can assert it. */
-static inline void overlay_host_status_json(char *out, int cap) {
+/* The "swap" member of the overlay block: the swap's state and the
+ * announcement's, each read under the swap's lock. */
+static inline void overlay_host_swap_json(char *swap, size_t cap) {
     /* The swap, read under its lock: the bridge thread asks while the render
      * thread moves it along. */
     overlay_swap__lock();
@@ -1174,19 +1174,25 @@ static inline void overlay_host_status_json(char *out, int cap) {
     snprintf(err,  sizeof err,  "%s", g_overlay_swap.error);
     overlay_swap__unlock();
     json_escape(err_js, (int)sizeof err_js, err);
-    char swap[1600];
-    snprintf(swap, sizeof swap,
+    snprintf(swap, cap,
              "{\"state\":\"%s\",\"swaps\":%d,\"last\":\"%s\",\"error\":\"%s\"}",
              state, swaps, last, err_js);
     overlay_swap__lock();
     char note_js[600];
     json_escape(note_js, (int)sizeof note_js,
                 g_overlay_announce.up ? g_overlay_announce.cur.note : "");
-    snprintf(swap + strlen(swap), sizeof swap - strlen(swap),
+    snprintf(swap + strlen(swap), cap - strlen(swap),
              ",\"announce\":{\"up\":%s,\"queued\":%d,\"shown\":%d,\"note\":\"%s\"}",
              g_overlay_announce.up ? "true" : "false", g_overlay_announce.n,
              g_overlay_announce.shown, note_js);
     overlay_swap__unlock();
+}
+
+/* The "overlay" block of get_status, so broadcast.py can say on its own
+ * console whether the thing is actually running and a probe can assert it. */
+static inline void overlay_host_status_json(char *out, int cap) {
+    char swap[1600];
+    overlay_host_swap_json(swap, sizeof swap);
 
     if (!g_overlay.want) {
         snprintf(out, (size_t)cap, "{\"loaded\":false,\"swap\":%s}", swap);
