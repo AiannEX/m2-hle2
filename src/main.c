@@ -66,6 +66,7 @@
 #include "m2lua_ui.h"        /* M2emulator's game scripts: their drawing, keys and menu */
 #include "m2lua_mcp.h"       /* ...and the bridge's script_* commands */
 #include "lightgun_ui.h"      /* the mouse as a light gun, and its crosshairs */
+#include "net/comm_local.h"   /* --comm-master / --comm-slave: two boards linked on 127.0.0.1 */
 #if defined(__linux__)
 #include <unistd.h>          /* readlink: scripts/ beside the executable */
 #endif
@@ -125,6 +126,12 @@ static int  g_av_port    = 0;      /* --av-port N: raw A/V server, 0 = off */
 static int  g_av_w       = AV_DEFAULT_WIDTH;
 static int  g_av_h       = AV_DEFAULT_HEIGHT;
 static int  g_av_mute    = 0;      /* --av-mute: stream the sound, do not play it */
+/* --comm-master / --comm-slave PORT:TOKEN: this board's comm board linked to
+ * another m2hle's over 127.0.0.1 (net/comm_local.h), as SDL3's --versus. */
+static int      g_comm_master = 0;
+static uint16_t g_comm_port   = 0;
+static uint32_t g_comm_token  = 0;
+static bool comm_link_arg(void);
 
 /*
  * Headless netplay (--net-*). The GUI is the normal way in, but a session that
@@ -991,6 +998,7 @@ static void init(void) {
         load_active_profile(g_rom_path);
         if (state.romset.loaded) load_state_arg();   /* a failure is logged; the board boots fresh */
         if (state.romset.loaded) replay_open_arg();
+        if (state.romset.loaded) comm_link_arg();     /* a failure is logged; the board runs unlinked */
         if (g_autorun && state.romset.loaded) emu_run(&state.emu);
     }
 
@@ -1360,6 +1368,24 @@ static void headless_shutdown(void) {
  * into the capture target, so a machine with no desktop session can stream.
  * The A/V tap sits at the sound producer, so the samples come through with or
  * without an audio device. */
+/* --comm-master / --comm-slave: the link, before the board runs. False if
+ * there is no socket. */
+static bool comm_link_arg(void) {
+    if (!g_comm_master && !g_comm_port) return true;
+    uint16_t epoch = (uint16_t)(rand() | 1);
+    bool ok = g_comm_master ? comm_local_listen(&g_comm_local, (uint32_t)rand() ^ (uint32_t)time(NULL), epoch)
+                            : comm_local_connect(&g_comm_local, g_comm_port, g_comm_token, epoch);
+    if (!ok) { LOG_ERROR("--comm-%s: no UDP socket on 127.0.0.1", g_comm_master ? "master" : "slave"); return false; }
+    emu_mutex_lock(&state.emu.mutex);
+    comm_local_begin(&g_comm_local);
+    emu_mutex_unlock(&state.emu.mutex);
+    LOG_INFO("comm link: this board is the %s, link on 127.0.0.1:%u (--comm-slave %u:%u)",
+             comm_role_name(g_comm_local.role), g_comm_local.port, g_comm_local.port, g_comm_local.token);
+    printf("comm-link %u:%u\n", g_comm_local.port, g_comm_local.token);
+    fflush(stdout);
+    return true;
+}
+
 static int headless_main(void) {
     log_init();
     crash_trace_install();
@@ -1381,6 +1407,7 @@ static int headless_main(void) {
     if (!state.romset.loaded) { LOG_ERROR("--headless: ROM set did not load"); return 1; }
     if (!load_state_arg()) return 1;
     replay_open_arg();
+    if (!comm_link_arg()) return 1;
     if (g_autorun) emu_run(&state.emu);
 
     if (!g_no_tray) headless_tray_start();
@@ -1804,6 +1831,14 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             else LOG_WARN("--enemy-rank %s: expected cabinet, easy, normal, hard, hardest, extra1 or extra2", d);
         } else if (i + 1 < argc && io5649_wheel_option(argv[i], argv[i + 1])) {
             i++;                      /* a 315-5649 wheel's pot: centre, range, speed (io_5649.h) */
+        } else if (strcmp(argv[i], "--comm-master") == 0) {
+            g_comm_master = 1;
+        } else if (strcmp(argv[i], "--comm-slave") == 0 && i + 1 < argc) {
+            unsigned port = 0, token = 0;
+            if (sscanf(argv[++i], "%u:%u", &port, &token) == 2 && port && port <= 65535u) {
+                g_comm_port  = (uint16_t)port;
+                g_comm_token = token;
+            } else LOG_WARN("--comm-slave %s: expected PORT:TOKEN", argv[i]);
         } else if (i + 1 < argc && lightgun_host_option(argv[i], argv[i + 1])) {
             i++;                      /* a light gun's flash on the trigger (lightgun_host.h) */
         } else if (strcmp(argv[i], "--run") == 0) {

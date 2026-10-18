@@ -113,6 +113,23 @@ Game profiles live in [src/profiles/](src/profiles/): `sfight_console`, `sfight`
 The two profiles behave differently, so each has its own netplay lobby: two players have to
 pick the same one to see each other's rooms.
 
+### Power Sled
+
+`powsled.zip` is a ride, the Slave unit. A ride races only on a comm-board ring with a Main
+unit, which runs the same program in another mode (MAME patches the Relay's program into a
+Main; here the ride's program is patched the same way). Run two copies, the Main first:
+
+```bash
+m2hle --rom powsled.zip --run --comm-master                    # the Main; prints comm-link PORT:TOKEN
+m2hle --rom powsled.zip --run --comm-slave PORT:TOKEN           # the ride
+```
+
+The race starts from the Main's operator panel: on the Main, **P1 Call** (`P1 B2`) opens
+entry, then on the ride **P1 Entry** (`P1 B1`), then on the Main **P2 Call** (`P2 B2`) twice
+and **P2 B3** (the Main's IN1 bit 4) for the race. The ride steers with its two pedals, **P1
+Left** and **P1 Right**. The Main shows the race
+from the Relay's camera, behind the riders.
+
 ## Layout
 
 - [src/board/](src/board/) — everything shared by every Model 2 ROM set: CPU, bus, COP/SHARC,

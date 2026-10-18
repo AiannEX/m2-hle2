@@ -214,8 +214,10 @@
  *    versus match goes back to select with both players in (Pinboard #1031).
  * 30: The House of the Dead puts the session's region in its COUNTRY setting,
  *    where it always booted Japan (Pinboard #1040).
+ * 31: the sound 68000 runs BTST/BCHG/BCLR/BSET with D4-D7 as the bit number,
+ *    which were unknown opcodes; Power Sled's driver uses them (Pinboard #1052).
  */
-#define NETPLAY_PROTO_REV 30
+#define NETPLAY_PROTO_REV 31
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.
