@@ -189,6 +189,8 @@ const m2hleGames = (() => {
       /* A light gun on the mouse or a finger (main_web.c, web_gun_event); the
        * pad's directions walk it, B1 fires, B2 reloads (board/lightgun.h). */
       labels: { b1: 'Trigger', b2: 'Reload', b3: 'Unused', b4: 'Unused' },
+      /* The Controls panel offers the flash on each shot (m2hle-pad.js, lightgun_host.h). */
+      gun: true,
       ownReplay: false,
       /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
       arcade: false, keepSave: true,
@@ -199,6 +201,96 @@ const m2hleGames = (() => {
           profiles: { hotd: { name: 'リビジョン A', about: 'リビジョン A または初期版' } },
           romHint: 'お持ちの <code>hotd.zip</code>（ザ・ハウス・オブ・ザ・デッド）',
           labels: { b1: 'トリガー', b2: 'リロード', b3: '未使用', b4: '未使用' },
+        },
+      },
+    },
+    daytona: {
+      title: 'Daytona USA',
+      year: 1994, board: 'Model 2', colors: ['#1d8fd8', '#0b2a5c'],
+      blurb: 'Three-Seven Speedway, Dinosaur Canyon, Seaside Street Galaxy. Rolling start!',
+      profiles: [
+        { id: 'daytona', name: 'Rev A', about: 'Japan, Revision A' },
+      ],
+      /* The I/O board's program is MAME's model1io device (src/profiles/daytona.h). */
+      romHint: 'Your <code>daytona.zip</code> and the I/O board\'s <code>model1io.zip</code>, picked together',
+      /* src/profiles/daytona.h: LEFT/RIGHT the wheel, UP/DOWN the four-speed
+       * lever, B1 accelerator, B2 brake, B3/B4 VR1/VR2 (player 2's B3/B4 are
+       * VR3/VR4). The wheel's force is the pad's rumble (m2hle-pad.js). */
+      labels: { up: 'Shift up', down: 'Shift down', left: 'Steer left', right: 'Steer right',
+                b1: 'Accelerator', b2: 'Brake', b3: 'View 1', b4: 'View 2' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'デイトナUSA',
+          blurb: 'スリーセブン・スピードウェイ、ダイナソー・キャニオン、シーサイド・ストリート・ギャラクシー。ローリングスタート！',
+          profiles: { daytona: { name: 'リビジョン A', about: '日本、リビジョン A' } },
+          romHint: 'お持ちの <code>daytona.zip</code> と I/O ボードの <code>model1io.zip</code> を一緒に',
+          labels: { up: 'シフトアップ', down: 'シフトダウン', left: 'ハンドル左', right: 'ハンドル右',
+                    b1: 'アクセル', b2: 'ブレーキ', b3: '視点 1', b4: '視点 2' },
+        },
+      },
+    },
+    vf2: {
+      title: 'Virtua Fighter 2',
+      year: 1994, board: 'Model 2A-CRX', colors: ['#1d8fc8', '#0b2a3d'],
+      blurb: 'Akira, Sarah, Lau and the rest, joined by Lion and Shun Di: the fighter that set the pace for 3D.',
+      /* src/profiles/vf2.h: Version 2.1 and its three clones, each a clone of vf2.zip. */
+      profiles: [
+        { id: 'vf2', name: 'Version 2.1', about: 'Version 2.1' },
+        { id: 'vf2b', name: 'Rev B', about: 'Revision B' },
+        { id: 'vf2a', name: 'Rev A', about: 'Revision A' },
+        { id: 'vf2o', name: 'Original', about: 'The first release' },
+      ],
+      romHint: 'Your <code>vf2.zip</code> (Version 2.1), or <code>vf2b.zip</code>, <code>vf2a.zip</code> or <code>vf2o.zip</code> and its parent <code>vf2.zip</code>, picked together',
+      /* src/profiles/vf2.h: MAME's INPUT_PORTS(vf2), B1 punch, B2 kick, B3 guard. */
+      labels: { b1: 'Punch', b2: 'Kick', b3: 'Guard', b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'バーチャファイター2',
+          blurb: 'アキラ、サラ、ラウたちに、リオンとシュンディが加わった。3D 格闘の基準を作った一作。',
+          profiles: { vf2: { name: 'Ver.2.1', about: 'Ver.2.1' }, vf2b: { name: 'リビジョン B', about: 'リビジョン B' },
+                      vf2a: { name: 'リビジョン A', about: 'リビジョン A' }, vf2o: { name: '初期版', about: '最初のリリース' } },
+          romHint: 'お持ちの <code>vf2.zip</code>（Ver.2.1）、または <code>vf2b.zip</code>、<code>vf2a.zip</code>、<code>vf2o.zip</code> と親セットの <code>vf2.zip</code> を一緒に',
+          labels: { b1: 'パンチ', b2: 'キック', b3: 'ガード', b4: '未使用' },
+        },
+      },
+    },
+    doa: {
+      title: 'Dead or Alive',
+      year: 1996, board: 'Model 2A/2B-CRX', colors: ['#c8102e', '#2a0a0e'],
+      blurb: 'Kasumi, Zack, Tina and the rest enter the DOA tournament. Hold to reverse, and mind the danger zone.',
+      /* src/profiles/doa.h: the 2B sets first, then the 2A ones (the same game
+       * on the TGP board); doaae is locked to Export. Every set but doa is a
+       * clone of doa.zip. */
+      profiles: [
+        { id: 'doa', name: 'Rev C', about: 'Model 2B, Revision C' },
+        { id: 'doab', name: 'Rev B', about: 'Model 2B, Revision B' },
+        { id: 'doaa', name: 'Rev A 2A', about: 'Model 2A, Revision A' },
+        { id: 'doaab', name: '2A', about: 'Model 2A, the first release' },
+        { id: 'doaae', name: 'Export 2A', about: 'Model 2A, Export, Revision A' },
+      ],
+      romHint: 'Your <code>doa.zip</code> (Revision C), or <code>doab.zip</code>, <code>doaa.zip</code>, <code>doaab.zip</code> or <code>doaae.zip</code> and its parent <code>doa.zip</code>, picked together',
+      /* src/profiles/doa.h: MAME's INPUT_PORTS(doa), B1 hold, B2 punch, B3 kick. */
+      labels: { b1: 'Hold', b2: 'Punch', b3: 'Kick', b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'デッド オア アライブ',
+          blurb: 'かすみ、ザック、ティナたちが DOA 大会に挑む。ホールドで切り返し、デンジャーゾーンに気をつけろ。',
+          profiles: { doa: { name: 'リビジョン C', about: 'Model 2B、リビジョン C' },
+                      doab: { name: 'リビジョン B', about: 'Model 2B、リビジョン B' },
+                      doaa: { name: 'リビジョン A 2A', about: 'Model 2A、リビジョン A' },
+                      doaab: { name: '2A', about: 'Model 2A、最初のリリース' },
+                      doaae: { name: '海外 2A', about: 'Model 2A、海外、リビジョン A' } },
+          romHint: 'お持ちの <code>doa.zip</code>（リビジョン C）、または <code>doab.zip</code>、<code>doaa.zip</code>、<code>doaab.zip</code>、<code>doaae.zip</code> と親セットの <code>doa.zip</code> を一緒に',
+          labels: { b1: 'ホールド', b2: 'パンチ', b3: 'キック', b4: '未使用' },
         },
       },
     },

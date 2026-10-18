@@ -85,11 +85,17 @@ if(M2HLE_GEMS_DIR)
 endif()
 
 # Sega's own C for Fighting Vipers' patched i960 functions, from Sega Ages 2500
-# Vol. 19 (src/core/ages.h; --ages-i960, --ages-verify). The owner's ages-c
-# repository, which carries ages-decomp as its submodule decomp/: point this
-# at a checkout holding ages_impl.h. Empty (the default): none. As with Gems,
-# its ages_all.h is generated, not tracked: gen_all.py writes it beside itself.
-set(M2HLE_AGES_DIR "" CACHE PATH "Directory with ages_impl.h (Sega Ages 2500 Fighting Vipers C); empty: none")
+# Vol. 19 (src/core/ages.h; --ages-i960, --ages-verify). It is the submodule
+# vendor/ages-c (Pinboard #1043; it carries ages-decomp as its own submodule
+# decomp/, so init it with --recursive), not part of this tree: on when that
+# is checked out, or point this at another directory holding ages_impl.h.
+# Empty: none. As with Gems, its ages_all.h is generated, not tracked:
+# gen_all.py writes it beside itself.
+set(M2HLE_AGES_DEFAULT "")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/ages-c/ages_impl.h")
+    set(M2HLE_AGES_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/vendor/ages-c")
+endif()
+set(M2HLE_AGES_DIR "${M2HLE_AGES_DEFAULT}" CACHE PATH "Directory with ages_impl.h (Sega Ages 2500 Fighting Vipers and Virtua Fighter 2 C); empty: none")
 if(M2HLE_AGES_DIR)
     if(NOT EXISTS "${M2HLE_AGES_DIR}/ages_impl.h")
         message(FATAL_ERROR "M2HLE_AGES_DIR: no ages_impl.h in ${M2HLE_AGES_DIR}")
@@ -99,11 +105,12 @@ if(M2HLE_AGES_DIR)
                     RESULT_VARIABLE _ages_rc OUTPUT_QUIET ERROR_VARIABLE _ages_err)
     if(NOT _ages_rc EQUAL 0)
         message(FATAL_ERROR "M2HLE_AGES_DIR: gen_all.py failed: ${_ages_err}"
-                "(it needs the decomp/ submodule: git submodule update --init decomp)")
+                "(a submodule checkout needs: git submodule update --init --recursive vendor/ages-c)")
     endif()
-    file(GLOB _ages_inputs CONFIGURE_DEPENDS "${M2HLE_AGES_DIR}/fn/*.h")
+    file(GLOB _ages_inputs CONFIGURE_DEPENDS "${M2HLE_AGES_DIR}/fn/*.h" "${M2HLE_AGES_DIR}/vf2/*.h")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_ages_inputs}
-                 "${M2HLE_AGES_DIR}/gen_all.py" "${M2HLE_AGES_DIR}/decomp/FV/FN/INDEX.md")
+                 "${M2HLE_AGES_DIR}/gen_all.py" "${M2HLE_AGES_DIR}/decomp/FV/FN/INDEX.md"
+                 "${M2HLE_AGES_DIR}/decomp/VF2/patches.tsv")
     add_compile_definitions(M2HLE_AGES)
     include_directories("${M2HLE_AGES_DIR}")
 endif()
@@ -685,6 +692,8 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     add_executable(tgp_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/tgp_test.c)
     # the Model 2C TGPx4: the empty-FIFO stall, the IFE wait, the ALU's corners
     add_executable(tgpx4_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/tgpx4_test.c)
+    # the Model 1 I/O board's Z80: flags, T-states, IM 1 (ZEXDOC/ZEXALL with $Z80_ZEX)
+    add_executable(z80_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/z80_test.c)
     add_executable(sharc_cpu_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/sharc_cpu_test.c)
     # Netplay: the lockstep engine, the protobuf codec and the ComId standard.
     # No server; part (G) opens loopback sockets — see the header of tests/net_test.c.
@@ -729,6 +738,8 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     # A linked board's 60 Hz clock (core/link_pace.h): called and sleeping
     # hosts, and two cabinets whose clocks drift apart. No ROM.
     add_executable(link_pace_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/link_pace_test.c)
+    # The drive board's commands and the force the hosts play (core/ffb.h). No ROM.
+    add_executable(ffb_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/ffb_test.c)
     # The game scripts (core/m2lua.h): the bit helpers, the I960 and Romset
     # calls on a bus, Options, the callbacks' order. No ROM.
     add_executable(m2lua_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/m2lua_test.c)
@@ -816,7 +827,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     target_link_libraries(audio_out_test PRIVATE sokol)
 
     foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test input_test net_test ps3net_test tile_test heat_test audio_out_test
-              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test tgpx4_test sharc_cpu_test sfight_settings_test region_test srallyc_native_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
+              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test tgpx4_test z80_test sharc_cpu_test sfight_settings_test region_test srallyc_native_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test ffb_test m2lua_test)
         target_include_directories(${t} PRIVATE ${TEST_INCLUDES})
         if(MSVC)
             target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -829,7 +840,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(NOT WIN32)
         foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test
                   input_test net_test ps3net_test tile_test heat_test audio_out_test scsp_dsp_test scsp_dsp_test_masks
-                  scsp_lazy_test tgp_test tgpx4_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay sharc_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test m2lua_test)
+                  scsp_lazy_test tgp_test tgpx4_test z80_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay sharc_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test ffb_test m2lua_test)
             target_link_libraries(${t} PRIVATE m)
         endforeach()
     endif()

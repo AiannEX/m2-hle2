@@ -258,6 +258,7 @@ static void open_backup_ram(bool homebrew) {
  * this must run after it.) */
 static void load_sound_board(void) {
     if (!g_active_profile->quirks.enable_68k_sound) return;
+    sound_select_board(g_active_profile->quirks.model1_sound);
     sound_reset();
     sound_attach(&state.bus);
     if (state.romset.audiocpu && state.romset.audiocpu_size > 0)
@@ -461,6 +462,7 @@ static void netplay_reset_board_cb(void *ctx) {
     irqt_reset();
 
     if (g_active_profile->quirks.enable_68k_sound) {
+        sound_select_board(g_active_profile->quirks.model1_sound);
         sound_reset();
         sound_attach(&state.bus);
         if (state.romset.audiocpu && state.romset.audiocpu_size > 0)
@@ -1837,6 +1839,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
                 g_comm_port  = (uint16_t)port;
                 g_comm_token = token;
             } else LOG_WARN("--comm-slave %s: expected PORT:TOKEN", argv[i]);
+        } else if (i + 1 < argc && lightgun_host_option(argv[i], argv[i + 1])) {
+            i++;                      /* a light gun's flash on the trigger (lightgun_host.h) */
         } else if (strcmp(argv[i], "--run") == 0) {
             g_autorun = 1;
         } else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc) {

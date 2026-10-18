@@ -47,6 +47,7 @@
  * to precede it. main.c already includes this first, so here it is a no-op --
  * it is stated so the dependency is visible from the file that has it. */
 #include "net/netplay.h"   /* the lobby, over the bridge — see the netplay section */
+#include "ffb.h"          /* get_status reports the drive board ("drive") */
 #include "m2_texload.h"   /* get_status reports the texture loader in C */
 
 #ifdef _WIN32
@@ -199,6 +200,12 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
     emu_times_json(et, (int)sizeof et, restart_max);
     char lp[160];
     mcp_link_pace_json(b->emu, lp, (int)sizeof lp);
+    /* The drive board's force, as the hosts play it (ffb.h). */
+    ffb_out_t fo = ffb_poll();
+    char dv[160];
+    snprintf(dv, sizeof dv,
+             "{\"cmd\":%u,\"kind\":%u,\"level\":%u,\"dir\":%d,\"strong\":%u,\"weak\":%u}",
+             fo.effect.cmd, fo.effect.kind, fo.effect.level, fo.effect.dir, fo.strong, fo.weak);
 
     snprintf(resp, (size_t)cap,
              "{\"ok\":true,\"running\":%s,\"halted\":%s,"
@@ -207,7 +214,7 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
              "\"idle_hold\":{\"on\":%s,\"holding\":%s},"
              "\"texload\":{\"hle\":%s,\"rows\":%llu},"
              "\"enemy_rank\":%d,"
-             "\"av\":%s,\"overlay\":%s,\"render\":%s,\"emu\":%s,\"link_pace\":%s,\"version\":\"%s\",\"build\":\"%s\"}",
+             "\"av\":%s,\"overlay\":%s,\"render\":%s,\"emu\":%s,\"link_pace\":%s,\"drive\":%s,\"version\":\"%s\",\"build\":\"%s\"}",
              running ? "true" : "false",
              halted  ? "true" : "false",
              ip, sps, (unsigned long long)steps, profile_id,
@@ -218,7 +225,7 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
              g_idle_hold ? "true" : "false", b->emu && b->emu->idle_holding ? "true" : "false",
              g_texload_hle ? "true" : "false", (unsigned long long)g_texload_rows,
              (int)g_enemy_rank,
-             av, ov, rt, et, lp, M2HLE_VERSION, M2HLE_BUILD_FLAVOR);
+             av, ov, rt, et, lp, dv, M2HLE_VERSION, M2HLE_BUILD_FLAVOR);
 }
 
 /* {"cmd":"prof","on":1} arms the i960 address profiler (clearing it),

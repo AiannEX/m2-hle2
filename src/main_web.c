@@ -70,6 +70,7 @@
 #include "m2lua.h"         /* the cheats scratchpad: a game script from the page */
 #include "m2lua_wide.h"    /* and the picture it asks for (Model2_SetWideScreen) */
 #include "lightgun_sgl.h"   /* the mouse and touches as light guns, and their crosshairs */
+#include "ffb.h"            /* the drive board's force feedback, for the page to rumble */
 
 /* The single TU that defines g_profiles[] / g_active_profile. Under M2HLE_WEB it
  * registers sfight alone. */
@@ -203,6 +204,7 @@ static void web_install_board(void) {
     g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
     irqt_reset();
     if (g_active_profile->quirks.enable_68k_sound) {
+        sound_select_board(g_active_profile->quirks.model1_sound);
         sound_reset();
         sound_attach(&state.bus);
         if (state.romset.audiocpu && state.romset.audiocpu_size > 0)
@@ -1021,8 +1023,23 @@ static void cleanup(void) {
 static uint32_t g_web_pad;   /* the actions the page holds (gamepads, touch buttons, keyboard): web_pad_set */
 static int g_web_cheats_rect[4];   /* the picture on the canvas: web_cheats_place */
 
+/* The drive board's force (ffb.h, Pinboard #1047) for the page's pads to
+ * rumble (m2hle-pad.js): the strong motor's top byte << 16 | the weak's << 8
+ * | the command. 0 when the game has no drive board. */
+EMSCRIPTEN_KEEPALIVE unsigned web_ffb(void) {
+    ffb_out_t o = ffb_poll();
+    return (unsigned)(o.strong >> 8) << 16 | (unsigned)(o.weak >> 8) << 8 | o.effect.cmd;
+}
+
 /* The page's canvas asks before its context menu: not while a right click reloads a gun. */
 EMSCRIPTEN_KEEPALIVE int web_lightgun_on(void) { return lightgun_host_on(); }
+
+/* The Controls panel's flash on each shot (lightgun_host.h): frames of white, 0 off. */
+EMSCRIPTEN_KEEPALIVE void web_set_gun_flash(int frames) {
+    char v[12];
+    snprintf(v, sizeof v, "%d", frames);
+    lightgun_host_option("--gun-flash", v);
+}
 
 /* Player 1's light gun on the canvas (Pinboard #1040): the mouse aims it, the
  * left button is the trigger and the right one reloads; a finger aims and
@@ -1117,6 +1134,8 @@ static void web_value_arg(const char *a) {
         size_t n = (size_t)(strchr(a, '=') - a);
         if (n < sizeof opt) { memcpy(opt, a, n); opt[n] = 0; io5649_wheel_option(opt, a + n + 1); }
     }
+    else if (!strncmp(a, "--gun-flash=", 12)) lightgun_host_option("--gun-flash", a + 12);
+    else if (!strncmp(a, "--ffb-gain=", 11)) ffb_option("--ffb-gain", a + 11);   /* 0-100 */
 }
 
 sapp_desc sokol_main(int argc, char *argv[]) {

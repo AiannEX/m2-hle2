@@ -13,8 +13,9 @@
 #include "sfight.h"
 #include "sfight_console.h"
 /* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
- * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop, Fighting Vipers and
- * The House of the Dead (the page's ?game=, web/site/m2hle-games.js). Any other set is only
+ * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop, Fighting Vipers,
+ * The House of the Dead, Daytona USA, Virtua Fighter 2 and Dead or Alive (the
+ * page's ?game=, web/site/m2hle-games.js). Any other set is only
  * download size: left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. */
 #include "srallyc.h"
@@ -22,6 +23,9 @@
 #include "dynamcop.h"
 #include "fvipers.h"
 #include "hotd.h"      /* runs since Pinboard #1034, on the web since #1040 */
+#include "daytona.h"   /* runs since Pinboard #1035, on the web since #1047 */
+#include "doa.h"       /* runs since Pinboard #1050, on the web too */
+#include "vf2.h"       /* runs since Pinboard #1046, on the web since #1055 */
 #ifndef M2HLE_WEB
 #include "powsled.h"   /* Pinboard #1052 */
 #include "m2snake.h"
@@ -31,7 +35,6 @@
  * board cannot run yet. A few hundred bytes of chip lists, so the web build
  * has them too. */
 #include "vcop.h"
-#include "daytona.h"
 
 /* Order matters: the first profile for a ROM set is its default
  * (profile_for_rom_set), so Console comes before Arcade. */
@@ -47,6 +50,16 @@ const game_profile_t *const g_profiles[] = {
     &dynamcopc_profile,
     &fvipers_profile,
     &hotd_profile,
+    &daytona_profile,
+    &doa_profile,
+    &doab_profile,
+    &doaa_profile,
+    &doaab_profile,
+    &doaae_profile,
+    &vf2_profile,
+    &vf2b_profile,
+    &vf2a_profile,
+    &vf2o_profile,
 #ifndef M2HLE_WEB
     &powsled_profile,
     &m2snake_profile,
@@ -60,7 +73,6 @@ const game_profile_t *g_active_profile = NULL;
 
 const game_profile_t *const g_prepared_profiles[] = {
     &vcop_profile,
-    &daytona_profile,
 };
 
 const size_t g_prepared_count = sizeof(g_prepared_profiles) / sizeof(g_prepared_profiles[0]);

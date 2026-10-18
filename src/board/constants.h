@@ -112,6 +112,12 @@
 #define IO_BASE                    0x01C00000
 #define IO_SIZE                    0x00000044
 #define IO_IDLE_FILL               0xFF      /* hardware idle state, not 0x00 */
+/* The I/O board answers 0x00..0x1F; the rest of the window reads 0. Every CRX
+ * map in MAME (model2a/2b/2c_crx_mem) maps the board there and nothing at
+ * 0x20..0x3F, and only a write at 0x40. Virtua Fighter 2 writes 1 to 0x24 and
+ * reads it back to tell a Model 1 I/O board (dual-port RAM, which echoes) from
+ * a 315-5649: echoed, it waited for the Model 1 board forever (Pinboard #1046). */
+#define IO_BOARD_SPAN              0x00000020
 #define SERIAL_BASE                0x01C80000
 #define SERIAL_SIZE                0x00000003
 #define BACK_BASE                  0x01D00000

@@ -87,6 +87,7 @@
 #include "registry.h"
 #include "m2lua.h"         /* M2emulator's game scripts, their options as RetroArch cheats */
 #include "lightgun_host.h" /* a port's light gun (The House of the Dead) */
+#include "ffb.h"           /* the drive board's force feedback as rumble (Daytona USA) */
 
 /* The largest picture the frontend's framebuffer is made for: it allocates this
  * much once, colour and depth. Full screen draws at the output's size, up to it. */
@@ -309,6 +310,19 @@ static struct retro_core_option_v2_definition option_defs[] = {
       { { "10", "10 (full lock in 9 frames)" }, { "4", NULL }, { "6", NULL }, { "8", NULL }, { "14", NULL },
         { "20", NULL }, { "255", "Instant" }, { NULL, NULL } },
       "10" },
+    { "m2hle_gun_flash", "Light gun: flash on each shot", NULL,
+      "The House of the Dead: the picture goes white for a frame or more when a trigger is pulled, for a light gun "
+      "that reads the screen (a Sinden, say). Only the picture you see flashes: the board never sees it.",
+      NULL, NULL,
+      { { "off", NULL }, { "1", "1 frame" }, { "2", "2 frames" }, { "3", "3 frames" }, { "4", "4 frames" },
+        { NULL, NULL } },
+      "off" },
+    { "m2hle_ffb", "Force feedback", NULL,
+      "Daytona USA's drive board, as the pad's rumble: the wheel's kicks and shakes. A pad has no spring or "
+      "friction, so the weight the wheel has at speed is not in it.",
+      NULL, NULL,
+      { { "100", "100%" }, { "75", "75%" }, { "50", "50%" }, { "25", "25%" }, { "0", "Off" }, { NULL, NULL } },
+      "100" },
     { NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
 };
 
@@ -332,6 +346,8 @@ static void lr_read_wheel_options(void) {
     const char *v;
     if ((v = lr_var("m2hle_wheel_range"))) io5649_wheel_option("--wheel-range", v);
     if ((v = lr_var("m2hle_wheel_speed"))) io5649_wheel_option("--wheel-speed", v);
+    if ((v = lr_var("m2hle_gun_flash")))   lightgun_host_option("--gun-flash", v);
+    if ((v = lr_var("m2hle_ffb")))         ffb_option("--ffb-gain", v);
 }
 
 /* The options that take effect as they change. */
@@ -381,6 +397,38 @@ static bool lr_option_offered(const char *key) {
     return GEMS_AVAILABLE || strncmp(key, "m2hle_gems_", 11) != 0;
 }
 
+static bool g_game_loaded;
+
+/* A row that is one game's (its program, its I/O board) is hidden while
+ * another game is loaded (Pinboard #1058): Daytona showed STF's sound driver
+ * and Gems rows. With no game loaded every row shows. */
+static bool lr_option_applies(const char *key) {
+    const game_profile_t *p = g_game_loaded ? g_active_profile : NULL;
+    if (!p) return true;
+    if (!strcmp(key, "m2hle_stf_version") || !strcmp(key, "m2hle_sound_driver") || !strncmp(key, "m2hle_gems_", 11))
+        return !strcmp(profile_rom_set(p), "sfight");
+    if (!strncmp(key, "m2hle_wheel_", 12)) return p->quirks.io_5649;
+    if (!strcmp(key, "m2hle_ffb"))         return p->quirks.model1_io;
+    return true;
+}
+
+/* The frontend asks before it draws the list; the core also calls it at load
+ * and unload, for a frontend that never asks. True when a row changed. */
+static bool RETRO_CALLCONV lr_update_display(void) {
+    static bool shown[sizeof option_defs / sizeof option_defs[0]];
+    static bool sent;
+    bool changed = false;
+    for (size_t i = 0; option_defs[i].key; i++) {
+        bool on = lr_option_applies(option_defs[i].key);
+        struct retro_core_option_display d = { option_defs[i].key, on };
+        env_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d);
+        changed |= !sent || shown[i] != on;
+        shown[i] = on;
+    }
+    sent = true;
+    return changed;
+}
+
 static void lr_set_options(void) {
     static bool pruned;
     if (!pruned) {
@@ -395,6 +443,8 @@ static void lr_set_options(void) {
         /* Its answer says whether the frontend groups options into categories,
          * NOT whether it took them (libretro.h). */
         env_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options_v2);
+        static struct retro_core_options_update_display_callback display = { lr_update_display };
+        env_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &display);
         return;
     }
     /* An old frontend: the v0 table, first value is the default. */
@@ -414,6 +464,8 @@ static void lr_set_options(void) {
         { "m2hle_scripts",    "Game scripts; enabled|disabled" },
         { "m2hle_wheel_range", "Wheel: full lock; 0x58|0x30|0x40|0x4C|0x68|0x7F" },
         { "m2hle_wheel_speed", "Wheel: turn speed; 10|4|6|8|14|20|255" },
+        { "m2hle_gun_flash",  "Light gun: flash on each shot; off|1|2|3|4" },
+        { "m2hle_ffb",        "Force feedback; 100|75|50|25|0" },
         { NULL, NULL },
     };
     size_t o = 0;
@@ -426,13 +478,13 @@ static void lr_set_options(void) {
 /* ---- The board ---------------------------------------------------------------- */
 
 static bool g_sound_on;
-static bool g_game_loaded;
 static bool g_halt_reported;
 static size_t g_lr_state_size;  /* retro_serialize_size, once a load */
 static savestate_rom_t g_lr_state_rom;  /* the loaded ROM's id, with g_lr_state_size */
 static bool g_lr_redraw;   /* a state was loaded: draw it even if the board did not run */
 
 static void lr_attach_sound(void) {
+    sound_select_board(g_active_profile->quirks.model1_sound);
     sound_reset();
     sound_attach(&state.bus);
     sound_load_rom(state.romset.audiocpu, (uint32_t)state.romset.audiocpu_size);
@@ -2300,6 +2352,20 @@ static void lr_check_info_cache(void) {
     }
 }
 
+/* The drive board's force on port 1's pad, as rumble (ffb.h): set when it
+ * changes, which RetroArch holds until the next. */
+static struct retro_rumble_interface g_rumble;
+static uint16_t g_rumble_now[2];
+
+static void lr_ffb_tick(void) {
+    if (!g_rumble.set_rumble_state) return;
+    ffb_out_t o = ffb_poll();
+    if (o.strong != g_rumble_now[0]) g_rumble.set_rumble_state(0, RETRO_RUMBLE_STRONG, o.strong);
+    if (o.weak != g_rumble_now[1])   g_rumble.set_rumble_state(0, RETRO_RUMBLE_WEAK, o.weak);
+    g_rumble_now[0] = o.strong;
+    g_rumble_now[1] = o.weak;
+}
+
 static void lr_info_cache_tick(void) {
     if (!g_info_cache_msg[0] || g_lr_runs < g_info_cache_at) return;
     lr_notify(g_info_cache_msg, 10000);
@@ -2323,6 +2389,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game) {
     g_volume = 1.0f;
     lr_set_input_descriptors();
     lr_check_info_cache();
+    if (!env_cb(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE, &g_rumble)) g_rumble.set_rumble_state = NULL;
+    g_rumble_now[0] = g_rumble_now[1] = 0;
 
     if (opt.online == LR_ONLINE_RETROARCH) {
         if (!env_cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, &lr_netpacket))
@@ -2337,6 +2405,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game) {
     emu_run(&state.emu);
     lr_lua_load();
     g_game_loaded = true;
+    lr_update_display();   /* the rows of the game just loaded */
     g_lr_state_size = 0;   /* a state's size depends on the profile */
     /* A state is the build's struct layouts: it does not cross to another
      * architecture or byte order (savestate.h's LAYOUT refuses it). */
@@ -2355,6 +2424,11 @@ RETRO_API bool retro_load_game_special(unsigned type, const struct retro_game_in
 
 RETRO_API void retro_unload_game(void) {
     hprof_shutdown();
+    if (g_rumble.set_rumble_state) {   /* no motor left running */
+        g_rumble.set_rumble_state(0, RETRO_RUMBLE_STRONG, 0);
+        g_rumble.set_rumble_state(0, RETRO_RUMBLE_WEAK, 0);
+        g_rumble_now[0] = g_rumble_now[1] = 0;
+    }
     if (opt.online == LR_ONLINE_RPCN) netplay_shutdown();
     if (opt.online == LR_ONLINE_GGPO) lr_ggpo_unload();
     ps3ui_app_close(&g_ps3ui_app);
@@ -2363,6 +2437,7 @@ RETRO_API void retro_unload_game(void) {
     m2lua_unload();   /* End(), and the script's ROM patches off the set going */
     romset_free(&state.romset);
     g_game_loaded = false;
+    lr_update_display();
 }
 
 RETRO_API void retro_reset(void) {
@@ -2446,6 +2521,7 @@ RETRO_API void retro_run(void) {
     lr_info_cache_tick();
     lr_heat_tick();
     lr_ff_poll();
+    lr_ffb_tick();
     hprof_phase(1);
     hprof_phase_set(6, g_emu_times.sound_wait_us - snd_wait0);
     lr_push_audio();
