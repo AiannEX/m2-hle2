@@ -3220,12 +3220,9 @@ static bool geo3d_mesh_layers_for(const geo3d_models_t *md, int model_idx,
 /* Whether a draw goes through the mesh cache, and its mesh if so: NONE draws
  * nothing, FULL is the full decoder's (see geo3d_decode_model_cached). */
 enum { GEO3D_DRAW_NONE, GEO3D_DRAW_FULL, GEO3D_DRAW_CACHED };
-static int geo3d_mesh_for_draw(const geo3d_models_t *md, int model_idx,
-                               const float *matrix, geo3d_cmesh_t **out) {
-    *out = NULL;
-    if (!g_geo3d_mesh_cache || !g_geo3d_board_luma || !matrix || md->obj_mesh || g_geo_flat_color ||
-            GEO3D_DUMP_TEX(model_idx))
-        return GEO3D_DRAW_FULL;
+/* The cached half of geo3d_mesh_for_draw: the model's streams, and its mesh
+ * from the cache unless one of them sits in texture RAM. */
+static int geo3d_mesh_cached_draw(const geo3d_models_t *md, int model_idx, geo3d_cmesh_t **out) {
     if (!md->main_data || !md->polygons) return GEO3D_DRAW_NONE;
     uint32_t mesh_offset, mat_ptr, uv_ptr;
     if (!geo3d_model_streams(md, model_idx, &mesh_offset, &mat_ptr, &uv_ptr)) return GEO3D_DRAW_NONE;
@@ -3235,6 +3232,15 @@ static int geo3d_mesh_for_draw(const geo3d_models_t *md, int model_idx,
         return GEO3D_DRAW_FULL;
     *out = geo3d_mesh_get(md, model_idx, mat_ptr, uv_ptr, mesh_offset);
     return *out ? GEO3D_DRAW_CACHED : GEO3D_DRAW_FULL;
+}
+
+static int geo3d_mesh_for_draw(const geo3d_models_t *md, int model_idx,
+                               const float *matrix, geo3d_cmesh_t **out) {
+    *out = NULL;
+    if (!g_geo3d_mesh_cache || !g_geo3d_board_luma || !matrix || md->obj_mesh || g_geo_flat_color ||
+            GEO3D_DUMP_TEX(model_idx))
+        return GEO3D_DRAW_FULL;
+    return geo3d_mesh_cached_draw(md, model_idx, out);
 }
 
 /* The cached draw's window test. False when no face can be dropped: culling
