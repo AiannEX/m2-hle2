@@ -1034,6 +1034,13 @@ EMSCRIPTEN_KEEPALIVE unsigned web_ffb(void) {
 /* The page's canvas asks before its context menu: not while a right click reloads a gun. */
 EMSCRIPTEN_KEEPALIVE int web_lightgun_on(void) { return lightgun_host_on(); }
 
+/* The Controls panel's flash on each shot (lightgun_host.h): frames of white, 0 off. */
+EMSCRIPTEN_KEEPALIVE void web_set_gun_flash(int frames) {
+    char v[12];
+    snprintf(v, sizeof v, "%d", frames);
+    lightgun_host_option("--gun-flash", v);
+}
+
 /* Player 1's light gun on the canvas (Pinboard #1040): the mouse aims it, the
  * left button is the trigger and the right one reloads; a finger aims and
  * fires where it lands, or reloads when it lands off the picture. Only while
@@ -1127,6 +1134,7 @@ static void web_value_arg(const char *a) {
         size_t n = (size_t)(strchr(a, '=') - a);
         if (n < sizeof opt) { memcpy(opt, a, n); opt[n] = 0; io5649_wheel_option(opt, a + n + 1); }
     }
+    else if (!strncmp(a, "--gun-flash=", 12)) lightgun_host_option("--gun-flash", a + 12);
     else if (!strncmp(a, "--ffb-gain=", 11)) ffb_option("--ffb-gain", a + 11);   /* 0-100 */
 }
 
