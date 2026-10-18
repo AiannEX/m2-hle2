@@ -1179,6 +1179,7 @@ static inline bool emu_netplay_allows_slice(emu_thread_ctx_t *ctx, int64_t slice
  * slice ran and the loop goes straight round again. */
 static inline bool emu_run_running(emu_thread_ctx_t *ctx) {
     emu_ggpo_lobby_pump();
+    emu_ggpo_solo_netplay(ctx);
     if (emu_ggpo_wanted()) return emu_ggpo_step(ctx);
     if (emu_slice_should_stop(ctx)) return false;
     int64_t slice_start = emu_now_us();

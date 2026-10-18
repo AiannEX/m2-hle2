@@ -328,7 +328,7 @@ const m2hleGames = (() => {
     powsled: {
       title: 'Power Sled',
       year: 1996, board: 'Model 2B-CRX', colors: ['#e05a1d', '#4c1a0b'],
-      blurb: 'Snow sleds on a linked ring of cabinets. A race needs two boards: open a Room Match, whose owner runs the Main unit (the operator\'s) and whose guest rides the sled.',
+      blurb: 'Snow sleds on a linked ring of cabinets. Press Entry to race alone: the Main unit (the operator\'s) runs beside your sled in this tab. For a race against a friend, open a Room Match: its owner runs the Main and its guest rides.',
       profiles: [
         { id: 'powsled', name: 'Slave', about: 'The ride, Revision A (and the Main, in a room)' },
         { id: 'powsledr', name: 'Relay', about: 'The big screen (Relay unit)', soon: true },
@@ -347,7 +347,7 @@ const m2hleGames = (() => {
       i18n: {
         ja: {
           title: 'パワースレッド',
-          blurb: '筐体をリンクして走るスノースレッド。レースには基板が2台必要：ルームマッチを開くと、オーナーがメインユニット（オペレーター側）、ゲストがソリに乗ります。',
+          blurb: '筐体をリンクして走るスノースレッド。エントリーを押せば一人でレース：メインユニット（オペレーター側）がこのタブでソリと一緒に動きます。友だちとはルームマッチで：オーナーがメイン、ゲストがソリに乗ります。',
           profiles: { powsled: { name: 'スレーブ', about: 'ライド、リビジョン A（ルームではメインにも）' },
                       powsledr: { name: 'リレー', about: '大画面（リレーユニット）' } },
           romHint: 'お持ちの <code>powsled.zip</code>（パワースレッド、スレーブユニット）',

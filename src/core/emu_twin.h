@@ -96,6 +96,10 @@ static struct {
     emu_twin_link_t lk;          /* the link, live */
     m2comm_peer_t   peer[2];
     emu_mutex_t    *ui_lock;     /* the desktop's emu mutex while a session runs */
+    /* SOLO (emu_ggpo.h): the hidden board's keys, from its own RAM and the
+     * player's held keys (op_held), each frame; NULL in a GGPO match. */
+    uint32_t      (*op)(struct memory_bus *bus, uint32_t held);
+    uint32_t        op_held;
     uint32_t        drop_said;
 } g_twin;
 
@@ -205,6 +209,32 @@ static inline void emu_twin__load(emu_thread_ctx_t *ctx, const uint8_t *src, int
     emu_twin__link_in(b);
 }
 
+/* SOLO's swap: the live board (out) and the one in `slot` (in) change places,
+ * the latches and META with them. Two passes a frame where a save and a load
+ * of each board take four; there are no GGPO buffers to fill. */
+static inline void emu_twin__swap(emu_thread_ctx_t *ctx, uint8_t *slot, int out, int in) {
+    sound_settle();
+    g_rollback.meta.geo = savestate_geo_get();
+    g_rollback.meta.snd = savestate_sound_get();
+    g_rollback.meta.hle = savestate_hle_get();
+    g_rollback.meta.emu = emu_state_latches(ctx);
+    emu_twin__link_out(out);
+    size_t off = 0;
+    for (int i = 0; i < g_rollback.n; i++) {
+        rollback__swap(g_rollback.part[i].p, slot + off, g_rollback.part[i].n);
+        off += g_rollback.part[i].n;
+    }
+    savestate_geo_put(&g_rollback.meta.geo);
+    savestate_sound_put(&g_rollback.meta.snd);
+    savestate_hle_set(&g_rollback.meta.hle);
+    savestate_emu_t e = g_rollback.meta.emu;
+    emu_state_put_latches(ctx, &e);
+    emu_attn_bump();
+    ctx->cpu_prev_snapshot = *ctx->cpu;
+    ctx->cpu_snapshot      = *ctx->cpu;
+    emu_twin__link_in(in);
+}
+
 /* ---- Inputs ---------------------------------------------------------------- */
 
 /* One cabinet's word from the keys held: both key sets, and the cabinet's
@@ -246,6 +276,28 @@ static inline void emu_twin__count_hidden(void) {
     g_versus_result = 0;
 }
 
+/* SOLO's frame: the hidden board stays in g_twin.stash and swaps with the
+ * live one; its keys are the profile's operator's (g_twin.op). */
+static inline bool emu_twin__solo_frame(emu_thread_ctx_t *ctx, uint32_t w,
+                                        void (*count)(emu_thread_ctx_t *), int *result) {
+    int L = g_twin.local, H = 1 - L;
+    *result = 0;
+    bool ran = emu_twin__run_board(ctx, w);
+    if (ran) {
+        if (L == 0) *result = g_versus_result;
+        count(ctx);
+    }
+    emu_twin__swap(ctx, g_twin.stash, L, H);
+    int mute = g_sound_mute;
+    g_sound_mute = 1;                   /* settled by the swap back */
+    if (emu_twin__run_board(ctx, emu_twin_word(g_twin.op(ctx->bus, g_twin.op_held))))
+        emu_twin__count_hidden();
+    emu_twin__swap(ctx, g_twin.stash, H, L);
+    g_sound_mute = mute;
+    emu_twin__commit();
+    return ran;
+}
+
 /* Both boards' frame on the two players' words. The live board runs first and
  * gets the frame's bookkeeping (count) once it has; the hidden board then runs
  * in its place, and the two go into a fresh buffer the save hands GGPO. *result
@@ -253,6 +305,7 @@ static inline void emu_twin__count_hidden(void) {
 static inline bool emu_twin_frame(emu_thread_ctx_t *ctx, const uint32_t in[2],
                                   void (*count)(emu_thread_ctx_t *), int *result) {
     int L = g_twin.local, H = 1 - L;
+    if (g_twin.op) return emu_twin__solo_frame(ctx, in[L], count, result);
     uint8_t *buf = emu_twin_take();
     if (!buf) return false;
     *result = 0;
@@ -417,7 +470,9 @@ static inline void emu_twin_stop(void) {
     g_twin.stash  = NULL;
     g_twin.hidden = NULL;
     g_twin.ui_lock = NULL;
-    m2comm_set_peer(NULL);
+    g_twin.op = NULL;
+    /* A room's peer, set as SOLO ended (emu_ggpo_solo_netplay), stays. */
+    if (!g_m2comm_link.peer || g_m2comm_link.peer->twin) m2comm_set_peer(NULL);
     g_twin.on = false;
     g_rollback.diff = false;
 }

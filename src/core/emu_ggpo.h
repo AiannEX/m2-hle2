@@ -25,6 +25,13 @@
  * GGPO frame is both boards' frame. Each player's word is then a whole
  * cabinet's controls, and their screen is their own cabinet's.
  *
+ * A SOLO session (Pinboard #1110) is the twin without GGPO, for a linked
+ * game that cannot be played on one board: Power Sled's ride races only with
+ * a Main unit on its ring. The player's cabinet is live and the other board
+ * runs hidden beside it, its panel worked by the profile (link_solo). It is
+ * what such a game runs whenever nothing else owns the board (no GGPO match,
+ * no room, no comm link, no replay); --ggpo-solo 0 leaves the board alone.
+ *
  * --ggpo-synctest N runs GGPO's own determinism test instead of a session:
  * both players are this machine's, and every frame is rolled back N frames
  * and run again, the snapshot's checksum held against the first run. A
@@ -50,7 +57,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef enum { EMU_GGPO_OFF = 0, EMU_GGPO_P2P, EMU_GGPO_SYNCTEST } emu_ggpo_mode_t;
+typedef enum { EMU_GGPO_OFF = 0, EMU_GGPO_P2P, EMU_GGPO_SYNCTEST, EMU_GGPO_SOLO } emu_ggpo_mode_t;
 
 /* What the command line asked for. Read when the emu thread starts running. */
 typedef struct {
@@ -62,9 +69,10 @@ typedef struct {
     int             delay;             /* local input delay, frames */
     int             synctest_frames;   /* how far synctest rolls back */
     char            synclog_dir[240];
+    bool            no_solo;           /* --ggpo-solo 0: a linked game's board runs alone */
 } emu_ggpo_cfg_t;
 
-static emu_ggpo_cfg_t g_ggpo_cfg = { EMU_GGPO_OFF, 7000, "", 7001, 1, 2, 1, "" };
+static emu_ggpo_cfg_t g_ggpo_cfg = { EMU_GGPO_OFF, 7000, "", 7001, 1, 2, 1, "", false };
 
 #ifdef M2HLE_GGPO
 #include "../net/ggpo_lobby.h"   /* the lobby that sets up a match (ggpo.sonicthefighte.rs) */
@@ -104,6 +112,7 @@ static inline bool emu_ggpo_cli_arg(int argc, char **argv, int *i) {
         g_ggpo_cfg.synctest_frames = atoi(v) > 0 ? atoi(v) : 1;
     }
     else if (strcmp(a, "synclog") == 0)   snprintf(g_ggpo_cfg.synclog_dir, sizeof g_ggpo_cfg.synclog_dir, "%s", v);
+    else if (strcmp(a, "solo") == 0)      { g_ggpo_cfg.no_solo = atoi(v) == 0; return true; }
     else { --*i; return false; }
 #ifndef M2HLE_GGPO
     LOG_WARN("--ggpo-%s: this build has no GGPO (M2HLE_GGPO off)", a);
@@ -123,6 +132,7 @@ static inline bool emu_ggpo_cli_arg(int argc, char **argv, int *i) {
 
 static struct {
     bool              on;          /* a session is open */
+    emu_ggpo_mode_t   mode;        /* the open session's */
     bool              running;     /* GGPO said RUNNING */
     bool              resim;       /* inside a rollback's advance_frame */
     int               skip;        /* frames to hold for a timesync */
@@ -158,7 +168,27 @@ static struct {
 #endif
 #define EMU_GGPO_CHECK_LAG   30
 
-static inline bool emu_ggpo_active(void) { return g_ggpo.on; }
+/* A GGPO match is open (a SOLO session is none). */
+static inline bool emu_ggpo_active(void) { return g_ggpo.on && g_ggpo.mode != EMU_GGPO_SOLO; }
+
+/* SOLO, refused for this profile once its start failed. */
+static const game_profile_t *g_ggpo_solo_refused;
+/* The frontend's own session, which SOLO must not run under (libretro's
+ * RetroArch lockstep); NULL none. */
+static bool (*g_ggpo_solo_veto)(void);
+
+/* Whether a linked game's board should be a SOLO session now: its profile
+ * plays one (link_solo) and nothing else has the board. A comm peer with no
+ * twin is a real link (a room's, --comm-master / --comm-slave). */
+static inline bool emu_ggpo_solo_wanted(void) {
+    const game_profile_t *p = g_active_profile;
+    if (g_ggpo_cfg.no_solo || !p || !p->link_solo || !emu_twin_wanted(p) || g_ggpo_solo_refused == p) return false;
+    if (!g_netplay.reset_board) return false;
+    if (netplay_in_room() || netplay_active() || comm_role_waiting() || comm_role_linked()) return false;
+    if (replay_playing() || follow_following() || follow_leading()) return false;
+    if (g_ggpo_solo_veto && g_ggpo_solo_veto()) return false;
+    return g_twin.on || !g_m2comm_link.peer;
+}
 
 /* One side's word from one key set; the cabinet's service/test only on 1P. */
 static inline uint32_t emu_ggpo__word(uint32_t held, const uint32_t *bits, bool cabinet) {
@@ -398,15 +428,16 @@ static inline void emu_ggpo_replay_begin(emu_thread_ctx_t *ctx) {
 }
 
 /* Mutex held. */
-static inline bool emu_ggpo_start(emu_thread_ctx_t *ctx) {
+static inline bool emu_ggpo_start(emu_thread_ctx_t *ctx, emu_ggpo_mode_t mode) {
     memset(&g_ggpo, 0, sizeof g_ggpo);
+    g_ggpo.mode = mode;
     g_ggpo.ctx = ctx;
     g_ggpo.check_frame = -1;
     g_ggpo.pend_frame = g_ggpo.done_frame = -1;
     g_ggpo.vs_mode_was = g_vs_mode;
     /* Both boards play the same rules, and a decided match goes back to
      * select: the players choose to go again or leave (ps3ui's prompt). */
-    if (g_ggpo_cfg.mode == EMU_GGPO_P2P) g_vs_mode = 1;
+    if (mode == EMU_GGPO_P2P) g_vs_mode = 1;
     netplay_build_masks(g_active_profile);
     if (!emu_ggpo_cold_boot(ctx)) {
         LOG_ERROR("ggpo: no board-reset hook; not starting");
@@ -416,8 +447,17 @@ static inline bool emu_ggpo_start(emu_thread_ctx_t *ctx) {
     /* A linked game's two cabinets, made before GGPO's first save: the same
      * boot on both machines, so before the session is fine. */
     if (emu_twin_wanted(g_active_profile)) {
-        int local = g_ggpo_cfg.mode == EMU_GGPO_P2P && g_ggpo_cfg.player == 2 ? 1 : 0;
+        /* SOLO's player has the SLAVE (a ride), the profile the MASTER. */
+        int local = mode == EMU_GGPO_SOLO || (mode == EMU_GGPO_P2P && g_ggpo_cfg.player == 2) ? 1 : 0;
         if (!emu_twin_start(ctx, g_active_profile, local)) return false;
+    }
+    if (mode == EMU_GGPO_SOLO) {
+        if (!g_twin.on) return false;
+        g_twin.op = g_active_profile->link_solo;
+        g_ggpo.on = g_ggpo.running = true;
+        LOG_INFO("solo: the %s's other cabinet runs beside this one; snapshot %zu bytes",
+                 g_active_profile->id, g_twin.board);
+        return true;
     }
     int err = emu_ggpo_open(ctx);
     if (err != GGPO_PORT_OK) {
@@ -445,8 +485,11 @@ static inline bool emu_ggpo_start(emu_thread_ctx_t *ctx) {
 /* Mutex held. The board goes back to the keyboard and the player's battery. */
 static inline void emu_ggpo_stop(void) {
     if (!g_ggpo.on) return;
-    replay_ggpo_end();      /* before GGPO frees its frames: nothing rolls back now */
-    ggpo_port_close();      /* hands GGPO's saved frames back through free_buf */
+    bool solo = g_ggpo.mode == EMU_GGPO_SOLO;
+    if (!solo) {
+        replay_ggpo_end();  /* before GGPO frees its frames: nothing rolls back now */
+        ggpo_port_close();  /* hands GGPO's saved frames back through free_buf */
+    }
     emu_twin_stop();        /* the local cabinet stays, alone */
     rollback_drain();
     sound_settle();
@@ -454,7 +497,8 @@ static inline void emu_ggpo_stop(void) {
     netplay_release_inputs();
     backup_ram_reattach();
     g_vs_mode = g_ggpo.vs_mode_was;
-    LOG_INFO("ggpo: session over: %u frames, %u rollbacks, %u frames run again, %u sync errors",
+    if (solo) LOG_INFO("solo: over after %u frames; the board is alone", g_ggpo.frames);
+    else LOG_INFO("ggpo: session over: %u frames, %u rollbacks, %u frames run again, %u sync errors",
              g_ggpo.frames, g_ggpo.rollbacks, g_ggpo.resim_frames, ggpo_port_sync_errors());
     g_ggpo.on = false;
 }
@@ -507,6 +551,15 @@ static inline uint32_t emu_ggpo_results(int *winner) {
 
 /* This frame's inputs in, and the frame run. Mutex held. True when it ran. */
 static inline bool emu_ggpo_frame(emu_thread_ctx_t *ctx) {
+    if (g_ggpo.mode == EMU_GGPO_SOLO) {
+        /* The player's keys are the ride's; the Main's come from link_solo. */
+        uint32_t in[2] = { 0, emu_twin_word(g_input.held) };
+        g_twin.op_held = g_input.held;
+        bool ran = emu_ggpo_run_frame(ctx, in);
+        g_ggpo.frames++;
+        if (g_ggpo.frames % EMU_GGPO_CHECK_EVERY == 0) emu_twin_say(g_ggpo.frames);
+        return ran;
+    }
     ggpo_port_idle(0);
     emu_ggpo_unmute();
     int err;
@@ -544,11 +597,17 @@ typedef enum { EMU_GGPO_TICK_IDLE, EMU_GGPO_TICK_HELD, EMU_GGPO_TICK_RAN } emu_g
 static inline emu_ggpo_tick_t emu_ggpo_tick(emu_thread_ctx_t *ctx) {
     emu_ggpo_tick_t r = EMU_GGPO_TICK_HELD;
     emu_mutex_lock(&ctx->mutex);
-    if (g_ggpo_cfg.mode == EMU_GGPO_OFF || !g_ggpo.on) {
-        bool go = g_ggpo_cfg.mode != EMU_GGPO_OFF && emu_ggpo_start(ctx);
+    emu_ggpo_mode_t want = g_ggpo_cfg.mode != EMU_GGPO_OFF ? g_ggpo_cfg.mode
+                         : emu_ggpo_solo_wanted() ? EMU_GGPO_SOLO : EMU_GGPO_OFF;
+    if (g_ggpo.on && g_ggpo.mode != want) {
+        emu_ggpo_stop();                       /* the next pass opens what is wanted now */
+        r = EMU_GGPO_TICK_IDLE;
+    } else if (!g_ggpo.on) {
+        bool go = want != EMU_GGPO_OFF && emu_ggpo_start(ctx, want);
         if (!go) {
             emu_ggpo_stop();
-            g_ggpo_cfg.mode = EMU_GGPO_OFF;
+            if (want == EMU_GGPO_SOLO) g_ggpo_solo_refused = g_active_profile;
+            else g_ggpo_cfg.mode = EMU_GGPO_OFF;
         }
         r = EMU_GGPO_TICK_IDLE;
     } else if (g_ggpo.skip > 0) {
@@ -584,17 +643,36 @@ static inline bool emu_ggpo_step(emu_thread_ctx_t *ctx) {
 
 /* The lobby, every pass of the run loop, running or not. Outside the mutex. */
 static inline void emu_ggpo_lobby_pump(void) {
-    ggl_pump(g_ggpo.on, g_active_profile ? g_active_profile->id : "m2");
+    ggl_pump(emu_ggpo_active(), g_active_profile ? g_active_profile->id : "m2");
 }
 
 /* Whether the run loop hands RUNNING to emu_ggpo_step. */
-static inline bool emu_ggpo_wanted(void) { return g_ggpo_cfg.mode != EMU_GGPO_OFF || g_ggpo.on; }
+static inline bool emu_ggpo_wanted(void) {
+    return g_ggpo_cfg.mode != EMU_GGPO_OFF || g_ggpo.on || emu_ggpo_solo_wanted();
+}
+
+/* A SOLO session is open: the board runs, but no match holds it. */
+static inline bool emu_ggpo_solo(void) { return g_ggpo.on && g_ggpo.mode == EMU_GGPO_SOLO; }
+
+/* A match asked for or open: the frontends' pause, reset and menus wait for
+ * it. SOLO is not one: one player, nobody else's board to keep up with. */
+static inline bool emu_ggpo_match(void) { return g_ggpo_cfg.mode != EMU_GGPO_OFF || emu_ggpo_active(); }
 
 /* At the emu thread's end. */
 static inline void emu_ggpo_shutdown(emu_thread_ctx_t *ctx) {
     emu_mutex_lock(&ctx->mutex);
     emu_ggpo_stop();
     emu_mutex_unlock(&ctx->mutex);
+}
+
+/* RPCN under SOLO, once a frame outside the mutex: the login, the lobby and a
+ * room go on, and SOLO ends as soon as a room (or a board reset) has the
+ * board, both cabinets booting again from the next solo start. */
+static inline void emu_ggpo_solo_netplay(emu_thread_ctx_t *ctx) {
+    if (!emu_ggpo_solo()) return;
+    uint32_t resets = ctx->reset_count;
+    emu_netplay_pump(ctx);
+    if (ctx->reset_count != resets || !emu_ggpo_solo_wanted()) emu_ggpo_shutdown(ctx);
 }
 
 /* Around the renderer's reads of the bus (game_frame.h), on the UI thread. */
@@ -612,12 +690,16 @@ static inline void emu_twin_ui_leave(emu_mutex_t *m) { (void)m; }
 
 static inline bool emu_ggpo_active(void) { return false; }
 static inline bool emu_ggpo_wanted(void) { return false; }
+static inline bool emu_ggpo_solo(void) { return false; }
+static inline bool emu_ggpo_match(void) { return false; }
 static inline void emu_ggpo_lobby_pump(void) {}
 static inline bool emu_ggpo_step(emu_thread_ctx_t *ctx) { (void)ctx; return false; }
 typedef enum { EMU_GGPO_TICK_IDLE, EMU_GGPO_TICK_HELD, EMU_GGPO_TICK_RAN } emu_ggpo_tick_t;
 static inline emu_ggpo_tick_t emu_ggpo_tick(emu_thread_ctx_t *ctx) { (void)ctx; return EMU_GGPO_TICK_IDLE; }
 static inline uint32_t emu_ggpo_results(int *winner) { if (winner) *winner = 0; return 0; }
 static inline void emu_ggpo_shutdown(emu_thread_ctx_t *ctx) { (void)ctx; }
+static inline void emu_ggpo_solo_netplay(emu_thread_ctx_t *ctx) { (void)ctx; }
+static bool (*g_ggpo_solo_veto)(void);
 
 #endif
 
