@@ -2376,15 +2376,15 @@ static inline void game_render__tri_box(const geo3d_tri_t *T, const float *m, fl
             c[i][r] = m[k] * v[i][0] + m[4 + k] * v[i][1] + m[8 + k] * v[i][2] + m[12 + k];
         }
     b[0] = b[1] = 1e30f; b[2] = b[3] = -1e30f;
-    const float near = 1e-3f;
+    const float w_near = 1e-3f;                  /* not "near": windows.h defines it */
     for (int i = 0; i < 3; i++) {                    /* the corners in front, and the edges' cuts at w = near */
         const float *p = c[i], *q = c[(i + 1) % 3];
         float pt[2][3];
         int np = 0;
-        if (p[2] >= near) { pt[np][0] = p[0]; pt[np][1] = p[1]; pt[np][2] = p[2]; np++; }
-        if ((p[2] >= near) != (q[2] >= near)) {
-            const float t = (near - p[2]) / (q[2] - p[2]);
-            pt[np][0] = p[0] + (q[0] - p[0]) * t; pt[np][1] = p[1] + (q[1] - p[1]) * t; pt[np][2] = near; np++;
+        if (p[2] >= w_near) { pt[np][0] = p[0]; pt[np][1] = p[1]; pt[np][2] = p[2]; np++; }
+        if ((p[2] >= w_near) != (q[2] >= w_near)) {
+            const float t = (w_near - p[2]) / (q[2] - p[2]);
+            pt[np][0] = p[0] + (q[0] - p[0]) * t; pt[np][1] = p[1] + (q[1] - p[1]) * t; pt[np][2] = w_near; np++;
         }
         for (int j = 0; j < np; j++) {
             const float x = (pt[j][0] / pt[j][2] + 1.0f) * 248.0f, y = (1.0f - pt[j][1] / pt[j][2]) * 192.0f;
