@@ -51,7 +51,7 @@ static const struct { const char *id; game_region_kind_t kind; } g_region_unhook
     { "doaa",             REGION_TODO },
     { "doaab",            REGION_TODO },
     { "doaae",            REGION_PROGRAM_ROM },
-    { "airwlkrs",         REGION_TODO },
+    { "airwlkrs",         REGION_PROGRAM_ROM },
     { "vonj",            REGION_PROGRAM_ROM },
     { "daytona",         REGION_TODO },
     { "m2snake",         REGION_HOMEBREW },

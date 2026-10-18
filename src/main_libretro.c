@@ -604,11 +604,13 @@ static const lr_bind_t lr_binds[] = {
 static void lr_set_input_descriptors(void) {
     static const char *names[] = { "Up", "Down", "Left", "Right", "Button 1", "Button 2", "Button 3",
                                    "Button 4", "Start", "Coin", "Test", "Service" };
-    struct retro_input_descriptor desc[2 * LR_BIND_COUNT + 3];
+    struct retro_input_descriptor desc[4 * LR_BIND_COUNT + 3];
     int n = 0;
-    for (unsigned port = 0; port < 2; port++)
+    /* Ports 3 and 4 are players 3 and 4 of a four-player cabinet (Air Walkers). */
+    unsigned ports = input_four_players() ? 4 : 2;
+    for (unsigned port = 0; port < ports; port++)
         for (int i = 0; i < LR_BIND_COUNT; i++) {
-            if (port == 1 && lr_binds[i].p2 < 0) continue;
+            if (port > 0 && lr_binds[i].p2 < 0) continue;
             desc[n++] = (struct retro_input_descriptor){ port, RETRO_DEVICE_JOYPAD, 0, lr_binds[i].id, names[i] };
         }
     if (opt.online != LR_ONLINE_RETROARCH) {
@@ -659,7 +661,9 @@ static uint32_t lr_port_gun(unsigned port) {
     return held;
 }
 
-/* One port's pad as the board's held mask, the d-pad and left stick both steering. */
+/* One port's pad as the board's held mask, the d-pad and left stick both
+ * steering. Ports 3 and 4 (players 3 and 4, g_input.far_held) take player 1's
+ * and player 2's bits, as input_far_down does. */
 static uint32_t lr_port_held(unsigned port) {
     const game_input_map_t *in = &g_active_profile->input;
     const int dead = 16000;
@@ -667,8 +671,8 @@ static uint32_t lr_port_held(unsigned port) {
     int ay = input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
     uint32_t held = 0;
     for (int i = 0; i < LR_BIND_COUNT; i++) {
-        int act = port == 0 ? lr_binds[i].p1 : lr_binds[i].p2;
-        if (act < 0) continue;
+        int act = (port & 1) == 0 ? lr_binds[i].p1 : lr_binds[i].p2;
+        if (act < 0 || (port > 1 && lr_binds[i].p2 < 0)) continue;   /* test and service: port 1's */
         bool on = lr_btn(port, lr_binds[i].id);
         if (lr_binds[i].id == RETRO_DEVICE_ID_JOYPAD_UP)    on |= ay < -dead;
         if (lr_binds[i].id == RETRO_DEVICE_ID_JOYPAD_DOWN)  on |= ay >  dead;
@@ -2255,7 +2259,7 @@ RETRO_API void retro_set_environment(retro_environment_t cb) {
         { "Light gun", RETRO_DEVICE_LIGHTGUN },
     };
     static const struct retro_controller_info ports[] = {
-        { pads, 2 }, { pads, 2 }, { NULL, 0 },
+        { pads, 2 }, { pads, 2 }, { pads, 1 }, { pads, 1 }, { NULL, 0 },
     };
     cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void *)ports);
 }
@@ -2486,9 +2490,13 @@ RETRO_API void retro_run(void) {
      * each machine is one player. */
     bool in_session = lr_in_session();
     if (!in_session) held |= g_shell_on ? lr_port_held_shell(1) : lr_port_held(1);
+    /* Ports 3 and 4: players 3 and 4 of a four-player cabinet, only on this
+     * machine too (the board reads them only outside a session). */
+    uint32_t far = !in_session && input_four_players() ? lr_port_held(2) | lr_port_held(3) : 0;
     bool board_paused = false;
-    if (g_shell_on && !lr_shell_input(&board_paused)) held = 0;
+    if (g_shell_on && !lr_shell_input(&board_paused)) held = far = 0;
     if (!in_session) held = lr_script_held(held);
+    g_input.far_held = far;
 
     if (opt.online == LR_ONLINE_RPCN) lr_rpcn_toasts();
 

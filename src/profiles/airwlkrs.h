@@ -14,8 +14,12 @@
  * 0x08, START1 0x10, START2 0x20, COIN3 0x40, COIN4 0x80.
  *
  * The cabinet takes four players: port F bit 7 switches IN1 / IN2 and the
- * start bits to players 3 and 4 (quirks.four_player_sides, input.h). The host
- * has two players' controls, so players 3 and 4 read released.
+ * start bits to players 3 and 4 (quirks.four_player_sides, input.h), and the
+ * game only raises it with GAME OPTIONS -> PLAYER SELECTION at 4P SIMULTANEOUS
+ * (the default is 2P). Players 3 and 4 play from g_input.far_held: the third
+ * and fourth pad (libretro ports, web and SDL3 pads) or p3:/p4: macros; a
+ * session (netplay, replays, follow) carries two players, so they read
+ * released there.
  *
  * MAME marks the set MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND.
  */
@@ -130,7 +134,11 @@ static const game_profile_t airwlkrs_profile = {
         .irq_vectors      = true,
         .board_vblank     = true,
         .four_player_sides = true,
-        .region           = { .kind = REGION_TODO, .why = "where the program keeps its country is not looked for yet" },
+        /* The program ROM is Data East's AOU show build ("Ver 0.99.99a JAPAN
+         * 97-01-23 AOU SHOW version" at 0xC6A50): the warning names only
+         * Japan, and the test menu's COIN and GAME OPTIONS have no country. */
+        .region           = { .kind = REGION_PROGRAM_ROM,
+                              .why  = "the program ROM is Japan's AOU show build, with no country setting" },
     },
 };
 

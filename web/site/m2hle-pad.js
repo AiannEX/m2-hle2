@@ -11,6 +11,9 @@
  * to every pad. The first pad plays player 1; a second plays player 2 unless the
  * panel says otherwise. Under netplay both reach the local player (netplay.h,
  * netplay_sample_local), which is what a player with two pads plugged in expects.
+ * A four-player game (Air Walkers, web_four_players) gives a third and fourth
+ * pad to players 3 and 4 (web_pad_far_set), on this machine only: the board
+ * reads them only outside a session.
  *
  * Browsers hide pads from a page until a button is pressed on one: "no controller"
  * before that is not a fault.
@@ -41,6 +44,7 @@ m2hleLang.add({
     'pad.status.none': 'No controller found. Connect one and press any button on it.',
     'pad.status.p1': 'Player 1: {name}',
     'pad.status.p2': 'Player 2: {name}',
+    'pad.status.p3': 'Player 3: {name}', 'pad.status.p4': 'Player 4: {name}',
     'pad.status.also': 'Also player 1: {name}',
     'pad.status.odd': '{pads} (unrecognised layout: buttons are shown by number)',
     'pad.status.twin': '{pads} (Saturn Twin Stick layout, through the Bliss-Box)',
@@ -67,6 +71,7 @@ m2hleLang.add({
     'pad.status.none': 'コントローラーが見つかりません。接続して、いずれかのボタンを押してください。',
     'pad.status.p1': 'プレイヤー1：{name}',
     'pad.status.p2': 'プレイヤー2：{name}',
+    'pad.status.p3': 'プレイヤー3：{name}', 'pad.status.p4': 'プレイヤー4：{name}',
     'pad.status.also': 'こちらもプレイヤー1：{name}',
     'pad.status.odd': '{pads}（未対応の配置のため、ボタンは番号で表示しています）',
     'pad.status.twin': '{pads}（Bliss-Box 経由のセガサターン ツインスティック配置）',
@@ -291,6 +296,12 @@ const m2hlePad = (() => {
     return v !== undefined && v * x.d > DEAD;
   }
 
+  /* Does the pad at this index play player 3 or 4 (a four-player game's third
+   * and fourth pads)? */
+  function farPad(i) {
+    return (i === 2 || i === 3) && !TWIN && ready && !!Module._web_four_players && Module._web_four_players() !== 0;
+  }
+
   /* The rows this pad holds, one bit per ACTIONS index. */
   function padRows(pad) {
     let r = 0;
@@ -311,10 +322,11 @@ const m2hlePad = (() => {
     const list = pads();
     if (listening) { capture(list); return; }
 
-    let mask = 0, pause = false;
+    let mask = 0, far = 0, pause = false;
     list.forEach((pad, i) => {
       const r = padRows(pad), m = rowActions(r);
-      mask |= (i === 1 && secondIsP2 && !TWIN) ? m << P2_OFFSET : m;
+      if (farPad(i)) far |= i === 3 ? m << P2_OFFSET : m;
+      else mask |= (i === 1 && secondIsP2 && !TWIN) ? m << P2_OFFSET : m;
       pause = pause || !!(r & PAUSE_ROW);
       if (i === 0) showHeld(r);
     });
@@ -322,6 +334,7 @@ const m2hlePad = (() => {
     pauseHeld = pause;
     if (list.length === 0) showHeld(0);
     padMask = mask;
+    if (ready && Module._web_pad_far_set && !listening) Module._web_pad_far_set(far >>> 0);
     /* Every frame, not only on a change: the emulator forgets what the pad held
      * whenever it lets go of the keyboard (focus lost, the drawer opened), and a
      * direction still held should come straight back. */
@@ -402,6 +415,7 @@ const m2hlePad = (() => {
     /* Nothing reaches the game while a press is being captured: binding Punch
      * should not throw one. */
     if (ready) Module._web_pad_set(0);
+    if (ready && Module._web_pad_far_set) Module._web_pad_far_set(0);
     render();
   }
 
@@ -520,7 +534,8 @@ const m2hlePad = (() => {
       el.textContent = m2hleLang.t('pad.status.none');
       return;
     }
-    const names = list.map((p, i) => m2hleLang.t(i === 0 ? 'pad.status.p1' : (i === 1 && secondIsP2 && !TWIN ? 'pad.status.p2' : 'pad.status.also'),
+    const names = list.map((p, i) => m2hleLang.t(i === 0 ? 'pad.status.p1' : (i === 1 && secondIsP2 && !TWIN ? 'pad.status.p2'
+                                                 : farPad(i) ? (i === 2 ? 'pad.status.p3' : 'pad.status.p4') : 'pad.status.also'),
                                                  { name: p.id.replace(/\s*\(.*?Vendor.*?\)\s*/i, ' ').trim() }));
     const pads = names.join(' · ');
     el.textContent = list[0].mapping === 'standard' ? pads

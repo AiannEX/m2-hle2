@@ -54,6 +54,14 @@ typedef struct {
      * `use_net` is set, and hands the board back to the keyboard when it is not. */
     volatile uint32_t net_held;
     volatile int      use_net;
+
+    /* Players 3 and 4 of a four-player cabinet (quirks.four_player_sides), in
+     * `held`'s layout with player 3 on player 1's bits and player 4 on player
+     * 2's (input_far_down). Only the host's own pads fill it, and the board
+     * reads it only while nothing has taken the input (use_net: netplay,
+     * GGPO, a replay, a follow), so every session stays two players and
+     * plays the same frames everywhere. */
+    volatile uint32_t far_held;
 } input_state_t;
 
 static input_state_t g_input = {0};
@@ -62,6 +70,7 @@ static input_state_t g_input = {0};
  * (below) can all hold Punch at once, and letting go of one must not release
  * the others. Only the host's input thread touches this. */
 static uint8_t g_input_holds[GAME_INPUT_COUNT];
+static uint8_t g_input_far_holds[GAME_INPUT_COUNT];   /* far_held's, the same way */
 
 /* Combos ("macros", as the Gems Collection and HD ports call them): one host key
  * that holds several actions at once, e.g. B1+B2. Host-side only -- the board
@@ -71,13 +80,17 @@ static uint8_t g_input_holds[GAME_INPUT_COUNT];
  * page composes combos itself (web/site/m2hle-keys.js, m2hle-pad.js). */
 #define INPUT_COMBO_MAX 16
 typedef struct { int key; uint32_t acts; } input_combo_t;   /* acts: 1 << GAME_INPUT_* */
+/* In a combo's acts: the actions are player 3's (player 1's) or 4's (player
+ * 2's) of a four-player cabinet, pressed with input_far_down. */
+#define INPUT_COMBO_FAR (1u << 31)
 static input_combo_t g_input_combos[INPUT_COMBO_MAX];
 static int           g_input_combo_count;
 
 /* Let go of everything the host holds; the netplay override is left alone. */
 static inline void input_release_all(void) {
     g_input.held = 0;
-    for (int a = 0; a < GAME_INPUT_COUNT; a++) g_input_holds[a] = 0;
+    g_input.far_held = 0;
+    for (int a = 0; a < GAME_INPUT_COUNT; a++) g_input_holds[a] = g_input_far_holds[a] = 0;
 }
 
 static inline void input_reset(void) { input_release_all(); g_input.net_held = 0; }
@@ -177,6 +190,29 @@ static inline void input_action_up(int act) {
         if (g_input_holds[a]) g_input.held |= g_active_profile->input.bits[a] & bit;
 }
 
+/* Does the profile's cabinet seat four (players 3 and 4 have controls)? */
+static inline bool input_four_players(void) {
+    return g_active_profile && g_active_profile->quirks.four_player_sides;
+}
+
+/* Player 3 or 4 presses or lets go of an action: a player-1 action
+ * (GAME_INPUT_P1_*) is player 3's, a player-2 one player 4's, as the cabinet
+ * wires them (input_sides_read_cb). Nothing on a two-player profile. */
+static inline void input_far_down(int act) {
+    if (act < 0 || act >= GAME_INPUT_COUNT || !input_four_players()) return;
+    if (g_input_far_holds[act] < 255) g_input_far_holds[act]++;
+    g_input.far_held |= g_active_profile->input.bits[act];
+}
+
+static inline void input_far_up(int act) {
+    if (act < 0 || act >= GAME_INPUT_COUNT || !input_four_players()) return;
+    uint32_t bit = g_active_profile->input.bits[act];
+    if (g_input_far_holds[act] > 0 && --g_input_far_holds[act] > 0) return;
+    g_input.far_held &= ~bit;
+    for (int a = 0; a < GAME_INPUT_COUNT; a++)
+        if (g_input_far_holds[a]) g_input.far_held |= g_active_profile->input.bits[a] & bit;
+}
+
 /* ---- Combos ---------------------------------------------------------------- */
 
 /* The n characters at s as a combo button (any case): its index among up,
@@ -193,15 +229,17 @@ static inline int input_combo_name(const char *s, size_t n) {
 }
 
 /* Parse a combo: '+'-separated b1 b2 b3 b4 up down left right start coin,
- * optionally after "p2:" for player 2 -- "b1+b2", "p2:b1+b2+b3". Returns the
- * action mask, or 0 if the text is not one. */
+ * optionally after "p2:" for player 2, or "p3:" / "p4:" for players 3 and 4
+ * of a four-player cabinet (INPUT_COMBO_FAR) -- "b1+b2", "p2:b1+b2+b3",
+ * "p3:up". Returns the action mask, or 0 if the text is not one. */
 static inline uint32_t input_combo_parse(const char *s) {
     int base = GAME_INPUT_P1_UP;
-    if ((s[0] == 'p' || s[0] == 'P') && (s[1] == '1' || s[1] == '2') && s[2] == ':') {
-        if (s[1] == '2') base = GAME_INPUT_P2_UP;
+    uint32_t acts = 0;
+    if ((s[0] == 'p' || s[0] == 'P') && s[1] >= '1' && s[1] <= '4' && s[2] == ':') {
+        if (s[1] == '2' || s[1] == '4') base = GAME_INPUT_P2_UP;
+        if (s[1] >= '3') acts = INPUT_COMBO_FAR;
         s += 3;
     }
-    uint32_t acts = 0;
     while (*s) {
         size_t n = strcspn(s, "+");
         int found = input_combo_name(s, n);
@@ -210,7 +248,7 @@ static inline uint32_t input_combo_parse(const char *s) {
         s += n;
         if (*s == '+') s++;
     }
-    return acts;
+    return acts & ~INPUT_COMBO_FAR ? acts : 0;
 }
 
 /* Bind `key` to a combo; binding the same key again replaces it. */
@@ -223,11 +261,13 @@ static inline bool input_combo_bind(int key, uint32_t acts) {
 }
 
 static inline void input_actions_down(uint32_t acts) {
-    for (int a = 0; a < GAME_INPUT_COUNT; a++) if (acts & (1u << a)) input_action_down(a);
+    for (int a = 0; a < GAME_INPUT_COUNT; a++)
+        if (acts & (1u << a)) { if (acts & INPUT_COMBO_FAR) input_far_down(a); else input_action_down(a); }
 }
 
 static inline void input_actions_up(uint32_t acts) {
-    for (int a = 0; a < GAME_INPUT_COUNT; a++) if (acts & (1u << a)) input_action_up(a);
+    for (int a = 0; a < GAME_INPUT_COUNT; a++)
+        if (acts & (1u << a)) { if (acts & INPUT_COMBO_FAR) input_far_up(a); else input_action_up(a); }
 }
 
 /* The combo `key` is bound to, or 0. */
@@ -337,9 +377,11 @@ static inline void input_attach_lightgun(mem_region_t *r) {
  * writes the side it reads into port F bit 7 (the 315-5649's register 5,
  * IO+0x0A), and while it is up IN1 / IN2 answer players 3 and 4 and IN0's
  * START bits (0x10, 0x20) START3 and START4 (MAME model2a_airwlkrs_state).
- * The host has two players' controls, so the far side reads released; the
- * switch itself is the board's, so player 1 never presses player 3's buttons.
- * A two-player cabinet setting leaves the bit down. */
+ * COIN3 and COIN4 are IN0's 0x40 and 0x80 on either side. Players 3 and 4
+ * are g_input.far_held, read only when no session has the input: under
+ * use_net the far side reads released. The switch itself is the board's, so
+ * player 1 never presses player 3's buttons. A two-player cabinet setting
+ * leaves the bit down. */
 static uint8_t g_io_side;
 
 #define IO_PORT_F 0x0Au   /* register 5: (5 / 2) * 4 + (5 & 1) * 2 */
@@ -347,12 +389,16 @@ static uint8_t g_io_side;
 static uint32_t input_sides_read_cb(mem_region_t *r, uint32_t addr, int size) {
     uint32_t off = addr - r->base, v = 0;
     uint32_t held = input_board_held();
+    uint32_t far  = input_board_from_net() ? 0u : g_input.far_held;
+    uint32_t side = g_io_side ? far : held;
+    const uint32_t *bits = g_active_profile->input.bits;
+    uint32_t coins = ((far & bits[GAME_INPUT_P1_COIN]) ? 0x40u : 0u) | ((far & bits[GAME_INPUT_P2_COIN]) ? 0x80u : 0u);
     for (int i = 0; i < size; i++) {
         uint8_t b;
         switch (off + (uint32_t)i) {
-            case 0x02: b = eeprom_in0((uint8_t)(~(held & 0xFFu) | (g_io_side ? 0x30u : 0u))); break;
-            case 0x04: b = g_io_side ? 0xFF : (uint8_t)~((held >> 8)  & 0xFFu); break;
-            case 0x06: b = g_io_side ? 0xFF : (uint8_t)~((held >> 16) & 0xFFu); break;
+            case 0x02: b = eeprom_in0((uint8_t)~((held & 0xCFu) | (side & 0x30u) | coins)); break;
+            case 0x04: b = (uint8_t)~((side >> 8)  & 0xFFu); break;
+            case 0x06: b = (uint8_t)~((side >> 16) & 0xFFu); break;
             default:   b = r->data && off + (uint32_t)i < r->size ? r->data[off + (uint32_t)i] : 0xFFu; break;
         }
         v |= (uint32_t)b << (8 * i);

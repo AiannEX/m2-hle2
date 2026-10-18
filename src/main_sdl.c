@@ -255,38 +255,60 @@ static bool apply_pad_map(const char *list) {
 /* The pad's contribution to each action, recomputed whole on every gamepad
  * event so the d-pad and stick cannot release each other's direction. */
 static bool g_pad_held[GAME_INPUT_COUNT];
+/* Players 3 and 4's (input_far_down), on a four-player cabinet (Air Walkers):
+ * the third pad that plays here is player 3 on player 1's actions, the fourth
+ * player 4 on player 2's. */
+static bool g_pad_far_held[GAME_INPUT_COUNT];
 
 /* --pad: only that gamepad plays this window; the others play another's. */
 static bool pad_plays_here(int i) {
     return opt.pad < 0 || i == opt.pad;
 }
 
+static void pad_actions(SDL_Gamepad *pad, bool *now);
+
 static void pad_refresh(void) {
-    bool now[GAME_INPUT_COUNT] = {0};
-    int count = 0;
+    bool now[GAME_INPUT_COUNT] = {0}, far_now[GAME_INPUT_COUNT] = {0};
+    int count = 0, here = 0;
     SDL_JoystickID *ids = SDL_GetGamepads(&count);
     for (int i = 0; ids && i < count; i++) {
         if (!pad_plays_here(i)) continue;
         SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
         if (!pad) continue;
-        const int dead = 16000;
-        int ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
-        int ay = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
-        now[GAME_INPUT_P1_UP]    |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)    || ay < -dead;
-        now[GAME_INPUT_P1_DOWN]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)  || ay >  dead;
-        now[GAME_INPUT_P1_LEFT]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)  || ax < -dead;
-        now[GAME_INPUT_P1_RIGHT] |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || ax >  dead;
-        for (int b = 0; b < PAD_BIND_COUNT; b++) {
-            if (!g_pad_binds[b].acts || !SDL_GetGamepadButton(pad, g_pad_binds[b].button)) continue;
-            for (int a = 0; a < GAME_INPUT_COUNT; a++)
-                if (g_pad_binds[b].acts & ACT(a)) now[a] = true;
+        int nth = here++;
+        if (nth >= 2 && nth < 4 && input_four_players()) {
+            bool p1[GAME_INPUT_COUNT] = {0};
+            pad_actions(pad, p1);
+            const int to = nth == 2 ? 0 : GAME_INPUT_P2_UP - GAME_INPUT_P1_UP;
+            for (int a = GAME_INPUT_P1_UP; a <= GAME_INPUT_P1_COIN; a++) if (p1[a]) far_now[a + to] = true;
+            continue;
         }
+        pad_actions(pad, now);
     }
     SDL_free(ids);
     for (int a = 0; a < GAME_INPUT_COUNT; a++) {
         if (now[a] && !g_pad_held[a]) input_action_down(a);
         if (!now[a] && g_pad_held[a]) input_action_up(a);
         g_pad_held[a] = now[a];
+        if (far_now[a] && !g_pad_far_held[a]) input_far_down(a);
+        if (!far_now[a] && g_pad_far_held[a]) input_far_up(a);
+        g_pad_far_held[a] = far_now[a];
+    }
+}
+
+/* One pad's actions into now[]: the d-pad and left stick steer, the binds press. */
+static void pad_actions(SDL_Gamepad *pad, bool *now) {
+    const int dead = 16000;
+    int ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
+    int ay = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
+    now[GAME_INPUT_P1_UP]    |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)    || ay < -dead;
+    now[GAME_INPUT_P1_DOWN]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)  || ay >  dead;
+    now[GAME_INPUT_P1_LEFT]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)  || ax < -dead;
+    now[GAME_INPUT_P1_RIGHT] |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || ax >  dead;
+    for (int b = 0; b < PAD_BIND_COUNT; b++) {
+        if (!g_pad_binds[b].acts || !SDL_GetGamepadButton(pad, g_pad_binds[b].button)) continue;
+        for (int a = 0; a < GAME_INPUT_COUNT; a++)
+            if (g_pad_binds[b].acts & ACT(a)) now[a] = true;
     }
 }
 
@@ -295,7 +317,8 @@ static void pad_refresh(void) {
 static void lobby_pad_release(void) {
     for (int a = 0; a < GAME_INPUT_COUNT; a++) {
         if (g_pad_held[a]) input_action_up(a);
-        g_pad_held[a] = false;
+        if (g_pad_far_held[a]) input_far_up(a);
+        g_pad_held[a] = g_pad_far_held[a] = false;
     }
 }
 

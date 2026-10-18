@@ -279,12 +279,15 @@ static void mcp_cmd_match_replay(char *resp, int cap) {
 
 /* Drive game input: set the active-high held mask (0x500700 layout, same bits the
  * profile's input.bits use). The I/O read callback serves these to the game's
- * read_sw. e.g. {"cmd":"set_input","held":"0x1000"} holds P1 DOWN. */
+ * read_sw. e.g. {"cmd":"set_input","held":"0x1000"} holds P1 DOWN. "far" sets
+ * players 3 and 4 on a four-player cabinet the same way (g_input.far_held:
+ * player 3 on player 1's bits, player 4 on player 2's); left out, they stay. */
 static void mcp_cmd_set_input(const char *req, char *resp, int cap) {
-    uint32_t held = 0;
+    uint32_t held = 0, far = 0;
     mcp_json_get_u32(req, "held", &held);
     g_input.held = held;
-    snprintf(resp, (size_t)cap, "{\"ok\":true,\"held\":\"0x%08X\"}", held);
+    if (mcp_json_get_u32(req, "far", &far)) g_input.far_held = far;
+    snprintf(resp, (size_t)cap, "{\"ok\":true,\"held\":\"0x%08X\",\"far\":\"0x%08X\"}", held, (uint32_t)g_input.far_held);
 }
 
 /* Point a light gun as a host's mouse would (lightgun.h): {"cmd":"set_gun",
