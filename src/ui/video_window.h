@@ -30,6 +30,7 @@
 
 #include "sokol_gfx.h"
 
+#include "cabinet_picture.h"   /* the Picture menu's cabinet: its colour tables */
 #include "constants.h"
 #include "game_render.h"   /* game_render_glsl */
 #include "memory.h"
@@ -484,7 +485,8 @@ static inline void video_update(video_state_t *vid, memory_bus_t *bus) {
     /* Nothing 2D changed since the last compose: the layers and the uploaded
      * textures already show it. Sample the generations before composing, so a
      * write that lands mid-compose makes the next frame compose again. */
-    uint32_t tile = bus->gen_tile, gfx = bus->gen_gfx, pal = bus->gen_pal, lut = bus->gen_lut;
+    uint32_t tile = bus->gen_tile, gfx = bus->gen_gfx, pal = bus->gen_pal,
+             lut = bus->gen_lut + cabinet_picture_gen();
     bool first = !vid->composed;
     if (!first && tile == vid->composed_tile && gfx == vid->composed_gfx &&
             pal == vid->composed_pal && lut == vid->composed_lut)
@@ -497,7 +499,7 @@ static inline void video_update(video_state_t *vid, memory_bus_t *bus) {
     vid->composed_gfx  = gfx;
     vid->composed_pal  = pal;
     vid->composed_lut  = lut;
-    if (pens_changed) video_pen_channels(bus, vid->pen_chan);
+    if (pens_changed) video_pen_channels_xlat(cabinet_picture_xlat(bus), vid->pen_chan);
 
     if (vid->gpu) {
         video__compose_gpu(vid, bus, tile_changed, gfx_changed, pens_changed);

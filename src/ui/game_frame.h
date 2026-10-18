@@ -14,6 +14,7 @@
 
 #include "sokol_gfx.h"
 
+#include "cabinet_picture.h"   /* the Picture menu's cabinet: its colour tables */
 #include "constants.h"
 #include "cop.h"
 #include "emu_thread.h"
@@ -114,7 +115,7 @@ static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
      * every frame was the largest single cost on a handheld GPU. */
     static bool     s_atlas_valid = false, s_luts_valid = false;
     static uint32_t s_atlas_gen, s_luts_gen;
-    uint32_t tex_gen = bus->gen_tex, lut_gen = bus->gen_lut;
+    uint32_t tex_gen = bus->gen_tex, lut_gen = bus->gen_lut + cabinet_picture_gen();
     if (!s_atlas_valid || tex_gen != s_atlas_gen) {
         game_render_upload_atlas(bus->texram0, bus->texram1, TEXRAM0_SIZE,
                                  bus->tex_dirty[0], bus->tex_dirty[1]);
@@ -122,7 +123,7 @@ static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
         s_atlas_gen   = tex_gen;
     }
     if (!s_luts_valid || lut_gen != s_luts_gen) {
-        game_render_upload_luts(bus->luma, bus->colorxlat);
+        game_render_upload_luts(bus->luma, cabinet_picture_xlat(bus));
         s_luts_valid = true;
         s_luts_gen   = lut_gen;
     }
