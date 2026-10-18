@@ -15,7 +15,7 @@
 /* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
  * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop, Fighting Vipers,
  * The House of the Dead, Daytona USA, Virtua Fighter 2, Dead or Alive and
- * Air Walkers (the page's ?game=, web/site/m2hle-games.js). Any other set is only
+ * Air Walkers and Power Sled (the page's ?game=, web/site/m2hle-games.js). Any other set is only
  * download size: left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. */
 #include "srallyc.h"
@@ -27,8 +27,8 @@
 #include "doa.h"       /* runs since Pinboard #1050, on the web too */
 #include "vf2.h"       /* runs since Pinboard #1046, on the web since #1055 */
 #include "airwlkrs.h"  /* runs since Pinboard #1063, on the site since #1063 */
+#include "powsled.h"   /* runs since Pinboard #1052, on the site since #1089 */
 #ifndef M2HLE_WEB
-#include "powsled.h"   /* Pinboard #1052 */
 #include "m2snake.h"
 #include "sfight_homebrew.h"
 #endif
@@ -62,8 +62,8 @@ const game_profile_t *const g_profiles[] = {
     &vf2a_profile,
     &vf2o_profile,
     &airwlkrs_profile,
-#ifndef M2HLE_WEB
     &powsled_profile,
+#ifndef M2HLE_WEB
     &m2snake_profile,
     &sfight_homebrew_profile,
 #endif

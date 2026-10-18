@@ -119,6 +119,14 @@ static inline void powsled_install(const romset_t *rs, i960_cpu_t *cpu, memory_b
     mem_init(bus, rs->maincpu, rs->maincpu_size);
     powsled_set_unit(bus, g_powsled_unit);
     powsled_seed_settings(rs, bus);
+    /* The unit is the program's bytes, so they go with the board: a GGPO
+     * match swaps the Main and the ride through the one bus (emu_twin.h). */
+    if (bus->rom && bus->rom_size >= POWSLED_CAM_AT + 4u) {
+        savestate_extra("powsled", "UNIT", &g_powsled_unit, sizeof g_powsled_unit);
+        savestate_extra("powsled", "UNIT.mode", bus->rom + POWSLED_MODE_AT, 1);
+        savestate_extra("powsled", "UNIT.id", bus->rom + POWSLED_ID_AT, 4);
+        savestate_extra("powsled", "UNIT.cam", bus->rom + POWSLED_CAM_AT, 1);
+    }
 
     model2b_cop_install(bus, rs->copro_data, rs->copro_data_size);
     savestate_extra("powsled", "M2BCOP", &g_m2bc, sizeof g_m2bc);
@@ -188,6 +196,7 @@ static const game_profile_t powsled_profile = {
     .install_fn      = powsled_install,
     .hook_count      = 0,
     .link_role       = powsled_link_role,
+    .link_twin       = true,   /* GGPO: the Main (1P) and a ride (2P) on each machine */
     .input = {
         .bits = {
             [GAME_INPUT_P1_COIN]  = 0x00000001,

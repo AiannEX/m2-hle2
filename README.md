@@ -130,6 +130,16 @@ and **P2 B3** (the Main's IN1 bit 4) for the race. The ride steers with its two 
 Left** and **P1 Right**. The Main shows the race
 from the Relay's camera, behind the riders.
 
+Over the internet the two boards meet in a Room Match on RPCN (desktop or the website's
+`powsled.html`, Pinboard #1089): the room's owner runs the Main and the guest rides. The match
+runs no lockstep; each board keeps its own 60 Hz and the room carries the comm ring.
+`tools/powsled-rpcn-pair.mjs` races two headless copies that way on a local RPCN.
+
+A GGPO match (Pinboard #1095) runs both boards on each machine: the challenger, player 1,
+is the Main and the one who accepts, player 2, rides; only the two players' inputs cross the
+network. A race of two riders (three boards) is not a GGPO match. `tools/powsled-ggpo-pair.mjs`
+races two headless copies that way through a local ggpo-server.
+
 ## Layout
 
 - [src/board/](src/board/) — everything shared by every Model 2 ROM set: CPU, bus, COP/SHARC,

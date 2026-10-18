@@ -2,13 +2,13 @@
  * emu_twin.h — both cabinets of a comm-board link on one machine, for GGPO
  * (Pinboard #1080).
  *
- * A linked game (Virtual-On) puts each player on a board of their own, the two
- * boards talking through their comm boards (board/m2comm.h). GGPO rolls one
- * simulation back and runs it again on the real inputs, and a link run over
- * the network is not one: the other cabinet's comm frames depend on what it
- * guessed. So a GGPO match of a linked game runs BOTH cabinets on each
- * machine, and the only thing that crosses the network is the two players'
- * inputs, as in any other GGPO match. The two machines run the same pair of
+ * A linked game (Virtual-On, Power Sled) puts each player on a board of their
+ * own, the two boards talking through their comm boards (board/m2comm.h).
+ * GGPO rolls one simulation back and runs it again on the real inputs, and a
+ * link run over the network is not one: the other cabinet's comm frames
+ * depend on what it guessed. So a GGPO match of a linked game runs BOTH
+ * cabinets on each machine, and the only thing that crosses the network is
+ * the two players' inputs, as in any other GGPO match. The two machines run the same pair of
  * boards and see the same frames.
  *
  * The two boards take turns in the one board this process has. Between frames
@@ -380,10 +380,15 @@ static inline bool emu_twin_start(emu_thread_ctx_t *ctx, const game_profile_t *p
         memcpy(back[0], ctx->bus->back, BACKUP_RAM_KEEP);
         p->link_role(ctx->bus, GAME_LINK_SLAVE);
         memcpy(back[1], ctx->bus->back, BACKUP_RAM_KEEP);
+        /* Each board reset in its own role: a role the profile keeps outside
+         * backup RAM (Power Sled's unit, the program's bytes) is the last
+         * link_role's, and goes with the board from there (a savestate extra). */
         int H = 1 - local;
+        p->link_role(ctx->bus, H ? GAME_LINK_SLAVE : GAME_LINK_MASTER);
         emu_twin__boot(ctx, back[H], H);
         emu_twin__save(ctx, g_twin.stash, H);
         g_twin.hidden = g_twin.stash;
+        p->link_role(ctx->bus, local ? GAME_LINK_SLAVE : GAME_LINK_MASTER);
         emu_twin__boot(ctx, back[local], local);
     }
     sound_settle();
