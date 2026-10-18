@@ -29,9 +29,21 @@
  * reaches 641 ~116 board frames after we do). The SEGA logo ends one game
  * frame later here (0x500018/0x500028 a frame behind from ~900 on), and the
  * attract's first fight (counter ~950-4350) matches all but to the pixel
- * (median 0.01% of pixels > 48 off). The second and third demo fights drift:
- * the 0x500000 globals stay in step, the fighters do not, and MAME's attract loops back to
- * the logo by counter ~8100 while ours is still at the ranking. Open.
+ * (median 0.01% of pixels > 48 off). The second and third demo fights drift
+ * from MAME, and MAME's attract is back at the logo by counter ~8100 while
+ * ours is still at the ranking. That is the game's random numbers, not our
+ * board (Pinboard #1061). Its rand at 0x94D0 (2.1) adds the four free-running
+ * board timers (0xF00000..0xF0000C, 25 MHz) into its state at 0x500098, as
+ * STF's 0x66B0 does, so each value depends on the exact cycle of the call,
+ * and the state already differs from MAME's at boot. The first demo fight
+ * calls it a handful of times. The second plays the CPU fighters, which call
+ * it twice a frame from counter ~4150, and their input ring (0x504040) and
+ * then their moves part from MAME's. With rand's result replaced on both boards
+ * by the same LCG (at 0x9514: a MAME debugger breakpoint, a hack in our step
+ * loop), work RAM stays in step with MAME to counter 8300, the fights and the
+ * ranking's initials are MAME's, and both are back at the logo by 8150. What
+ * is left differs by one frame, from the logo (our 60 Hz vblank against
+ * MAME's 57.52, as for Virtual-On in docs/invariants/memory-bus.md).
  */
 #ifndef PROFILES_VF2_H
 #define PROFILES_VF2_H
