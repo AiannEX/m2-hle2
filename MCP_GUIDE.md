@@ -325,7 +325,10 @@ Set the active-high held mask the game's input read is served, in the
 `0x500700` bit layout (see the table under "STF memory map"). `"0x1000"` holds
 P1 Down, `"0x0"` releases everything. It replaces the whole mask
 (`g_input.held`, the same one the window's keyboard drives). Returns `held`. This is the only safe way to drive a
-netplay session (see below).
+netplay session (see below). On a four-player cabinet (Air Walkers) `far`
+sets players 3 and 4 the same way, player 3 on player 1's bits and player 4
+on player 2's (`g_input.far_held`; left out, it stays as it was). The board
+reads them only outside netplay, replays and follows. Returns `far` too.
 
 **`set_gun(player: int = 0, x: float = 0.5, y: float = 0.5, offscreen: int = 0, on: int = 1)`**
 On a light-gun profile (The House of the Dead), aim a gun as the window's

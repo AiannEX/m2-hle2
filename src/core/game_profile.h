@@ -213,6 +213,11 @@ typedef struct {
     bool     model1_io;
     uint32_t model1_io_vr4;
 
+    /* A four-player cabinet on the 315-5649 (MAME model2a_airwlkrs_state):
+     * port F bit 7 picks the side IN1 / IN2 and IN0's start bits answer for,
+     * players 1 and 2 or 3 and 4 (input.h, input_attach_sides). */
+    bool     four_player_sides;
+
     /* Two light guns on the 315-5649's second serial channel (lightgun.h):
      * input_attach serves their positions, off-screen bits and triggers. Each
      * gun's held bits (its pad walks it; reload is the shot off the screen)
