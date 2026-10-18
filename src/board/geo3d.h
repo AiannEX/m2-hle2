@@ -2595,15 +2595,9 @@ typedef struct {
 
 static const int g_geo3d_layer_other[3][2] = { {1, 2}, {0, 2}, {0, 1} };
 
-/* Andrew's monotone chain, counter-clockwise, as layers.js hull(). */
-static int geo3d_layer_hull(double (*p)[2], int n, double (*out)[2]) {
-    for (int i = 1; i < n; i++) {                /* insertion sort: n <= 4 */
-        double a = p[i][0], b = p[i][1];
-        int j = i - 1;
-        while (j >= 0 && (p[j][0] > a || (p[j][0] == a && p[j][1] > b))) { p[j + 1][0] = p[j][0]; p[j + 1][1] = p[j][1]; j--; }
-        p[j + 1][0] = a; p[j + 1][1] = b;
-    }
-    if (n < 3) { for (int i = 0; i < n; i++) { out[i][0] = p[i][0]; out[i][1] = p[i][1]; } return n; }
+/* The chain itself over n >= 3 points sorted by x, then y: the lower hull
+ * left to right, the upper right to left, each without its last point. */
+static int geo3d_layer_hull_chain(double (*p)[2], int n, double (*out)[2]) {
     #define GEO3D_CROSS(o, a, b) (((a)[0] - (o)[0]) * ((b)[1] - (o)[1]) - ((a)[1] - (o)[1]) * ((b)[0] - (o)[0]))
     double lower[8][2], upper[8][2];
     int nl = 0, nu = 0;
@@ -2620,6 +2614,18 @@ static int geo3d_layer_hull(double (*p)[2], int n, double (*out)[2]) {
     for (int i = 0; i < nl - 1; i++) { out[k][0] = lower[i][0]; out[k][1] = lower[i][1]; k++; }
     for (int i = 0; i < nu - 1; i++) { out[k][0] = upper[i][0]; out[k][1] = upper[i][1]; k++; }
     return k;
+}
+
+/* Andrew's monotone chain, counter-clockwise, as layers.js hull(). */
+static int geo3d_layer_hull(double (*p)[2], int n, double (*out)[2]) {
+    for (int i = 1; i < n; i++) {                /* insertion sort: n <= 4 */
+        double a = p[i][0], b = p[i][1];
+        int j = i - 1;
+        while (j >= 0 && (p[j][0] > a || (p[j][0] == a && p[j][1] > b))) { p[j + 1][0] = p[j][0]; p[j + 1][1] = p[j][1]; j--; }
+        p[j + 1][0] = a; p[j + 1][1] = b;
+    }
+    if (n < 3) { for (int i = 0; i < n; i++) { out[i][0] = p[i][0]; out[i][1] = p[i][1]; } return n; }
+    return geo3d_layer_hull_chain(p, n, out);
 }
 
 static double geo3d_layer_poly_area(double (*p)[2], int n) {
