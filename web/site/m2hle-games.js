@@ -202,6 +202,34 @@ const m2hleGames = (() => {
         },
       },
     },
+    daytona: {
+      title: 'Daytona USA',
+      year: 1994, board: 'Model 2', colors: ['#1d8fd8', '#0b2a5c'],
+      blurb: 'Three-Seven Speedway, Dinosaur Canyon, Seaside Street Galaxy. Rolling start!',
+      profiles: [
+        { id: 'daytona', name: 'Rev A', about: 'Japan, Revision A' },
+      ],
+      /* The I/O board's program is MAME's model1io device (src/profiles/daytona.h). */
+      romHint: 'Your <code>daytona.zip</code> and the I/O board\'s <code>model1io.zip</code>, picked together',
+      /* src/profiles/daytona.h: LEFT/RIGHT the wheel, UP/DOWN the four-speed
+       * lever, B1 accelerator, B2 brake, B3/B4 VR1/VR2 (player 2's B3/B4 are
+       * VR3/VR4). The wheel's force is the pad's rumble (m2hle-pad.js). */
+      labels: { up: 'Shift up', down: 'Shift down', left: 'Steer left', right: 'Steer right',
+                b1: 'Accelerator', b2: 'Brake', b3: 'View 1', b4: 'View 2' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'デイトナUSA',
+          blurb: 'スリーセブン・スピードウェイ、ダイナソー・キャニオン、シーサイド・ストリート・ギャラクシー。ローリングスタート！',
+          profiles: { daytona: { name: 'リビジョン A', about: '日本、リビジョン A' } },
+          romHint: 'お持ちの <code>daytona.zip</code> と I/O ボードの <code>model1io.zip</code> を一緒に',
+          labels: { up: 'シフトアップ', down: 'シフトダウン', left: 'ハンドル左', right: 'ハンドル右',
+                    b1: 'アクセル', b2: 'ブレーキ', b3: '視点 1', b4: '視点 2' },
+        },
+      },
+    },
     vf2: {
       title: 'Virtua Fighter 2',
       year: 1994, board: 'Model 2A-CRX', colors: ['#1d8fc8', '#0b2a3d'],

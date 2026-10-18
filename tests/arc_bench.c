@@ -226,6 +226,7 @@ static int load_rom(const char *zip, bool sound) {
     g_active_profile->install_fn(&romset, &cpu, &bus);
 
     if (sound && g_active_profile->quirks.enable_68k_sound) {
+        sound_select_board(g_active_profile->quirks.model1_sound);
         sound_reset();
         sound_attach(&bus);
         if (romset.audiocpu && romset.audiocpu_size > 0)
