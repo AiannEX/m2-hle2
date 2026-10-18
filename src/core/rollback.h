@@ -71,7 +71,26 @@ static struct {
     void           *pool[ROLLBACK_POOL_MAX];
     int             pool_n;
     uint32_t        live;               /* buffers handed out and not yet back */
+    bool            diff;               /* copy only the chunks that differ (emu_twin.h) */
 } g_rollback;
+
+/* A part's copy. With diff set, 4 KB at a time and only where the bytes differ:
+ * the same bytes either way. Twin sessions copy four boards a frame, between
+ * two cabinets of one game and frames a few apart, and most of a board (the
+ * texture RAM, CG, the sound RAM, the programs) is the same in both; reading
+ * both sides costs less than writing one. */
+#define ROLLBACK_DIFF_CHUNK 4096u
+
+static inline void rollback__copy(void *dst, const void *src, size_t n) {
+    if (!g_rollback.diff) { memcpy(dst, src, n); return; }
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+    while (n) {
+        size_t k = n < ROLLBACK_DIFF_CHUNK ? n : ROLLBACK_DIFF_CHUNK;
+        if (memcmp(d, s, k)) memcpy(d, s, k);
+        d += k; s += k; n -= k;
+    }
+}
 
 static inline void rollback__add(const char *name, void *p, size_t n, void (*pack)(void *), bool ptrs) {
     if (g_rollback.n >= ROLLBACK_PARTS_MAX) {
@@ -148,7 +167,7 @@ static inline void rollback_save_to(void *dst, const savestate_emu_t *emu) {
      * that waited first lost the whole overlap with the sound thread whenever
      * one followed every frame, as RetroArch's rewind does (Pinboard #594). */
     for (int i = 0; i < g_rollback.n; i++) {
-        if (!g_rollback.part[i].late) memcpy(buf + off, g_rollback.part[i].p, g_rollback.part[i].n);
+        if (!g_rollback.part[i].late) rollback__copy(buf + off, g_rollback.part[i].p, g_rollback.part[i].n);
         off += g_rollback.part[i].n;
     }
     sound_settle();
@@ -158,7 +177,7 @@ static inline void rollback_save_to(void *dst, const savestate_emu_t *emu) {
     g_rollback.meta.emu = *emu;
     off = 0;
     for (int i = 0; i < g_rollback.n; i++) {
-        if (g_rollback.part[i].late) memcpy(buf + off, g_rollback.part[i].p, g_rollback.part[i].n);
+        if (g_rollback.part[i].late) rollback__copy(buf + off, g_rollback.part[i].p, g_rollback.part[i].n);
         off += g_rollback.part[i].n;
     }
 }
@@ -176,7 +195,7 @@ static inline void rollback_load(const void *data, memory_bus_t *bus, savestate_
     const uint8_t *buf = (const uint8_t *)data;
     size_t off = 0;
     for (int i = 0; i < g_rollback.n; i++) {
-        memcpy(g_rollback.part[i].p, buf + off, g_rollback.part[i].n);
+        rollback__copy(g_rollback.part[i].p, buf + off, g_rollback.part[i].n);
         off += g_rollback.part[i].n;
     }
     savestate_geo_put(&g_rollback.meta.geo);
