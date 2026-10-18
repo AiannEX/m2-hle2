@@ -59,7 +59,12 @@ static inline void eeprom_power_on(void) {
     g_eeprom.locked = 1;
 }
 
+/* A clock other than the CPU board's, while a CPU of the I/O board runs the
+ * chip (model1io.h: the Z80 runs behind the board's clock and catches up). */
+static int64_t (*g_eeprom_clock_fn)(void);
+
 static inline int64_t eeprom_now(void) {
+    if (g_eeprom_clock_fn) return g_eeprom_clock_fn();
     irqt_flush();
     return (int64_t)g_irqt.vbl_count * IRQT_CPU_HZ + g_irqt.vbl_phase;
 }

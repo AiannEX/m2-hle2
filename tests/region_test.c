@@ -50,7 +50,13 @@ static const struct { const char *id; game_region_kind_t kind; } g_region_unhook
     { "vf2b",             REGION_TODO },
     { "vf2a",             REGION_TODO },
     { "vf2o",             REGION_TODO },
+    { "doa",              REGION_TODO },
+    { "doab",             REGION_TODO },
+    { "doaa",             REGION_TODO },
+    { "doaab",            REGION_TODO },
+    { "doaae",            REGION_PROGRAM_ROM },
     { "vonj",            REGION_PROGRAM_ROM },
+    { "daytona",         REGION_TODO },
     { "m2snake",         REGION_HOMEBREW },
     { "sfight_homebrew", REGION_HOMEBREW },
 };

@@ -145,6 +145,7 @@
  * g_active_profile and pulls in every per-game profile header. */
 #include "registry.h"
 #include "lightgun_sgl.h"   /* the mouse and touches as light guns (Pinboard #1040) */
+#include "ffb.h"           /* the drive board's force feedback (Pinboard #1047) */
 
 #define MAX_SHOTS 16
 #define MAX_SCRIPT_OPTS 16
@@ -298,6 +299,120 @@ static void lobby_pad_release(void) {
     }
 }
 
+/* ---- Force feedback (ffb.h, Pinboard #1047) ------------------------------- */
+
+/* The drive board's force on the pads that play here: a wheel SDL can drive
+ * gets the push, the spring, the friction and the shake as haptic effects,
+ * set when the command changes; every other pad rumbles, renewed each
+ * rendered frame while it does. */
+#define FFB_PADS 4
+
+static struct {
+    SDL_JoystickID id;              /* 0: a free slot */
+    SDL_Haptic    *haptic;          /* NULL: rumble only */
+    int            fx[4];           /* constant, spring, friction, sine; -1 if none */
+    bool           on[4];
+} g_ffb_pad[FFB_PADS];
+static int  g_ffb_last = -1;        /* the command last played; -1: play it again */
+static bool g_ffb_rumbling;
+
+static const Uint32 g_ffb_type[4] = { SDL_HAPTIC_CONSTANT, SDL_HAPTIC_SPRING, SDL_HAPTIC_FRICTION, SDL_HAPTIC_SINE };
+
+/* Effect k (g_ffb_type) at strength v, along the wheel. */
+static SDL_HapticEffect ffb_effect(int k, int v) {
+    SDL_HapticEffect e;
+    SDL_zero(e);
+    e.type = (Uint16)g_ffb_type[k];
+    if (k == 0) {
+        e.constant.direction.type = SDL_HAPTIC_STEERING_AXIS;
+        e.constant.length = SDL_HAPTIC_INFINITY;
+        e.constant.level = (Sint16)v;
+    } else if (k == 3) {
+        e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
+        e.periodic.length = SDL_HAPTIC_INFINITY;
+        e.periodic.period = 60;   /* ms */
+        e.periodic.magnitude = (Sint16)v;
+    } else {
+        e.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
+        e.condition.length = SDL_HAPTIC_INFINITY;
+        e.condition.right_sat[0] = e.condition.left_sat[0] = 0xFFFF;
+        e.condition.right_coeff[0] = e.condition.left_coeff[0] = (Sint16)v;
+    }
+    return e;
+}
+
+static void ffb_close_pad(int s) {
+    if (g_ffb_pad[s].haptic) SDL_CloseHaptic(g_ffb_pad[s].haptic);
+    memset(&g_ffb_pad[s], 0, sizeof g_ffb_pad[s]);
+}
+
+/* A wheel's four effects, made once and updated in place. */
+static void ffb_open_haptic(int s, SDL_Gamepad *pad) {
+    SDL_Joystick *joy = SDL_GetGamepadJoystick(pad);
+    if (!joy || !SDL_IsJoystickHaptic(joy)) return;
+    SDL_Haptic *h = SDL_OpenHapticFromJoystick(joy);
+    if (!h) return;
+    Uint32 has = SDL_GetHapticFeatures(h);
+    int made = 0;
+    for (int k = 0; k < 4; k++) {
+        SDL_HapticEffect e = ffb_effect(k, 0);
+        g_ffb_pad[s].fx[k] = (has & g_ffb_type[k]) ? SDL_CreateHapticEffect(h, &e) : -1;
+        if (g_ffb_pad[s].fx[k] >= 0) made++;
+    }
+    if (!made) { SDL_CloseHaptic(h); return; }
+    if (has & SDL_HAPTIC_AUTOCENTER) SDL_SetHapticAutocenter(h, 0);   /* the game's spring centres it */
+    g_ffb_pad[s].haptic = h;
+    printf("m2hle: force feedback on %s\n", SDL_GetGamepadName(pad));
+}
+
+static void ffb_haptic_play(int s, const ffb_out_t *o) {
+    SDL_Haptic *h = g_ffb_pad[s].haptic;
+    const int v[4] = { o->push, o->spring, o->friction, o->shake };
+    for (int k = 0; k < 4; k++) {
+        int id = g_ffb_pad[s].fx[k];
+        if (id < 0) continue;
+        if (!v[k]) {
+            if (g_ffb_pad[s].on[k]) SDL_StopHapticEffect(h, id);
+            g_ffb_pad[s].on[k] = false;
+            continue;
+        }
+        SDL_HapticEffect e = ffb_effect(k, v[k]);
+        SDL_UpdateHapticEffect(h, id, &e);
+        if (!g_ffb_pad[s].on[k]) SDL_RunHapticEffect(h, id, 1);
+        g_ffb_pad[s].on[k] = true;
+    }
+}
+
+static void ffb_update(void) {
+    ffb_out_t o = ffb_poll();
+    bool rumble = o.strong || o.weak, changed = o.effect.cmd != g_ffb_last;
+    if (!changed && !rumble && !g_ffb_rumbling) return;
+    int count = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&count);
+    for (int s = 0; s < FFB_PADS; s++) {   /* forget the pads that went */
+        bool here = false;
+        for (int i = 0; ids && i < count && !here; i++) here = ids[i] == g_ffb_pad[s].id;
+        if (g_ffb_pad[s].id && !here) ffb_close_pad(s);
+    }
+    for (int i = 0; ids && i < count; i++) {
+        SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
+        if (!pad || !pad_plays_here(i)) continue;
+        int s = 0;
+        while (s < FFB_PADS && g_ffb_pad[s].id != ids[i]) s++;
+        if (s == FFB_PADS) {
+            for (s = 0; s < FFB_PADS && g_ffb_pad[s].id; s++) {}
+            if (s == FFB_PADS) continue;
+            g_ffb_pad[s].id = ids[i];
+            ffb_open_haptic(s, pad);
+        }
+        if (g_ffb_pad[s].haptic) { if (changed) ffb_haptic_play(s, &o); }
+        else SDL_RumbleGamepad(pad, o.strong, o.weak, rumble ? 100 : 0);
+    }
+    SDL_free(ids);
+    g_ffb_last = o.effect.cmd;
+    g_ffb_rumbling = rumble;
+}
+
 /* Keyboard, for desktop runs: the debugger's layout (input.h). */
 static int key_to_action(SDL_Scancode sc) {
     switch (sc) {
@@ -353,6 +468,7 @@ static SDL_AudioStream *sound_start(void) {
         fprintf(stderr, "m2hle: could not open audio (%s); running silent\n", SDL_GetError());
         return NULL;
     }
+    sound_select_board(g_active_profile->quirks.model1_sound);
     sound_reset();
     sound_attach(&state.bus);
     sound_load_rom(state.romset.audiocpu, (uint32_t)state.romset.audiocpu_size);
@@ -852,6 +968,7 @@ static bool parse_args(int argc, char **argv) {
         }
         else if (!strcmp(a, "--vs-mode"))           g_vs_mode = 1;
         else if (more && io5649_wheel_option(a, argv[i + 1])) i++;
+        else if (more && ffb_option(a, argv[i + 1]))          i++;
         else if (!strcmp(a, "--enemy-rank") && more) {  /* cabinet | easy..hardest | extra1 | extra2 */
             int r = enemy_rank_parse(argv[++i]);
             if (r < -1) return false;
@@ -1029,6 +1146,7 @@ static void sdl_netplay_reset_cb(void *ctx) {
     g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
     irqt_reset();
     if (g_sound_on) {
+        sound_select_board(g_active_profile->quirks.model1_sound);
         sound_reset();
         sound_attach(&state.bus);
         sound_load_rom(state.romset.audiocpu, (uint32_t)state.romset.audiocpu_size);
@@ -1204,6 +1322,7 @@ static bool poll_events(void) {
                 input_action_up(key_to_action(ev.key.scancode));
                 break;
             case SDL_EVENT_GAMEPAD_ADDED:
+                g_ffb_last = -1;   /* give the new pad the force now */
                 if (SDL_OpenGamepad(ev.gdevice.which))
                     printf("m2hle: gamepad %s\n", SDL_GetGamepadNameForID(ev.gdevice.which));
                 pad_changed = true;
@@ -1736,6 +1855,7 @@ static int run_loop(bool audio) {
     int rc = 0;
     for (bool running = true; running; ) {
         running = poll_events();
+        ffb_update();
         if (state.cpu.halted) {
             fprintf(stderr, "m2hle: CPU halted at 0x%08X\n", state.cpu.sfr.ip);
             dump_log_tail(12);

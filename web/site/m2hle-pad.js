@@ -320,6 +320,45 @@ const m2hlePad = (() => {
      * whenever it lets go of the keyboard (focus lost, the drawer opened), and a
      * direction still held should come straight back. */
     send();
+    if (ready && Module._web_ffb) rumble(list);
+  }
+
+  /* ---- Force feedback ----------------------------------------------------------
+   *
+   * Daytona USA's drive board (main_web.c, web_ffb): its kicks and shakes on
+   * player 1's pad, the two motors of a 'dual-rumble' effect (Chrome, Edge,
+   * Safari) or a pulse (Firefox), renewed while they last. With no pad, a phone
+   * buzzes once for each kick or shake the board starts. A pad has no spring or
+   * friction, so the wheel's weight at speed is not in it. */
+  const RUMBLE_MS = 200, RUMBLE_RENEW_MS = 120;
+  let rumbleOn = false, rumbleAt = 0, rumbleCmd = 0;
+
+  function padRumble(pad, strong, weak) {
+    const fx = pad.vibrationActuator;
+    try {
+      if (fx && fx.playEffect) {
+        if (strong || weak) fx.playEffect('dual-rumble', { startDelay: 0, duration: RUMBLE_MS, strongMagnitude: strong, weakMagnitude: weak });
+        else if (fx.reset) fx.reset();
+      } else if (pad.hapticActuators && pad.hapticActuators[0]) {
+        pad.hapticActuators[0].pulse(Math.max(strong, weak), strong || weak ? RUMBLE_MS : 0);
+      }
+    } catch (e) { /* a pad that cannot rumble */ }
+  }
+
+  function rumble(list) {
+    const v = Module._web_ffb() >>> 0;
+    const strong = ((v >>> 16) & 255) / 255, weak = ((v >>> 8) & 255) / 255, cmd = v & 255;
+    const on = strong > 0 || weak > 0, now = performance.now();
+    if (list.length) {
+      if (on && (!rumbleOn || cmd !== rumbleCmd || now - rumbleAt >= RUMBLE_RENEW_MS)) {
+        padRumble(list[0], strong, weak);
+        rumbleAt = now;
+      } else if (!on && rumbleOn) padRumble(list[0], 0, 0);
+    } else if (on && cmd !== rumbleCmd && touchMask && navigator.vibrate) {
+      navigator.vibrate(Math.round(40 + 80 * Math.max(strong, weak)));
+    }
+    rumbleOn = on;
+    rumbleCmd = cmd;
   }
 
   /* The touch buttons and the keyboard share this one channel to the emulator:
