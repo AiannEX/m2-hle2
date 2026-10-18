@@ -2971,6 +2971,20 @@ static void geo3d_layer_plane(geo3d_cface_t *c, const geo3d_lface_t *f, const ge
     c->plane[2] = (float)nn[2]; c->plane[3] = (float)d;
 }
 
+/* Write each ranked face's layer back to its cached face, and the plane of
+ * its group's largest face to an ordered one. */
+static void geo3d_layer_assign(geo3d_cmesh_t *m, const geo3d_lface_t *L, int n, const int *layer,
+                               const uint8_t *ordered, int *root, const int *largest) {
+    for (int i = 0; i < n; i++) {
+        geo3d_cface_t *c = &m->faces[L[i].face];
+        c->layer = (uint16_t)(layer[i] > 0xFFFF ? 0xFFFF : layer[i]);
+        if (!ordered[i]) continue;
+        const int r = geo3d_layer_root(root, i);
+        if (largest[r] < 0) continue;   /* none of the group takes a plane */
+        geo3d_layer_plane(c, &L[i], &L[largest[r]]);
+    }
+}
+
 /* Rank a cached mesh's faces (sets layer / has_plane / plane on each). Faces are
  * left unlayered if memory runs out.
  *
@@ -3002,14 +3016,7 @@ static void geo3d_mesh_layers(geo3d_cmesh_t *m) {
 
     geo3d_layer_depths(n, &E, layer, below, start, adj, queue);
     geo3d_layer_groups(m, L, n, &E, root, largest);
-    for (int i = 0; i < n; i++) {
-        geo3d_cface_t *c = &m->faces[L[i].face];
-        c->layer = (uint16_t)(layer[i] > 0xFFFF ? 0xFFFF : layer[i]);
-        if (!ordered[i]) continue;
-        const int r = geo3d_layer_root(root, i);
-        if (largest[r] < 0) continue;   /* none of the group takes a plane */
-        geo3d_layer_plane(c, &L[i], &L[largest[r]]);
-    }
+    geo3d_layer_assign(m, L, n, layer, ordered, root, largest);
 done:
     free(scratch);
     free(L); free(ord); free(ordered); free(E.bottom); free(E.top);
