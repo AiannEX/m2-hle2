@@ -102,11 +102,11 @@ static inline uint32_t daytona_read32(const uint8_t *buf, uint32_t off) {
  * The factory value is MASTER: this is the twin cabinet's set, and a board alone
  * waits for its other half, prints CANCELLED and reboots (ROM 0x1B5F4), forever.
  * An operator sets SINGLE in the test menu; a blank board here gets the same
- * block that leaves: the factory one, SINGLE, with its CRC. A block the player's
- * backup RAM already holds is left alone, unless it is the factory block itself
- * (still MASTER): the game's own copy, from a board that booted blank without
- * this, as libretro's .srm did before the core handed it over here too
- * (Pinboard #1056). */
+ * block that leaves: the factory one, SINGLE, with its CRC. A valid block in
+ * the player's backup RAM is always left alone, MASTER included: the game
+ * writes the factory settings with a good CRC both when it boots blank and when
+ * the test menu sets MASTER, so the two cannot be told apart (Pinboard #1056).
+ * Libretro runs this again after the .srm arrives, so a blank .srm is fixed. */
 #define DAYTONA_SETTINGS       0x80u
 #define DAYTONA_FACTORY        0x39D60u
 #define DAYTONA_CRC_TABLE      0x39DE0u
@@ -127,8 +127,7 @@ static inline void daytona_settings_single(const romset_t *rs, memory_bus_t *bus
     if (!bus->back || !rom || rs->maincpu_size < DAYTONA_CRC_TABLE + 0x200u) return;
     uint8_t *b = bus->back + DAYTONA_SETTINGS;
     if (memcmp(b, rom + DAYTONA_FACTORY, 8) == 0
-        && (uint16_t)(b[8] | b[9] << 8) == daytona_settings_crc(rom, b + 0x0A, 0x76)
-        && memcmp(b + 0x0A, rom + DAYTONA_FACTORY + 0x0A, DAYTONA_SETTINGS_BOOTS - 0x0A) != 0) return;
+        && (uint16_t)(b[8] | b[9] << 8) == daytona_settings_crc(rom, b + 0x0A, 0x76)) return;
     memcpy(b, rom + DAYTONA_FACTORY, 0x80);
     b[DAYTONA_SETTINGS_LINK] = 0;
     uint16_t crc = daytona_settings_crc(rom, b + 0x0A, 0x76);
