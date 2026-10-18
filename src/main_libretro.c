@@ -2331,6 +2331,32 @@ static bool lr_run_ggpo(uint32_t held) {
     return true;
 }
 
+/* This frame's board, run the way the online mode runs it. */
+static bool lr_run_frame(uint32_t held, bool board_paused) {
+    bool ran;
+    if (board_paused) {
+        ran = false;   /* the shell's menus: the board waits, as the PS3 suspends it */
+        lr_ggpo_paused();
+    } else if (opt.online == LR_ONLINE_GGPO) {
+        ran = lr_run_ggpo(held);
+    } else if (opt.online == LR_ONLINE_RPCN) {
+        /* The lobby on screen has the pad; the game gets none of it. With the
+         * shell, the shell has already run the lobby (Online Battle). */
+        if (g_shell_on) ps3ui_app_frame(&g_ps3ui_app, ps3ui_app_visible(&g_ps3ui_app) ? lr_lobby_pad() : 0);
+        else if (lr_lobby_input()) held = 0;
+        lr_rpcn_report();
+        lr_rpcn_autojoin();
+        ran = lr_run_rpcn(held);
+    } else {
+        ran = lr_run_pkt(held);
+        if (g_pkt.note_seq != g_pkt_note_seen) {
+            g_pkt_note_seen = g_pkt.note_seq;
+            lr_message(g_pkt.note, 240);
+        }
+    }
+    return ran;
+}
+
 RETRO_API void retro_run(void) {
     hprof_tick();   /* the in-process profiler: M2HLE_HOSTPROF or /tmp/m2hle-hostprof (host_prof.h) */
     bool updated = false;
@@ -2357,27 +2383,7 @@ RETRO_API void retro_run(void) {
 
     hprof_phase(0);   /* the frame log's phases: 0 input, 1 board, 2 audio, 3-5 lr_draw, 6 sound wait */
     int64_t snd_wait0 = g_emu_times.sound_wait_us;
-    bool ran;
-    if (board_paused) {
-        ran = false;   /* the shell's menus: the board waits, as the PS3 suspends it */
-        lr_ggpo_paused();
-    } else if (opt.online == LR_ONLINE_GGPO) {
-        ran = lr_run_ggpo(held);
-    } else if (opt.online == LR_ONLINE_RPCN) {
-        /* The lobby on screen has the pad; the game gets none of it. With the
-         * shell, the shell has already run the lobby (Online Battle). */
-        if (g_shell_on) ps3ui_app_frame(&g_ps3ui_app, ps3ui_app_visible(&g_ps3ui_app) ? lr_lobby_pad() : 0);
-        else if (lr_lobby_input()) held = 0;
-        lr_rpcn_report();
-        lr_rpcn_autojoin();
-        ran = lr_run_rpcn(held);
-    } else {
-        ran = lr_run_pkt(held);
-        if (g_pkt.note_seq != g_pkt_note_seen) {
-            g_pkt_note_seen = g_pkt.note_seq;
-            lr_message(g_pkt.note, 240);
-        }
-    }
+    bool ran = lr_run_frame(held, board_paused);
 
     g_lr_runs++;
     if (!ran) g_lr_skips++;
