@@ -104,6 +104,8 @@ The two did not know the same games. noclip opens Virtua Cop, Daytona USA (eight
 
 ### 6.1 In m2-hle2: `vcop`, `daytona`, `hotd`
 
+(`hotd` runs since Pinboard #1034 and is in `g_profiles`; the section is as #660 left it.)
+
 `src/profiles/vcop.h`, `daytona.h` and `hotd.h`, listed in `g_prepared_profiles` (`registry.h`), not in `g_profiles`. Each has a load function and no install function, so no front end can boot one; every front end (desktop, SDL, libretro, web) says instead "*X* ('*set*') is known but cannot run yet; the board lacks: ..." (`profile_prepared_message`, `profile_missing_message`).
 
 - **The ROM list is data** (`src/core/rom_recipe.h`): one line per MAME `ROM_LOAD32_WORD` / `ROM_LOAD16_WORD_SWAP` / `ROM_LOAD` / `ROM_COPY`, the same shape as noclip's `regions` (`[offset, lo, crc, hi, hiCrc]`), so a recipe reads line for line against MAME and the explorer. A recipe's `older` parts stand in for a part the zip lacks: the container's `hotd.zip` is MAME's first release (`hotdo`, `epr-19696.15` / `epr-19697.16`) under the parent's name, and loads that way.

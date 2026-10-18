@@ -33,7 +33,9 @@
 #include "constants.h"
 #include "game_profile.h"
 #include "eeprom_93c46.h"
+#include "model1io.h"
 #include "io_5649.h"
+#include "lightgun.h"
 #include "log.h"
 #include "memory.h"
 
@@ -258,7 +260,8 @@ static uint32_t input_io_read_cb(mem_region_t *r, uint32_t addr, int size) {
         case 0x02: return eeprom_in0((uint8_t)~(held & 0xFFu));  /* IN0 system */
         case 0x04: return (uint8_t)~((held >> 8)  & 0xFFu);  /* IN1 P1     */
         case 0x06: return (uint8_t)~((held >> 16) & 0xFFu);  /* IN2 P2     */
-        default:   return r->data ? r->data[off] : 0xFFu;    /* DIPs / idle */
+        default:   if (off >= IO_BOARD_SPAN) return 0;           /* no device there */
+                   return r->data ? r->data[off] : 0xFFu;    /* DIPs / idle */
     }
 }
 
@@ -286,13 +289,71 @@ static inline void input_attach_5649(mem_region_t *r) {
     r->write_cb = io5649_write_cb;
 }
 
+/* A board with light guns (lightgun.h): the triggers on IN1, the guns on the
+ * second serial channel; IN0 and the rest as input_io_read_cb serves them. */
+static uint32_t input_gun_read_cb(mem_region_t *r, uint32_t addr, int size) {
+    uint32_t off = addr - r->base, v = 0;
+    uint32_t held = input_board_held();
+    for (int i = 0; i < size; i++) {
+        uint8_t b;
+        switch (off + (uint32_t)i) {
+            case 0x02: b = eeprom_in0((uint8_t)~(held & 0xFFu)); break;
+            case 0x04: b = lightgun_in1(held); break;
+            case 0x06: b = 0xFF; break;
+            case 0x18: b = lightgun_data(); break;
+            case 0x1A: b = 0x0C; break;
+            default:   b = off + (uint32_t)i >= IO_BOARD_SPAN ? 0
+                             : r->data && off + (uint32_t)i < r->size ? r->data[off + (uint32_t)i] : 0xFFu; break;
+        }
+        v |= (uint32_t)b << (8 * i);
+    }
+    return v;
+}
+
+static void input_gun_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int size) {
+    uint32_t off = addr - r->base;
+    for (int i = 0; i < size; i++) {
+        uint8_t b = (uint8_t)(val >> (8 * i));
+        if (off + (uint32_t)i == 0x14) g_lightgun.mux = b;
+        if (off + (uint32_t)i == 0x00) eeprom_port_a(b);
+        if (r->data && off + (uint32_t)i < r->size) r->data[off + (uint32_t)i] = b;
+    }
+}
+
+static inline void input_attach_lightgun(mem_region_t *r) {
+    const game_quirks_t *q = &g_active_profile->quirks;
+    for (int p = 0; p < LIGHTGUN_PLAYERS; p++) {
+        g_lightgun_controls[p] = (lightgun_controls_t){ q->gun[p].up, q->gun[p].down, q->gun[p].left,
+                                                        q->gun[p].right, q->gun[p].trigger, q->gun[p].reload };
+        g_lightgun_range[p] = (lightgun_range_t){ q->gun[p].x_min, q->gun[p].x_max, q->gun[p].x_rest,
+                                                  q->gun[p].y_min, q->gun[p].y_max, q->gun[p].y_rest };
+    }
+    g_lightgun_held_fn     = input_board_held;
+    lightgun_reset();
+    r->read_cb  = input_gun_read_cb;
+    r->write_cb = input_gun_write_cb;
+}
+
 /* Install the I/O read callback on the bus's I/O region. Call after the ROM is
  * installed (install_fn re-inits the bus). Writes (coin-meter strobe at IO+0x00,
  * IO+0x40) keep hitting the plain buffer — harmless. */
 static inline void input_attach(memory_bus_t *bus) {
+    if (g_active_profile && g_active_profile->quirks.model1_io) {
+        /* The install put the board's window at IO_BASE (model1io.h); the
+         * Z80 reads the controls through io_5649.h's model. */
+        const game_quirks_t *q = &g_active_profile->quirks;
+        g_io5649_controls = (io5649_controls_t){ q->wheel.left, q->wheel.right, q->wheel.accel,
+                                                 q->wheel.brake, q->wheel.shift_up, q->wheel.shift_down };
+        g_io5649_held_fn     = input_board_held;
+        g_io5649_from_net_fn = input_board_from_net;
+        g_model1io_vr4       = q->model1_io_vr4;
+        LOG_INFO("input: Model 1 I/O board");
+        return;
+    }
     for (int i = 0; i < bus->region_count; i++) {
         if (bus->regions[i].base == IO_BASE) {
             if (g_active_profile && g_active_profile->quirks.io_5649) input_attach_5649(&bus->regions[i]);
+            else if (g_active_profile && g_active_profile->quirks.lightgun) input_attach_lightgun(&bus->regions[i]);
             else { bus->regions[i].read_cb = input_io_read_cb; bus->regions[i].write_cb = input_io_write_cb; }
             mem_regions_changed(bus);
             LOG_INFO("input: I/O port read callback attached @ 0x%08X", IO_BASE);

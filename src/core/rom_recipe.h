@@ -23,7 +23,7 @@
 
 typedef enum {
     ROM_MAINCPU, ROM_MAIN_DATA, ROM_COPRO_DATA, ROM_POLYGONS, ROM_TEXTURES,
-    ROM_AUDIOCPU, ROM_SAMPLES, ROM_TGP_TABLES,
+    ROM_AUDIOCPU, ROM_SAMPLES, ROM_TGP_TABLES, ROM_IOCPU,
     ROM_REGION_COUNT
 } rom_region_id_t;
 _Static_assert(ROM_REGION_COUNT == ROMSET_FILES, "a region the directory form does not know");
@@ -93,19 +93,28 @@ static inline int rom_recipe_part(romset_t *rs, const char *child, const char *p
     return rc;
 }
 
-/* Part i, or the older revision's chip at its place when the zip lacks it. */
+/* Part i, or the older revision's chip at its place when the zip lacks it.
+ * A chip with a stand-in is tried quietly: a hotdo in a hotd.zip is no error
+ * (Pinboard #1040). When neither is there, the newer one is tried again aloud,
+ * so the log and the page's missing list (rl_mem_zip_note_missing) name it. */
 static inline int rom_recipe_part_any(romset_t *rs, const char *child, const char *parent,
                                       const rom_recipe_t *rc, size_t i) {
     const rom_part_t *p = &rc->parts[i];
-    if (rom_recipe_part(rs, child, parent, p) == 0) return 0;
-    for (size_t k = 0; k < rc->older_count; k++) {
+    bool stand_in = false;
+    for (size_t k = 0; k < rc->older_count; k++)
+        stand_in |= rc->older[k].region == p->region && rc->older[k].offset == p->offset;
+    if (!stand_in) return rom_recipe_part(rs, child, parent, p);
+    g_rl_quiet_missing++;
+    int got = rom_recipe_part(rs, child, parent, p);
+    for (size_t k = 0; got != 0 && k < rc->older_count; k++) {
         const rom_part_t *o = &rc->older[k];
         if (o->region != p->region || o->offset != p->offset) continue;
         if (rom_recipe_part(rs, child, parent, o) != 0) continue;
         LOG_INFO("%s: %s is the earlier revision's", rc->set, o->name);
-        return 0;
+        got = 0;
     }
-    return -1;
+    g_rl_quiet_missing--;
+    return got == 0 ? 0 : rom_recipe_part(rs, child, parent, p);
 }
 
 /* Every region the recipe names, zeroed, then every part in order (a mirror

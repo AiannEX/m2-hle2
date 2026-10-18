@@ -177,6 +177,89 @@ const m2hleGames = (() => {
         },
       },
     },
+    hotd: {
+      title: 'The House of the Dead',
+      year: 1996, board: 'Model 2C-CRX', colors: ['#8c1010', '#1c0606'],
+      blurb: 'Dr. Curien\'s mansion is overrun. Two agents, two guns, and the dead between them and the truth.',
+      /* src/profiles/hotd.h: Revision A or the first release (MAME's hotdo), one profile. */
+      profiles: [
+        { id: 'hotd', name: 'Rev A', about: 'Revision A, or the first release' },
+      ],
+      romHint: 'Your <code>hotd.zip</code> (The House of the Dead)',
+      /* A light gun on the mouse or a finger (main_web.c, web_gun_event); the
+       * pad's directions walk it, B1 fires, B2 reloads (board/lightgun.h). */
+      labels: { b1: 'Trigger', b2: 'Reload', b3: 'Unused', b4: 'Unused' },
+      /* The Controls panel offers the flash on each shot (m2hle-pad.js, lightgun_host.h). */
+      gun: true,
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'ザ・ハウス・オブ・ザ・デッド',
+          blurb: 'キュリアン博士の館は死者であふれた。二人のエージェント、二丁の銃、そして真相を阻む死者たち。',
+          profiles: { hotd: { name: 'リビジョン A', about: 'リビジョン A または初期版' } },
+          romHint: 'お持ちの <code>hotd.zip</code>（ザ・ハウス・オブ・ザ・デッド）',
+          labels: { b1: 'トリガー', b2: 'リロード', b3: '未使用', b4: '未使用' },
+        },
+      },
+    },
+    daytona: {
+      title: 'Daytona USA',
+      year: 1994, board: 'Model 2', colors: ['#1d8fd8', '#0b2a5c'],
+      blurb: 'Three-Seven Speedway, Dinosaur Canyon, Seaside Street Galaxy. Rolling start!',
+      profiles: [
+        { id: 'daytona', name: 'Rev A', about: 'Japan, Revision A' },
+      ],
+      /* The I/O board's program is MAME's model1io device (src/profiles/daytona.h). */
+      romHint: 'Your <code>daytona.zip</code> and the I/O board\'s <code>model1io.zip</code>, picked together',
+      /* src/profiles/daytona.h: LEFT/RIGHT the wheel, UP/DOWN the four-speed
+       * lever, B1 accelerator, B2 brake, B3/B4 VR1/VR2 (player 2's B3/B4 are
+       * VR3/VR4). The wheel's force is the pad's rumble (m2hle-pad.js). */
+      labels: { up: 'Shift up', down: 'Shift down', left: 'Steer left', right: 'Steer right',
+                b1: 'Accelerator', b2: 'Brake', b3: 'View 1', b4: 'View 2' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'デイトナUSA',
+          blurb: 'スリーセブン・スピードウェイ、ダイナソー・キャニオン、シーサイド・ストリート・ギャラクシー。ローリングスタート！',
+          profiles: { daytona: { name: 'リビジョン A', about: '日本、リビジョン A' } },
+          romHint: 'お持ちの <code>daytona.zip</code> と I/O ボードの <code>model1io.zip</code> を一緒に',
+          labels: { up: 'シフトアップ', down: 'シフトダウン', left: 'ハンドル左', right: 'ハンドル右',
+                    b1: 'アクセル', b2: 'ブレーキ', b3: '視点 1', b4: '視点 2' },
+        },
+      },
+    },
+    vf2: {
+      title: 'Virtua Fighter 2',
+      year: 1994, board: 'Model 2A-CRX', colors: ['#1d8fc8', '#0b2a3d'],
+      blurb: 'Akira, Sarah, Lau and the rest, joined by Lion and Shun Di: the fighter that set the pace for 3D.',
+      /* src/profiles/vf2.h: Version 2.1 and its three clones, each a clone of vf2.zip. */
+      profiles: [
+        { id: 'vf2', name: 'Version 2.1', about: 'Version 2.1' },
+        { id: 'vf2b', name: 'Rev B', about: 'Revision B' },
+        { id: 'vf2a', name: 'Rev A', about: 'Revision A' },
+        { id: 'vf2o', name: 'Original', about: 'The first release' },
+      ],
+      romHint: 'Your <code>vf2.zip</code> (Version 2.1), or <code>vf2b.zip</code>, <code>vf2a.zip</code> or <code>vf2o.zip</code> and its parent <code>vf2.zip</code>, picked together',
+      /* src/profiles/vf2.h: MAME's INPUT_PORTS(vf2), B1 punch, B2 kick, B3 guard. */
+      labels: { b1: 'Punch', b2: 'Kick', b3: 'Guard', b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'バーチャファイター2',
+          blurb: 'アキラ、サラ、ラウたちに、リオンとシュンディが加わった。3D 格闘の基準を作った一作。',
+          profiles: { vf2: { name: 'Ver.2.1', about: 'Ver.2.1' }, vf2b: { name: 'リビジョン B', about: 'リビジョン B' },
+                      vf2a: { name: 'リビジョン A', about: 'リビジョン A' }, vf2o: { name: '初期版', about: '最初のリリース' } },
+          romHint: 'お持ちの <code>vf2.zip</code>（Ver.2.1）、または <code>vf2b.zip</code>、<code>vf2a.zip</code>、<code>vf2o.zip</code> と親セットの <code>vf2.zip</code> を一緒に',
+          labels: { b1: 'パンチ', b2: 'キック', b3: 'ガード', b4: '未使用' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
 

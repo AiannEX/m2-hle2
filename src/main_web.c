@@ -69,6 +69,8 @@
 #include "json_min.h"
 #include "m2lua.h"         /* the cheats scratchpad: a game script from the page */
 #include "m2lua_wide.h"    /* and the picture it asks for (Model2_SetWideScreen) */
+#include "lightgun_sgl.h"   /* the mouse and touches as light guns, and their crosshairs */
+#include "ffb.h"            /* the drive board's force feedback, for the page to rumble */
 
 /* The single TU that defines g_profiles[] / g_active_profile. Under M2HLE_WEB it
  * registers sfight alone. */
@@ -202,6 +204,7 @@ static void web_install_board(void) {
     g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
     irqt_reset();
     if (g_active_profile->quirks.enable_68k_sound) {
+        sound_select_board(g_active_profile->quirks.model1_sound);
         sound_reset();
         sound_attach(&state.bus);
         if (state.romset.audiocpu && state.romset.audiocpu_size > 0)
@@ -911,6 +914,7 @@ static void web_present_game(const web_picture_t *pic, ps3ui_canvas_t *cv) {
                                    pic->lerp_t);
     crt_pots_record(ox, oy, w, h, sapp_width(), sapp_height());
     if (pic->overlay) ps3ui_gpu_draw(cv);   /* the pause menu over the game */
+    else lightgun_sgl_record(ox, oy, w, h, sapp_width(), sapp_height());
     sgl_draw();
 }
 
@@ -1017,6 +1021,87 @@ static void cleanup(void) {
 }
 
 static uint32_t g_web_pad;   /* the actions the page holds (gamepads, touch buttons, keyboard): web_pad_set */
+static int g_web_cheats_rect[4];   /* the picture on the canvas: web_cheats_place */
+
+/* The drive board's force (ffb.h, Pinboard #1047) for the page's pads to
+ * rumble (m2hle-pad.js): the strong motor's top byte << 16 | the weak's << 8
+ * | the command. 0 when the game has no drive board. */
+EMSCRIPTEN_KEEPALIVE unsigned web_ffb(void) {
+    ffb_out_t o = ffb_poll();
+    return (unsigned)(o.strong >> 8) << 16 | (unsigned)(o.weak >> 8) << 8 | o.effect.cmd;
+}
+
+/* The page's canvas asks before its context menu: not while a right click reloads a gun. */
+EMSCRIPTEN_KEEPALIVE int web_lightgun_on(void) { return lightgun_host_on(); }
+
+/* The Controls panel's flash on each shot (lightgun_host.h): frames of white, 0 off. */
+EMSCRIPTEN_KEEPALIVE void web_set_gun_flash(int frames) {
+    char v[12];
+    snprintf(v, sizeof v, "%d", frames);
+    lightgun_host_option("--gun-flash", v);
+}
+
+/* Player 1's light gun on the canvas (Pinboard #1040): the mouse aims it, the
+ * left button is the trigger and the right one reloads; a finger aims and
+ * fires where it lands, or reloads when it lands off the picture. Only while
+ * the game has the pad and its picture is up; lightgun.h ignores the pointer
+ * in a session, a follow or a replay. Coordinates are the framebuffer's, as
+ * the picture's rectangle is. */
+static int64_t g_web_gun_touch = -1;   /* the finger holding the gun, or -1 */
+static void web_gun_event(const sapp_event *ev) {
+    if (!lightgun_host_on()) return;
+    const int *r = g_web_cheats_rect;
+    const bool live = web_game_pad() && r[2] > 0;
+    const float rx = (float)r[0], ry = (float)r[1], rw = (float)r[2], rh = (float)r[3];
+    switch (ev->type) {
+    case SAPP_EVENTTYPE_MOUSE_MOVE:
+    case SAPP_EVENTTYPE_MOUSE_ENTER:
+        if (live && g_web_gun_touch < 0) lightgun_host_aim(0, ev->mouse_x, ev->mouse_y, rx, ry, rw, rh);
+        break;
+    case SAPP_EVENTTYPE_MOUSE_LEAVE:
+        if (g_web_gun_touch < 0) lightgun_host_aim_away(0);
+        break;
+    case SAPP_EVENTTYPE_MOUSE_DOWN:
+        if (!live || g_web_gun_touch >= 0) break;
+        lightgun_host_aim(0, ev->mouse_x, ev->mouse_y, rx, ry, rw, rh);
+        if (ev->mouse_button == SAPP_MOUSEBUTTON_LEFT)  lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, true);
+        if (ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT) lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, true);
+        break;
+    case SAPP_EVENTTYPE_MOUSE_UP:
+        if (ev->mouse_button == SAPP_MOUSEBUTTON_LEFT)  lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, false);
+        if (ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT) lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, false);
+        break;
+    case SAPP_EVENTTYPE_TOUCHES_BEGAN:
+        for (int i = 0; i < ev->num_touches; i++) {
+            const sapp_touchpoint *t = &ev->touches[i];
+            if (!t->changed || g_web_gun_touch >= 0 || !live) continue;
+            g_web_gun_touch = (int64_t)t->identifier;
+            lightgun_host_aim(0, t->pos_x, t->pos_y, rx, ry, rw, rh);
+            bool on = t->pos_x >= rx && t->pos_x <= rx + rw && t->pos_y >= ry && t->pos_y <= ry + rh;
+            lightgun_host_button(0, on ? LIGHTGUN_HOST_TRIGGER : LIGHTGUN_HOST_RELOAD, true);
+        }
+        break;
+    case SAPP_EVENTTYPE_TOUCHES_MOVED:
+        for (int i = 0; i < ev->num_touches; i++) {
+            const sapp_touchpoint *t = &ev->touches[i];
+            if (t->changed && live && (int64_t)t->identifier == g_web_gun_touch)
+                lightgun_host_aim(0, t->pos_x, t->pos_y, rx, ry, rw, rh);
+        }
+        break;
+    case SAPP_EVENTTYPE_TOUCHES_ENDED:
+    case SAPP_EVENTTYPE_TOUCHES_CANCELLED:
+        for (int i = 0; i < ev->num_touches; i++) {
+            const sapp_touchpoint *t = &ev->touches[i];
+            if (!t->changed || (int64_t)t->identifier != g_web_gun_touch) continue;
+            g_web_gun_touch = -1;
+            lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, false);
+            lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, false);
+        }
+        break;
+    default:
+        break;
+    }
+}
 
 static void event(const sapp_event *ev) {
     /* No keys here: the page reads the keyboard through the player's own
@@ -1024,7 +1109,14 @@ static void event(const sapp_event *ev) {
      * touch buttons through web_pad_set. Mapping sokol's key codes as well would
      * press the default keys on top of the remapped ones. */
     /* A tab that loses focus never sees the key-up: let go of everything. */
-    if (ev->type == SAPP_EVENTTYPE_UNFOCUSED) { input_reset(); g_web_pad = 0; }
+    if (ev->type == SAPP_EVENTTYPE_UNFOCUSED) {
+        input_reset();
+        g_web_pad = 0;
+        lightgun_host_release_all();
+        g_web_gun_touch = -1;
+        return;
+    }
+    web_gun_event(ev);
 }
 
 /* The page's switches that carry a value (--name=value). */
@@ -1042,6 +1134,8 @@ static void web_value_arg(const char *a) {
         size_t n = (size_t)(strchr(a, '=') - a);
         if (n < sizeof opt) { memcpy(opt, a, n); opt[n] = 0; io5649_wheel_option(opt, a + n + 1); }
     }
+    else if (!strncmp(a, "--gun-flash=", 12)) lightgun_host_option("--gun-flash", a + 12);
+    else if (!strncmp(a, "--ffb-gain=", 11)) ffb_option("--ffb-gain", a + 11);   /* 0-100 */
 }
 
 sapp_desc sokol_main(int argc, char *argv[]) {
@@ -1208,8 +1302,8 @@ EMSCRIPTEN_KEEPALIVE int web_cheats_option(const char *key, int value) {
 EMSCRIPTEN_KEEPALIVE void web_cheats_key(int dik, int down) { m2lua_set_key(dik, down != 0); }
 
 /* Where the game's picture was last put on the canvas, for the page's drawing
- * over it; w 0 while it is not shown (the lobby, the pause menu, no game). */
-static int g_web_cheats_rect[4];
+ * over it and the light guns; w 0 while it is not shown (the lobby, the pause
+ * menu, no game). */
 static void web_cheats_place(const web_picture_t *pic, bool shown) {
     g_web_cheats_rect[0] = pic->ox;
     g_web_cheats_rect[1] = pic->oy;   /* sg_apply_viewport's, from the top left */

@@ -47,6 +47,7 @@
  * to precede it. main.c already includes this first, so here it is a no-op --
  * it is stated so the dependency is visible from the file that has it. */
 #include "net/netplay.h"   /* the lobby, over the bridge — see the netplay section */
+#include "ffb.h"          /* get_status reports the drive board ("drive") */
 #include "m2_texload.h"   /* get_status reports the texture loader in C */
 
 #ifdef _WIN32
@@ -199,6 +200,12 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
     emu_times_json(et, (int)sizeof et, restart_max);
     char lp[160];
     mcp_link_pace_json(b->emu, lp, (int)sizeof lp);
+    /* The drive board's force, as the hosts play it (ffb.h). */
+    ffb_out_t fo = ffb_poll();
+    char dv[160];
+    snprintf(dv, sizeof dv,
+             "{\"cmd\":%u,\"kind\":%u,\"level\":%u,\"dir\":%d,\"strong\":%u,\"weak\":%u}",
+             fo.effect.cmd, fo.effect.kind, fo.effect.level, fo.effect.dir, fo.strong, fo.weak);
 
     snprintf(resp, (size_t)cap,
              "{\"ok\":true,\"running\":%s,\"halted\":%s,"
@@ -207,7 +214,7 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
              "\"idle_hold\":{\"on\":%s,\"holding\":%s},"
              "\"texload\":{\"hle\":%s,\"rows\":%llu},"
              "\"enemy_rank\":%d,"
-             "\"av\":%s,\"overlay\":%s,\"render\":%s,\"emu\":%s,\"link_pace\":%s,\"version\":\"%s\",\"build\":\"%s\"}",
+             "\"av\":%s,\"overlay\":%s,\"render\":%s,\"emu\":%s,\"link_pace\":%s,\"drive\":%s,\"version\":\"%s\",\"build\":\"%s\"}",
              running ? "true" : "false",
              halted  ? "true" : "false",
              ip, sps, (unsigned long long)steps, profile_id,
@@ -218,7 +225,7 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
              g_idle_hold ? "true" : "false", b->emu && b->emu->idle_holding ? "true" : "false",
              g_texload_hle ? "true" : "false", (unsigned long long)g_texload_rows,
              (int)g_enemy_rank,
-             av, ov, rt, et, lp, M2HLE_VERSION, M2HLE_BUILD_FLAVOR);
+             av, ov, rt, et, lp, dv, M2HLE_VERSION, M2HLE_BUILD_FLAVOR);
 }
 
 /* {"cmd":"prof","on":1} arms the i960 address profiler (clearing it),
@@ -278,6 +285,27 @@ static void mcp_cmd_set_input(const char *req, char *resp, int cap) {
     mcp_json_get_u32(req, "held", &held);
     g_input.held = held;
     snprintf(resp, (size_t)cap, "{\"ok\":true,\"held\":\"0x%08X\"}", held);
+}
+
+/* Point a light gun as a host's mouse would (lightgun.h): {"cmd":"set_gun",
+ * "player":0,"x":0.5,"y":0.5} aims P1 at the picture's centre (0..1 across
+ * and down), "offscreen":1 points it off the picture, "on":0 hands the gun
+ * back to the pad. Replies with where the board's gun points. */
+static void mcp_cmd_set_gun(const char *req, char *resp, int cap) {
+    int player = 0, on = 1, off = 0;
+    float x = 0.5f, y = 0.5f;
+    json_get_int(req, "player", &player);
+    json_get_int(req, "on", &on);
+    json_get_int(req, "offscreen", &off);
+    json_get_f32(req, "x", &x);
+    json_get_f32(req, "y", &y);
+    if (player < 0 || player >= LIGHTGUN_PLAYERS) {
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"player is 0 or 1\"}");
+        return;
+    }
+    lightgun_point(player, on != 0, off != 0, x, y);
+    snprintf(resp, (size_t)cap, "{\"ok\":true,\"player\":%d,\"ad_x\":%d,\"ad_y\":%d}",
+             player, (int)g_lightgun.x[player], (int)g_lightgun.y[player]);
 }
 
 /* set_camera's view fields: where the debug camera stands and looks, and the
@@ -2914,6 +2942,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
 
     if      (strcmp(cmd, "get_status")       == 0) mcp_cmd_get_status(resp, cap, true);
     else if (strcmp(cmd, "set_input")        == 0) mcp_cmd_set_input(req, resp, cap);
+    else if (strcmp(cmd, "set_gun")          == 0) mcp_cmd_set_gun(req, resp, cap);
     else if (strcmp(cmd, "prof")             == 0) mcp_cmd_prof(req, resp, cap);
     else if (strcmp(cmd, "prof_dump")        == 0) mcp_cmd_prof_dump(req, resp, cap);
     else if (strcmp(cmd, "set_camera")       == 0) mcp_cmd_set_camera(req, resp, cap);

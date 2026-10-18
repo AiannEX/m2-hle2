@@ -65,6 +65,7 @@
 #include "shader_window.h"   /* ...and the Video menu that picks one */
 #include "m2lua_ui.h"        /* M2emulator's game scripts: their drawing, keys and menu */
 #include "m2lua_mcp.h"       /* ...and the bridge's script_* commands */
+#include "lightgun_ui.h"      /* the mouse as a light gun, and its crosshairs */
 #if defined(__linux__)
 #include <unistd.h>          /* readlink: scripts/ beside the executable */
 #endif
@@ -250,6 +251,7 @@ static void open_backup_ram(bool homebrew) {
  * this must run after it.) */
 static void load_sound_board(void) {
     if (!g_active_profile->quirks.enable_68k_sound) return;
+    sound_select_board(g_active_profile->quirks.model1_sound);
     sound_reset();
     sound_attach(&state.bus);
     if (state.romset.audiocpu && state.romset.audiocpu_size > 0)
@@ -453,6 +455,7 @@ static void netplay_reset_board_cb(void *ctx) {
     irqt_reset();
 
     if (g_active_profile->quirks.enable_68k_sound) {
+        sound_select_board(g_active_profile->quirks.model1_sound);
         sound_reset();
         sound_attach(&state.bus);
         if (state.romset.audiocpu && state.romset.audiocpu_size > 0)
@@ -1637,6 +1640,8 @@ static void frame(void) {
         /* What the game's script drew (PostDraw), over the game and under the
          * debug windows. Not on the A/V stream: that is the board's picture. */
         if (!win_overlay) m2lua_ui_draw(ox, oy, w, h);
+        lightgun_ui_set_rect(ox, oy, w, h);
+        lightgun_ui_draw(ox, oy, w, h);
 
         extract_model_tick();
     }
@@ -1706,6 +1711,7 @@ static void event(const sapp_event* ev) {
     if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && !ev->key_repeat) input_key_down((int)ev->key_code);
     if (ev->type == SAPP_EVENTTYPE_KEY_UP)                      input_key_up((int)ev->key_code);
     m2lua_ui_event(ev);
+    lightgun_ui_event(ev);
 
     if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) return;
     switch (ev->key_code) {
@@ -1798,6 +1804,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             else LOG_WARN("--enemy-rank %s: expected cabinet, easy, normal, hard, hardest, extra1 or extra2", d);
         } else if (i + 1 < argc && io5649_wheel_option(argv[i], argv[i + 1])) {
             i++;                      /* a 315-5649 wheel's pot: centre, range, speed (io_5649.h) */
+        } else if (i + 1 < argc && lightgun_host_option(argv[i], argv[i + 1])) {
+            i++;                      /* a light gun's flash on the trigger (lightgun_host.h) */
         } else if (strcmp(argv[i], "--run") == 0) {
             g_autorun = 1;
         } else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc) {

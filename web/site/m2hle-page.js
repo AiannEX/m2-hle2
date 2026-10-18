@@ -446,6 +446,10 @@ var Module = {
     m2hleNetplay.onReady(Module);
     m2hleGgpo.onReady(Module);
     m2hlePad.onReady();
+    /* A light-gun game reloads on the right button (main_web.c, web_gun_event):
+     * no context menu over the canvas then. */
+    const canvas = document.getElementById('canvas');
+    if (canvas) canvas.addEventListener('contextmenu', (e) => { if (Module._web_lightgun_on()) e.preventDefault(); });
     debugStart();
     /* Development only: ?rom=<path> loads a zip from THIS site, so a headless
      * browser can boot the game with no file dialog; a split set gives one per

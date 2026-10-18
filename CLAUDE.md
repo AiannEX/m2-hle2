@@ -22,6 +22,7 @@ The load-bearing invariants (reverse-engineered, in no datasheet, do not re-deri
 | Memory bus | [memory-bus.md](docs/invariants/memory-bus.md) | `memory.h`, `irq_timer.h` |
 | Tile renderer | [tile-renderer.md](docs/invariants/tile-renderer.md) | `tile_renderer.h` |
 | Sound board (68000, SCSP, UART) | [sound-board.md](docs/invariants/sound-board.md) | `sound*.h`, `scsp.h`, `m68k*.h` |
+| Model 1 I/O + sound boards (Daytona) | [model1-boards.md](docs/invariants/model1-boards.md) | `model1io.h`, `model1_sound.h`, `z80.h` |
 | HLE hooks, STF profiles | [hle-hooks.md](docs/invariants/hle-hooks.md) | `profiles/`, `hle_hooks.h` |
 | Homebrew on a game's board | [homebrew.md](docs/invariants/homebrew.md) | `sfight_homebrew.h` |
 | Prepared profiles, model tables | [prepared-profiles.md](docs/invariants/prepared-profiles.md) | `registry.h`, `model_table.h` |

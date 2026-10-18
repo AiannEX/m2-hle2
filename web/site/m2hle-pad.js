@@ -84,6 +84,12 @@ const m2hlePad = (() => {
    * mean something else by every button. */
   const TWIN = !!m2hleGame.twin;
   const STORE = TWIN ? 'm2hle.pad.' + m2hleGame.id : 'm2hle.pad';
+  /* A light-gun game's flash on each shot (lightgun_host.h), off unless asked for. */
+  const GUN = !!m2hleGame.gun;
+  const GUN_FLASH_KEY = 'm2hle.gunflash';
+  const GUN_FLASH_FRAMES = 2;
+  let gunFlash = false;
+  try { gunFlash = localStorage.getItem(GUN_FLASH_KEY) === '1'; } catch (e) { /* private mode */ }
 
   /* The rows of the panel. `act` is the GAME_INPUT_* index for player 1
    * (src/core/game_profile.h), `acts` a macro's; player 2's is 10 further on. */
@@ -320,6 +326,45 @@ const m2hlePad = (() => {
      * whenever it lets go of the keyboard (focus lost, the drawer opened), and a
      * direction still held should come straight back. */
     send();
+    if (ready && Module._web_ffb) rumble(list);
+  }
+
+  /* ---- Force feedback ----------------------------------------------------------
+   *
+   * Daytona USA's drive board (main_web.c, web_ffb): its kicks and shakes on
+   * player 1's pad, the two motors of a 'dual-rumble' effect (Chrome, Edge,
+   * Safari) or a pulse (Firefox), renewed while they last. With no pad, a phone
+   * buzzes once for each kick or shake the board starts. A pad has no spring or
+   * friction, so the wheel's weight at speed is not in it. */
+  const RUMBLE_MS = 200, RUMBLE_RENEW_MS = 120;
+  let rumbleOn = false, rumbleAt = 0, rumbleCmd = 0;
+
+  function padRumble(pad, strong, weak) {
+    const fx = pad.vibrationActuator;
+    try {
+      if (fx && fx.playEffect) {
+        if (strong || weak) fx.playEffect('dual-rumble', { startDelay: 0, duration: RUMBLE_MS, strongMagnitude: strong, weakMagnitude: weak });
+        else if (fx.reset) fx.reset();
+      } else if (pad.hapticActuators && pad.hapticActuators[0]) {
+        pad.hapticActuators[0].pulse(Math.max(strong, weak), strong || weak ? RUMBLE_MS : 0);
+      }
+    } catch (e) { /* a pad that cannot rumble */ }
+  }
+
+  function rumble(list) {
+    const v = Module._web_ffb() >>> 0;
+    const strong = ((v >>> 16) & 255) / 255, weak = ((v >>> 8) & 255) / 255, cmd = v & 255;
+    const on = strong > 0 || weak > 0, now = performance.now();
+    if (list.length) {
+      if (on && (!rumbleOn || cmd !== rumbleCmd || now - rumbleAt >= RUMBLE_RENEW_MS)) {
+        padRumble(list[0], strong, weak);
+        rumbleAt = now;
+      } else if (!on && rumbleOn) padRumble(list[0], 0, 0);
+    } else if (on && cmd !== rumbleCmd && touchMask && navigator.vibrate) {
+      navigator.vibrate(Math.round(40 + 80 * Math.max(strong, weak)));
+    }
+    rumbleOn = on;
+    rumbleCmd = cmd;
   }
 
   /* The touch buttons and the keyboard share this one channel to the emulator:
@@ -513,6 +558,13 @@ const m2hlePad = (() => {
     $('btn-online').addEventListener('click', () => toggle(false));
     $('pad-reset').addEventListener('click', () => { sets = defaultSets(); secondIsP2 = true; save(); stopListening(); });
     $('pad-p2').addEventListener('change', (e) => { secondIsP2 = e.target.checked; save(); render(); });
+    $('gun-flash-row').hidden = !GUN;
+    $('gun-flash').checked = gunFlash;
+    $('gun-flash').addEventListener('change', (e) => {
+      gunFlash = e.target.checked;
+      try { localStorage.setItem(GUN_FLASH_KEY, gunFlash ? '1' : '0'); } catch (err) { /* private mode */ }
+      if (ready) Module._web_set_gun_flash(gunFlash ? GUN_FLASH_FRAMES : 0);
+    });
     $('controls').addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { if (listening) stopListening(); else toggle(false); }
     });
@@ -528,7 +580,10 @@ const m2hlePad = (() => {
   }
 
   /* Called from Module.onM2hleReady. */
-  function onReady() { ready = true; }
+  function onReady() {
+    ready = true;
+    if (GUN) Module._web_set_gun_flash(gunFlash ? GUN_FLASH_FRAMES : 0);
+  }
 
   document.addEventListener('DOMContentLoaded', init);
 
