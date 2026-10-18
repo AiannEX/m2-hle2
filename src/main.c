@@ -515,6 +515,16 @@ static void netplay_ggpo_announce(void) {
 #endif
 }
 
+/* Once online, the one step the flags ask for: host (--net-host), join (--net-join) or search. */
+static void netplay_cli_act(const netplay_status_t st) {
+    static int      acted     = 0;
+    if (!acted && st.state == NETPLAY_ONLINE) {
+        if (g_net_auto == 1)      { acted = 1; netplay_post(NETPLAY_CMD_HOST, &g_net_cli); }
+        else if (g_net_auto == 2) { acted = 1; netplay_post(NETPLAY_CMD_JOIN, &g_net_cli); }
+        else                      { acted = 1; netplay_post(NETPLAY_CMD_SEARCH, &g_net_cli); }
+    }
+}
+
 /*
  * Drives the --net-* flags. Called every frame from both the windowed and the
  * headless loop; posts exactly the commands the netplay window's buttons post,
@@ -524,7 +534,6 @@ static void netplay_cli_pump(void) {
     if (!g_net_cli.server[0]) return;
 
     static int      connected = 0;
-    static int      acted     = 0;
     static int      started   = 0;
     static netplay_state_t last = (netplay_state_t)-1;
 
@@ -550,11 +559,7 @@ static void netplay_cli_pump(void) {
                      (unsigned long long)st.room_id, (unsigned long long)st.room_id);
     }
 
-    if (!acted && st.state == NETPLAY_ONLINE) {
-        if (g_net_auto == 1)      { acted = 1; netplay_post(NETPLAY_CMD_HOST, &g_net_cli); }
-        else if (g_net_auto == 2) { acted = 1; netplay_post(NETPLAY_CMD_JOIN, &g_net_cli); }
-        else                      { acted = 1; netplay_post(NETPLAY_CMD_SEARCH, &g_net_cli); }
-    }
+    netplay_cli_act(st);
 
     /* Start only once both ends can actually reach each other: announcing into a
      * void just logs "still waiting" every five seconds. */
