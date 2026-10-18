@@ -19,8 +19,9 @@
  * frames' samples were heard the first time, so the sound board runs muted
  * through them (g_sound_mute), its clock still moving.
  *
- * A linked game (game_profile_t.link_twin: Virtual-On) is two cabinets, one
- * player on each: a match runs both on each machine (core/emu_twin.h), and a
+ * A linked game (game_profile_t.link_twin: Virtual-On, Power Sled) is two
+ * cabinets, one player on each: a match runs both on each machine
+ * (core/emu_twin.h), and a
  * GGPO frame is both boards' frame. Each player's word is then a whole
  * cabinet's controls, and their screen is their own cabinet's.
  *
@@ -152,7 +153,9 @@ static struct {
 /* Every EMU_GGPO_CHECK_EVERY frames a session logs the board's checksum, taken
  * when that frame was last saved; by EMU_GGPO_CHECK_LAG frames later no
  * rollback can reach it, so both machines' lines must agree. */
+#ifndef EMU_GGPO_CHECK_EVERY
 #define EMU_GGPO_CHECK_EVERY 600
+#endif
 #define EMU_GGPO_CHECK_LAG   30
 
 static inline bool emu_ggpo_active(void) { return g_ggpo.on; }

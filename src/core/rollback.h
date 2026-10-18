@@ -32,7 +32,11 @@
 
 #include "savestate.h"
 
-#define ROLLBACK_PARTS_MAX (32 + SAVESTATE_EXTRA_MAX)
+/* Every part rollback_layout can add: its fixed ones (16 is room to spare),
+ * the bus's buffers and every profile extra. A part past the end is dropped,
+ * and META is the last: a load then kept the newest save's sound budget and
+ * latches, and every rollback of Power Sled split (Pinboard #1095). */
+#define ROLLBACK_PARTS_MAX (16 + SAVESTATE_NBUFS + SAVESTATE_EXTRA_MAX)
 #define ROLLBACK_POOL_MAX  16
 
 /* pack: a part that holds host pointers zeroes them (in a copy) before it is
