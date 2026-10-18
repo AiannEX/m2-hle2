@@ -438,7 +438,7 @@ static const char *game_render_fill_vs_glsl =
     "flat out ivec2 tile_log2;\n"   /* log2 of the tile sides (GLSL ES 3.00 has no findMSB) */
     "flat out int ramp_row;\n"      /* colour alpha - 2: the face's colour ramp row, or -1 */
     "flat out float fdepth;\n"      /* the board's flat key as a window depth, or -1 (geo3d_flat_depth) */
-    "flat out vec3 pkey;\n"         /* per-pixel key (fdepth -2): the window's near and far depth, z_adjust's exponent */
+    "flat out vec3 pkey;\n"         /* per-pixel key (fdepth -2): the window's near and far depth, z_adjust's exponent + the face's key / 65536 */
     /* A decal is its surface's own faces drawn again, exactly on top, and passes on
      * a depth TIE (LESS_EQUAL). Since the fill was split, the surface can go through
      * the discard-free program and its decal through the discarding one, and two
@@ -544,13 +544,14 @@ static const char *game_render_fill_vs_glsl =
 
 /* Per-pixel depth (geo3d.h g_geo3d_pixel_depth): the board's sort key, MAME's
  * float_to_zval as geo3d_board_zkey has it, taken of the pixel's own z (ez),
- * placed in the window's slice as a flat key is. */
+ * never nearer than the face's own key (pkey.z's fraction), placed in the
+ * window's slice as a flat key is. */
 #define GAME_RENDER_PIXEL_KEY_GLSL \
     "float pixel_depth() {\n" \
     "  float key = 0.0;\n" \
     "  if (ez > 0.0) {\n" \
     "    uint u = floatBitsToUint(ez);\n" \
-    "    int e = int((u >> 23) & 255u) - int(pkey.z + 0.5);\n" \
+    "    int e = int((u >> 23) & 255u) - int(floor(pkey.z));\n" \
     "    uint mant = (u & 0x7fffffu) + 0x400u;\n" \
     "    if (mant > 0x7fffffu) { e++; mant = (mant & 0x7fffffu) >> 1; }\n" \
     "    mant >>= 11;\n" \
@@ -558,6 +559,7 @@ static const char *game_render_fill_vs_glsl =
     "    else if (e >= 0) key = float((uint(e + 1) << 12) | mant);\n" \
     "    else if (e >= -12) key = float((mant | 0x1000u) >> uint(-e));\n" \
     "  }\n" \
+    "  key = max(key, fract(pkey.z) * 65536.0);\n" \
     "  return mix(pkey.x, pkey.y, (key + 0.5) * (1.0 / 65536.0)) * 0.5 + 0.5;\n" \
     "}\n"
 
@@ -952,7 +954,7 @@ static const char *game_render_fill_fs_hlsl =
     "  float key = 0.0;\n"
     "  if (z > 0.0) {\n"
     "    uint u = asuint(z);\n"
-    "    int e = (int)((u >> 23) & 255u) - (int)(pkey.z + 0.5);\n"
+    "    int e = (int)((u >> 23) & 255u) - (int)floor(pkey.z);\n"
     "    uint mant = (u & 0x7fffffu) + 0x400u;\n"
     "    if (mant > 0x7fffffu) { e++; mant = (mant & 0x7fffffu) >> 1; }\n"
     "    mant >>= 11;\n"
@@ -960,6 +962,7 @@ static const char *game_render_fill_fs_hlsl =
     "    else if (e >= 0) key = (float)(((uint)(e + 1) << 12) | mant);\n"
     "    else if (e >= -12) key = (float)((mant | 0x1000u) >> (uint)(-e));\n"
     "  }\n"
+    "  key = max(key, frac(pkey.z) * 65536.0);\n"
     "  return lerp(pkey.x, pkey.y, (key + 0.5) * (1.0 / 65536.0));\n"
     "}\n"
     "float4 main(fs_in inp, out float depth : SV_Depth) : SV_Target0 {\n"

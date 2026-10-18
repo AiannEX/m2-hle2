@@ -399,9 +399,16 @@ static uint32_t g_geo3d_zadjust = 0;
  * It works both ways: a part the board shows only through its sort goes too
  * (the dark wedge at the wing's tip in the same shot is the Tornado's own part,
  * 2.6 units behind its red wing).
- * The face carries its z_adjust exponent: zl = -(GEO3D_PIXEL_ZL + exponent).
- * Key 0 and 0xFFFF keep the face's one key: the board's "at the eye" and
- * "behind everything" are choices, not depths. */
+ * A pixel is never put nearer than the face's own key, only further back: a
+ * face the board sorts by its nearest corner goes fully per pixel, one sorted
+ * by its farthest corner keeps its key. Daytona USA's road is the second kind
+ * and is drawn after the cars, whose tyres and shadows reach below it: taken
+ * at every pixel it cut their bottoms off, which neither the board nor MAME
+ * does (Pinboard #1065).
+ * The face carries its z_adjust exponent and its key (the fraction):
+ * zl = -(GEO3D_PIXEL_ZL + exponent + key / 65536), exact while the sum is
+ * under 256. Key 0 and 0xFFFF keep the face's one key: the board's "at the eye"
+ * and "behind everything" are choices, not depths. */
 #define GEO3D_PIXEL_ZL 3.0f
 static int   g_geo3d_pixel_depth = 0;
 static int   g_geo3d_pixel_list  = 0;   /* g_geo3d_pixel_depth as this frame's draw took it */
@@ -683,7 +690,8 @@ static inline void geo3d_emit_tri_uv(vec3_t P0, vec3_t P1, vec3_t P2, const floa
     T->texlod = g_geo3d_emit_texlod;
     if (g_geo3d_emit_flat >= 0.0f && geo3d_pixel_face(g_geo3d_emit_flat)) {
         T->zs0 = T->zs1 = T->zs2 = GEO3D_ZSORT_NONE;
-        T->zl  = -(GEO3D_PIXEL_ZL + (float)((g_geo3d_zadjust >> 23) & 0xffu));
+        T->zl  = -(GEO3D_PIXEL_ZL + (float)((g_geo3d_zadjust >> 23) & 0xffu)
+                   + floorf(g_geo3d_emit_flat * 65536.0f) * (1.0f / 65536.0f));
         return;
     }
     if (g_geo3d_emit_flat >= 0.0f) {
