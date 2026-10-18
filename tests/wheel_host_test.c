@@ -23,7 +23,7 @@ static int g_fail = 0;
     else         { printf("ok:   %s\n", msg); } \
 } while (0)
 
-enum { LEFT = 0x8000, RIGHT = 0x4000, ACCEL = 0x0100, BRAKE = 0x0200 };
+enum { K_LEFT = 0x8000, K_RIGHT = 0x4000, K_ACCEL = 0x0100, K_BRAKE = 0x0200 };
 static uint32_t g_held;
 static int g_net, g_remote;
 static uint32_t held(void)  { return g_held; }
@@ -52,14 +52,14 @@ int main(void) {
     CHECK(!g_io5649_host.on, "no wheel in the game: the host's is not used");
     prof.quirks.io_5649 = true;
 
-    g_io5649_controls = (io5649_controls_t){ LEFT, RIGHT, ACCEL, BRAKE, 0, 0 };
+    g_io5649_controls = (io5649_controls_t){ K_LEFT, K_RIGHT, K_ACCEL, K_BRAKE, 0, 0 };
     g_io5649_held_fn = held;
     g_io5649_from_net_fn = from_net;
     g_io5649_remote_fn = remote;
     io5649_reset();
 
     CHECK(steer_after(1) == 0x80 && io5649_analog(1) == IO5649_PEDAL_OFF, "power-on: centred, pedal up");
-    g_held = RIGHT;
+    g_held = K_RIGHT;
     CHECK(steer_after(1) == 0x8A, "no host wheel: RIGHT walks it 10 a frame");
     g_held = 0;
     steer_after(20);
@@ -69,11 +69,11 @@ int main(void) {
     wheel_host_set(true, -16384, 32767, 16384);
     CHECK(steer_after(0) == 0x80 - 0x2C, "host wheel half left");
     CHECK(io5649_analog(1) == IO5649_PEDAL_ON && io5649_analog(2) == 0x80, "pedals: floored, half way");
-    g_held = BRAKE;
+    g_held = K_BRAKE;
     CHECK(io5649_analog(2) == IO5649_PEDAL_ON, "a held brake floors it");
 
     wheel_host_set(true, 0, 0, 0);
-    g_held = LEFT;
+    g_held = K_LEFT;
     CHECK(steer_after(1) == 0x80 - 0x2C - 10, "host wheel centred: LEFT still walks it, from where it was");
     wheel_host_set(true, 1000, 0, 0);
     CHECK(steer_after(1) == 0x80 + 3, "host wheel turned: it wins over LEFT");

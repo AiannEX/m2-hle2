@@ -48,8 +48,8 @@ static inline int wheel_host_steer(int v, int dead) {
  * from it pressed (a wheel's pedals rest at either end, or in the middle), as
  * 0..32767. */
 static inline int wheel_host_pedal(int v, int rest) {
-    int far = rest > 0 ? -32768 : 32767;
-    int span = abs(far - rest), d = abs(v - rest);
+    int end = rest > 0 ? -32768 : 32767;
+    int span = abs(end - rest), d = abs(v - rest);
     if (span <= 0) return 0;
     if (d > span) d = span;
     return (int)((long)d * IO5649_AXIS_MAX / span);
