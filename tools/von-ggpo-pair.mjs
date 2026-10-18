@@ -32,7 +32,7 @@ const EXE     = opt('exe', null);
 const ROM     = opt('rom', path.join(process.env.ROMS_DIR ?? '', 'vonj.zip'));
 const SECONDS = Number(opt('seconds', '60'));
 const DELAY   = opt('delay', '2');
-const DIR     = opt('dir', fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'von-ggpo-')));
+const DIR     = opt('dir', null) ?? fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'von-ggpo-'));
 
 /* A free port from the OS: TCP's, and the UDP one of the same number is free
  * as good as always on a quiet loopback. */
