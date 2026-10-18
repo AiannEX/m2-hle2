@@ -518,6 +518,21 @@ static inline void rpcn_session_clear_room(rpcn_session_t *s) {
     s->room_rev++;
 }
 
+/* What the server says of a member, into its peer slot (`fresh`: just taken). */
+static inline rpcn_peer_t *rpcn_session_fill_peer(rpcn_session_t *s, rpcn_peer_t *p, const rpcn_member_info_t *m, bool fresh) {
+    if (m->npid[0]) snprintf(p->npid, sizeof(p->npid), "%s", m->npid);
+    p->flag_attr = m->flag_attr;
+    p->team_id   = m->team_id;
+    if (m->bin_len) {
+        memcpy(p->bin, m->bin, m->bin_len);
+        p->bin_len = m->bin_len;
+    }
+    if (m->flag_attr & RPCN_MEMBER_FLAG_OWNER) s->owner_id = m->member_id;
+    if (fresh && s->log) rpcn_session_note(s, "%s is in the room (member %u)", rpcn_peer_name(p), m->member_id);
+    s->room_rev++;
+    return p;
+}
+
 /* Add a member or refresh what we know of one. Its address is kept: the server's
  * member data carries none. */
 static inline rpcn_peer_t *rpcn_session_upsert_member(rpcn_session_t *s, const rpcn_member_info_t *m) {
@@ -541,17 +556,7 @@ static inline rpcn_peer_t *rpcn_session_upsert_member(rpcn_session_t *s, const r
         p->member_id = m->member_id;
         fresh = true;
     }
-    if (m->npid[0]) snprintf(p->npid, sizeof(p->npid), "%s", m->npid);
-    p->flag_attr = m->flag_attr;
-    p->team_id   = m->team_id;
-    if (m->bin_len) {
-        memcpy(p->bin, m->bin, m->bin_len);
-        p->bin_len = m->bin_len;
-    }
-    if (m->flag_attr & RPCN_MEMBER_FLAG_OWNER) s->owner_id = m->member_id;
-    if (fresh && s->log) rpcn_session_note(s, "%s is in the room (member %u)", rpcn_peer_name(p), m->member_id);
-    s->room_rev++;
-    return p;
+    return rpcn_session_fill_peer(s, p, m, fresh);
 }
 
 static inline void rpcn_session_remove_member(rpcn_session_t *s, uint16_t member_id) {
