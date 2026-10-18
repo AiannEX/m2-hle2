@@ -127,7 +127,8 @@ m2hle --rom powsled.zip --run --comm-slave PORT:TOKEN           # the ride
 The race starts from the Main's operator panel: on the Main, **P1 Call** (`P1 B2`) opens
 entry, then on the ride **P1 Entry** (`P1 B1`), then on the Main **P2 Call** (`P2 B2`) twice
 and **P2 B3** (the Main's IN1 bit 4) for the race. The ride steers with its two pedals, **P1
-Left** and **P1 Right**. The Main draws only the race's timer and position, not the 3D.
+Left** and **P1 Right**. The Main shows the race
+from the Relay's camera, behind the riders.
 
 ## Layout
 

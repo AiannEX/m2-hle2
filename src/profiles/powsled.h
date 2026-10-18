@@ -75,14 +75,22 @@ static powsled_unit_t g_powsled_unit = POWSLED_SLAVE;
 
 #define POWSLED_MODE_AT  0x1571Cu   /* mov <mode>,g13: the literal */
 #define POWSLED_ID_AT    0x1584Cu   /* the node ID into g4 */
+/* The race's camera: the setup at 0x37DD4 gives node 0x100 the Relay's big
+ * screen camera 0x372D0 (it follows the riders) and every other node the
+ * ride's own 0x366C0, which takes its rider's comm slot from 0x505530[ID].
+ * For ID 0x200 that entry is null, the camera reads ROM 0x10 and goes NaN:
+ * the Main drew only its HUD. setbit 8 -> setbit 9 makes the compare 0x200,
+ * so the Main gets the Relay's camera; the comm frame keeps ID 0x200. */
+#define POWSLED_CAM_AT   0x37DDCu   /* setbit <n>,0,g13: the literal */
 
 static inline void powsled_set_unit(memory_bus_t *bus, powsled_unit_t unit) {
     static const uint8_t slave_id[4] = { 0x94, 0x80, 0xA5, 0x58 };   /* and g4,g6,g4 */
     static const uint8_t main_id[4]  = { 0x00, 0x02, 0xA0, 0x8C };   /* lda 0x200,g4 */
-    if (!bus->rom || bus->rom_size < POWSLED_ID_AT + 4u) return;
+    if (!bus->rom || bus->rom_size < POWSLED_CAM_AT + 4u) return;
     bool m = unit == POWSLED_MAIN;
     bus->rom[POWSLED_MODE_AT] = m ? 0x01 : 0x02;
     memcpy(bus->rom + POWSLED_ID_AT, m ? main_id : slave_id, 4);
+    bus->rom[POWSLED_CAM_AT] = m ? 0x89 : 0x88;
 }
 
 /* The settings (pedal calibration, ride colour, ...) are 0x1C bytes kept three
