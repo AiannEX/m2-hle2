@@ -2286,6 +2286,18 @@ static void web_status_play(web_json_t *w, const netplay_status_t *st) {
     web_put(w, ",\"empty_room\":%s", web_tf(st->empty_room));
 }
 
+/* A linked game's comm link (netplay_comm_open: Virtual-On, Power Sled): open
+ * once the room's match starts, the role the board booted into
+ * (game_link_role_t), the ring (node of nodes, up) and the datagrams, with
+ * those lost to the inbox or torn. */
+static void web_status_comm(web_json_t *w, const struct netplay_comm_status *c) {
+    web_put(w, ",\"comm\":{\"open\":%s,\"linked\":%s,\"role\":%u,\"ring_up\":%s,\"node\":%u,\"nodes\":%u,"
+            "\"ring_sent\":%u,\"ring_taken\":%u,\"sent\":%u,\"taken\":%u,\"lost\":%u}",
+            web_tf(c->open), web_tf(c->linked), (unsigned)c->role, web_tf(c->ring_up), (unsigned)c->node,
+            (unsigned)c->nodes, c->ring_sent, c->ring_taken, c->sent, c->taken,
+            c->overflow + c->too_big + c->torn);
+}
+
 /* One row of the room search, `i` rows down, with why this build cannot join it. */
 static void web_status_listing(web_json_t *w, uint32_t i, const rpcn_room_listing_t *r) {
     const char *why = netplay_room_reject_reason(r->flag_attr, g_active_profile);
@@ -2328,6 +2340,7 @@ EMSCRIPTEN_KEEPALIVE const char *web_netplay_status(unsigned log_from) {
     web_status_sign_in(&w, &st);
     web_status_room(&w, &st);
     web_status_play(&w, &st);
+    web_status_comm(&w, &st.comm);
     web_put(&w, ",\"search_pending\":%s,\"rooms\":[", web_tf(st.search_pending));
     for (uint32_t i = 0; i < st.room_count && i < RPCN_MAX_ROOMS; i++) web_status_listing(&w, i, &st.rooms[i]);
     web_put(&w, "]");

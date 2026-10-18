@@ -325,6 +325,37 @@ const m2hleGames = (() => {
         },
       },
     },
+    powsled: {
+      title: 'Power Sled',
+      year: 1996, board: 'Model 2B-CRX', colors: ['#e05a1d', '#4c1a0b'],
+      blurb: 'Snow sleds on a linked ring of cabinets. A race needs two boards: open a Room Match, whose owner runs the Main unit (the operator\'s) and whose guest rides the sled.',
+      profiles: [
+        { id: 'powsled', name: 'Slave', about: 'The ride, Revision A (and the Main, in a room)' },
+        { id: 'powsledr', name: 'Relay', about: 'The big screen (Relay unit)', soon: true },
+      ],
+      romHint: 'Your <code>powsled.zip</code> (Power Sled, the Slave unit)',
+      /* src/profiles/powsled.h: the ride steers with its two pedals (LEFT and
+       * RIGHT), B1 is the rider's Entry, B2 Call; B3 cancels the network check,
+       * B4 an error. On the Main (a room's owner, net/comm_role.h) the same
+       * buttons are the operator's panel: P1 B2 opens entry, P2 B2 twice and
+       * P2 B3 start the race (README.md, Power Sled). */
+      labels: { left: 'Left pedal', right: 'Right pedal', up: 'Main: panel button 3', down: 'Unused',
+                b1: 'Entry', b2: 'Call', b3: 'Cancel network check / Main: start race', b4: 'Cancel error' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'パワースレッド',
+          blurb: '筐体をリンクして走るスノースレッド。レースには基板が2台必要：ルームマッチを開くと、オーナーがメインユニット（オペレーター側）、ゲストがソリに乗ります。',
+          profiles: { powsled: { name: 'スレーブ', about: 'ライド、リビジョン A（ルームではメインにも）' },
+                      powsledr: { name: 'リレー', about: '大画面（リレーユニット）' } },
+          romHint: 'お持ちの <code>powsled.zip</code>（パワースレッド、スレーブユニット）',
+          labels: { left: '左ペダル', right: '右ペダル', up: 'メイン：パネルボタン3', down: '未使用',
+                    b1: 'エントリー', b2: 'コール', b3: 'ネットワークチェック取消／メイン：レース開始', b4: 'エラー取消' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
 
