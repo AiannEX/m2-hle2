@@ -23,6 +23,7 @@
 #include "fvipers.h"
 #include "hotd.h"      /* runs since Pinboard #1034, on the web since #1040 */
 #ifndef M2HLE_WEB
+#include "vf2.h"       /* runs since Pinboard #1046 */
 #include "m2snake.h"
 #include "sfight_homebrew.h"
 #endif
@@ -47,6 +48,10 @@ const game_profile_t *const g_profiles[] = {
     &fvipers_profile,
     &hotd_profile,
 #ifndef M2HLE_WEB
+    &vf2_profile,
+    &vf2b_profile,
+    &vf2a_profile,
+    &vf2o_profile,
     &m2snake_profile,
     &sfight_homebrew_profile,
 #endif
