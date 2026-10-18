@@ -210,6 +210,16 @@ typedef struct {
      * gun's held bits (its pad walks it; reload is the shot off the screen)
      * and its A/D range, MAME's PORT_MINMAX and default. */
     bool     lightgun;
+
+    /* Power Sled's 315-5649 (input.h input_attach_sled): each rider's two
+     * pedals on A/D channels 1 and 3 (P1 right, left) and 5 and 7 (P2), and
+     * port E's Cancel Network Check switch (bit 1). The held bits that press
+     * them, and what a right and a left pedal read up and down. */
+    bool     sled;
+    struct {
+        uint32_t p1_left, p1_right, p2_left, p2_right, cancel_net;
+        uint8_t  right_up, right_down, left_up, left_down;
+    } pedal;
     struct {
         uint32_t up, down, left, right, trigger, reload;
         int      x_min, x_max, x_rest, y_min, y_max, y_rest;
