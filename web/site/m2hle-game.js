@@ -48,6 +48,7 @@ const m2hleGame = (() => {
     const s = document.createElement('script');
     const q = new URLSearchParams(new URL(document.currentScript.src).search);
     q.set('game', id);
+    q.set('profile', picked.profile);    /* a game's board may fit only some of its sets */
     s.type = 'module';
     s.src = 'arcade/stf-arcade.mjs?' + q;
     document.head.append(s);

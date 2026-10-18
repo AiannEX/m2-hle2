@@ -99,9 +99,9 @@ const m2hleGames = (() => {
                 b1: 'Left shot', b2: 'Left dash', rshot: 'Right shot', rdash: 'Right dash',
                 b3: 'Both shots', b4: 'Both dashes' },
       ownReplay: false,
-      /* No shared board or ranking for it (arcade/games.mjs); its save is kept
-       * in the browser (m2hle-page.js, web_backup_keep). */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: '電脳戦機バーチャロン',
@@ -136,8 +136,9 @@ const m2hleGames = (() => {
       /* src/profiles/dynamcop.h: an 8-way stick, B1 punch, B2 kick, B3 jump. */
       labels: { b1: 'Punch', b2: 'Kick', b3: 'Jump', b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'ダイナマイト刑事2',
@@ -164,8 +165,9 @@ const m2hleGames = (() => {
       /* src/profiles/fvipers.h: MAME's INPUT_PORTS(vf2), B1 punch, B2 kick, B3 guard. */
       labels: { b1: 'Punch', b2: 'Kick', b3: 'Guard', b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'ファイティングバイパーズ',
@@ -192,8 +194,9 @@ const m2hleGames = (() => {
       /* The Controls panel offers the flash on each shot (m2hle-pad.js, lightgun_host.h). */
       gun: true,
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'ザ・ハウス・オブ・ザ・デッド',
@@ -219,8 +222,9 @@ const m2hleGames = (() => {
       labels: { up: 'Shift up', down: 'Shift down', left: 'Steer left', right: 'Steer right',
                 b1: 'Accelerator', b2: 'Brake', b3: 'View 1', b4: 'View 2' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'デイトナUSA',
@@ -247,8 +251,9 @@ const m2hleGames = (() => {
       /* src/profiles/vf2.h: MAME's INPUT_PORTS(vf2), B1 punch, B2 kick, B3 guard. */
       labels: { b1: 'Punch', b2: 'Kick', b3: 'Guard', b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'バーチャファイター2',
@@ -278,8 +283,9 @@ const m2hleGames = (() => {
       /* src/profiles/doa.h: MAME's INPUT_PORTS(doa), B1 hold, B2 punch, B3 kick. */
       labels: { b1: 'Hold', b2: 'Punch', b3: 'Kick', b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'デッド オア アライブ',
@@ -307,8 +313,9 @@ const m2hleGames = (() => {
        * (m2hle-pad.js), outside a session. */
       labels: { b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           blurb: 'データイーストのバスケットボール。16都市からチームを選んでティップオフ。テストメニューの PLAYER SELECTION を 4P にすれば、3・4台目のパッドで4人まで遊べる。',
