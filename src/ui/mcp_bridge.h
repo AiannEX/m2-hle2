@@ -283,10 +283,10 @@ static void mcp_cmd_match_replay(char *resp, int cap) {
  * players 3 and 4 on a four-player cabinet the same way (g_input.far_held:
  * player 3 on player 1's bits, player 4 on player 2's); left out, they stay. */
 static void mcp_cmd_set_input(const char *req, char *resp, int cap) {
-    uint32_t held = 0, far = 0;
+    uint32_t held = 0, far_bits = 0;
     mcp_json_get_u32(req, "held", &held);
     g_input.held = held;
-    if (mcp_json_get_u32(req, "far", &far)) g_input.far_held = far;
+    if (mcp_json_get_u32(req, "far", &far_bits)) g_input.far_held = far_bits;
     snprintf(resp, (size_t)cap, "{\"ok\":true,\"held\":\"0x%08X\",\"far\":\"0x%08X\"}", held, (uint32_t)g_input.far_held);
 }
 

@@ -391,10 +391,10 @@ static uint8_t g_io_side;
 static uint32_t input_sides_read_cb(mem_region_t *r, uint32_t addr, int size) {
     uint32_t off = addr - r->base, v = 0;
     uint32_t held = input_board_held();
-    uint32_t far  = input_board_from_net() ? 0u : g_input.far_held;
-    uint32_t side = g_io_side ? far : held;
+    uint32_t far_bits = input_board_from_net() ? 0u : g_input.far_held;
+    uint32_t side = g_io_side ? far_bits : held;
     const uint32_t *bits = g_active_profile->input.bits;
-    uint32_t coins = ((far & bits[GAME_INPUT_P1_COIN]) ? 0x40u : 0u) | ((far & bits[GAME_INPUT_P2_COIN]) ? 0x80u : 0u);
+    uint32_t coins = ((far_bits & bits[GAME_INPUT_P1_COIN]) ? 0x40u : 0u) | ((far_bits & bits[GAME_INPUT_P2_COIN]) ? 0x80u : 0u);
     for (int i = 0; i < size; i++) {
         uint8_t b;
         switch (off + (uint32_t)i) {

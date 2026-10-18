@@ -2492,11 +2492,11 @@ RETRO_API void retro_run(void) {
     if (!in_session) held |= g_shell_on ? lr_port_held_shell(1) : lr_port_held(1);
     /* Ports 3 and 4: players 3 and 4 of a four-player cabinet, only on this
      * machine too (the board reads them only outside a session). */
-    uint32_t far = !in_session && input_four_players() ? lr_port_held(2) | lr_port_held(3) : 0;
+    uint32_t far_bits = !in_session && input_four_players() ? lr_port_held(2) | lr_port_held(3) : 0;
     bool board_paused = false;
-    if (g_shell_on && !lr_shell_input(&board_paused)) held = far = 0;
+    if (g_shell_on && !lr_shell_input(&board_paused)) held = far_bits = 0;
     if (!in_session) held = lr_script_held(held);
-    g_input.far_held = far;
+    g_input.far_held = far_bits;
 
     if (opt.online == LR_ONLINE_RPCN) lr_rpcn_toasts();
 
