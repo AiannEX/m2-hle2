@@ -3088,6 +3088,16 @@ static inline bool geo3d_mesh_keep(geo3d_cmesh_t *m, const vec3_t *sv, int n_sv,
     return true;
 }
 
+/* A face's texture header at word address hw, for geo3d_mesh_build; false,
+ * and h untouched, when any of its words is out of the ROM. */
+static inline bool geo3d_mesh_texhdr(const uint8_t *materials, size_t materials_size,
+                                     uint32_t hw, geo3d_texhdr_t *h) {
+    uint16_t th[4] = { 0, 0, 0, 0 };
+    if (!geo3d_texhdr_words(materials, materials_size, hw, th)) return false;
+    *h = geo3d_texhdr_decode(th);
+    return true;
+}
+
 /* The static half of geo3d_decode_model for one (model, material, UV): same
  * walk, same face loop, no matrix. Returns false if out of memory. */
 static inline bool geo3d_mesh_build(geo3d_cmesh_t *m, uint32_t mesh_offset,
@@ -3115,11 +3125,7 @@ static inline bool geo3d_mesh_build(geo3d_cmesh_t *m, uint32_t mesh_offset,
         if (have_mat) {
             uint32_t hw = mat_rec;
             mat_rec += geo3d_tho_step(at);
-            uint16_t th[4] = { 0, 0, 0, 0 };
-            if (geo3d_texhdr_words(materials, materials_size, hw, th)) {
-                h = geo3d_texhdr_decode(th);
-                mat_ok = true;
-            }
+            mat_ok = geo3d_mesh_texhdr(materials, materials_size, hw, &h);
         }
         float uvu[4] = {0,0,0,0}, uvv[4] = {0,0,0,0};
         if (have_uv) geo3d_uv_read(materials, materials_size, uv_word, tri_cnt, h.textured, uvu, uvv);
