@@ -309,6 +309,13 @@ static struct retro_core_option_v2_definition option_defs[] = {
       { { "10", "10 (full lock in 9 frames)" }, { "4", NULL }, { "6", NULL }, { "8", NULL }, { "14", NULL },
         { "20", NULL }, { "255", "Instant" }, { NULL, NULL } },
       "10" },
+    { "m2hle_gun_flash", "Light gun: flash on each shot", NULL,
+      "The House of the Dead: the picture goes white for a frame or more when a trigger is pulled, for a light gun "
+      "that reads the screen (a Sinden, say). Only the picture you see flashes: the board never sees it.",
+      NULL, NULL,
+      { { "off", NULL }, { "1", "1 frame" }, { "2", "2 frames" }, { "3", "3 frames" }, { "4", "4 frames" },
+        { NULL, NULL } },
+      "off" },
     { NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
 };
 
@@ -332,6 +339,7 @@ static void lr_read_wheel_options(void) {
     const char *v;
     if ((v = lr_var("m2hle_wheel_range"))) io5649_wheel_option("--wheel-range", v);
     if ((v = lr_var("m2hle_wheel_speed"))) io5649_wheel_option("--wheel-speed", v);
+    if ((v = lr_var("m2hle_gun_flash")))   lightgun_host_option("--gun-flash", v);
 }
 
 /* The options that take effect as they change. */
@@ -414,6 +422,7 @@ static void lr_set_options(void) {
         { "m2hle_scripts",    "Game scripts; enabled|disabled" },
         { "m2hle_wheel_range", "Wheel: full lock; 0x58|0x30|0x40|0x4C|0x68|0x7F" },
         { "m2hle_wheel_speed", "Wheel: turn speed; 10|4|6|8|14|20|255" },
+        { "m2hle_gun_flash",  "Light gun: flash on each shot; off|1|2|3|4" },
         { NULL, NULL },
     };
     size_t o = 0;

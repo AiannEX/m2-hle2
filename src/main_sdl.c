@@ -852,6 +852,7 @@ static bool parse_args(int argc, char **argv) {
         }
         else if (!strcmp(a, "--vs-mode"))           g_vs_mode = 1;
         else if (more && io5649_wheel_option(a, argv[i + 1])) i++;
+        else if (more && lightgun_host_option(a, argv[i + 1])) i++;   /* --gun-flash N */
         else if (!strcmp(a, "--enemy-rank") && more) {  /* cabinet | easy..hardest | extra1 | extra2 */
             int r = enemy_rank_parse(argv[++i]);
             if (r < -1) return false;

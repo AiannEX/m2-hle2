@@ -78,6 +78,9 @@ static inline void lightgun_ui_draw(int ox, int oy, int w, int h) {
     if (!lightgun_ui_on() || w <= 0 || h <= 0) return;
     float dpi = sapp_dpi_scale() > 0 ? sapp_dpi_scale() : 1.0f;
     ImDrawList *dl = igGetBackgroundDrawList();
+    if (lightgun_host_flash_tick())                /* the trigger's flash (lightgun_host.h) */
+        ImDrawList_AddRectFilled(dl, (ImVec2){ (float)ox / dpi, (float)oy / dpi },
+                                 (ImVec2){ (float)(ox + w) / dpi, (float)(oy + h) / dpi }, 0xFFFFFFFFu);
     float s = (float)h / 384.0f * 10.0f / dpi;     /* the arm, ~10 board pixels */
     for (int p = 0; p < LIGHTGUN_PLAYERS; p++) {
         if (!lightgun_host_shown(p)) continue;
