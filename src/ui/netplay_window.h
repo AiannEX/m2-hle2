@@ -255,33 +255,38 @@ static void netplay_window_adopt(void) {
     g_np_ui.vs_mode = g_vs_mode != 0;   /* --vs-mode */
 }
 
+/* The room: its number, who this end is, where the room is between matches,
+ * and whether the others are waiting on this end. */
+static void netplay_window_room_status(const netplay_status_t *st) {
+    const char *role = st->local_player == 0 ? "1P" : st->local_player == 1 ? "2P"
+                     : st->local_player == 2 ? "watching" : "in line";
+    igText("Room %llu   %u of %u   you: %s%s", (unsigned long long)st->room_id,
+           st->member_count, st->max_slot, role, st->is_host ? "  (you run the room)" : "");
+    if (st->room_known) {
+        if (st->room.phase == ROOM_PHASE_MATCH)
+            igText("Match %u in progress%s", st->room.match, st->room.vs_mode ? " (VS mode)" : "");
+        else if (st->auto_start_s)
+            igTextColored((ImVec4){0.45f, 0.95f, 0.55f, 1.0f}, "Next match in %u s", st->auto_start_s);
+        else if (st->room.match)
+            igText("Lobby - %u match%s played", st->room.match, st->room.match == 1 ? "" : "es");
+        else
+            igText("Lobby - the first match starts when every player is ready");
+    }
+    /* Somebody else is ready and this end is not. Worth saying outright: from
+     * here it is otherwise indistinguishable from somebody who merely joined. */
+    if (st->peer_ready)
+        igTextColored((ImVec4){0.45f, 0.95f, 0.55f, 1.0f},
+                      "Others are ready and waiting - press Ready to start");
+}
+
 /* The state, the room and the match, above everything else. */
 static void netplay_window_status(const netplay_status_t *st) {
     igText("State: %s", netplay_state_text(st->state));
     if (st->com_id[0]) { igSameLine(); igText("   lobby %s", st->com_id); }
     if (st->error[0]) igTextColored((ImVec4){1.0f, 0.45f, 0.45f, 1.0f}, "%s", st->error);
 
-    if (st->state >= NETPLAY_IN_ROOM && st->state != NETPLAY_FAILED) {
-        const char *role = st->local_player == 0 ? "1P" : st->local_player == 1 ? "2P"
-                         : st->local_player == 2 ? "watching" : "in line";
-        igText("Room %llu   %u of %u   you: %s%s", (unsigned long long)st->room_id,
-               st->member_count, st->max_slot, role, st->is_host ? "  (you run the room)" : "");
-        if (st->room_known) {
-            if (st->room.phase == ROOM_PHASE_MATCH)
-                igText("Match %u in progress%s", st->room.match, st->room.vs_mode ? " (VS mode)" : "");
-            else if (st->auto_start_s)
-                igTextColored((ImVec4){0.45f, 0.95f, 0.55f, 1.0f}, "Next match in %u s", st->auto_start_s);
-            else if (st->room.match)
-                igText("Lobby - %u match%s played", st->room.match, st->room.match == 1 ? "" : "es");
-            else
-                igText("Lobby - the first match starts when every player is ready");
-        }
-        /* Somebody else is ready and this end is not. Worth saying outright: from
-         * here it is otherwise indistinguishable from somebody who merely joined. */
-        if (st->peer_ready)
-            igTextColored((ImVec4){0.45f, 0.95f, 0.55f, 1.0f},
-                          "Others are ready and waiting - press Ready to start");
-    }
+    if (st->state >= NETPLAY_IN_ROOM && st->state != NETPLAY_FAILED)
+        netplay_window_room_status(st);
     if (netplay_state_running(st->state)) {
         igText("frame %u   stalls %u   match %u   seed 0x%08X",
                st->frame, st->stalls, st->generation, st->seed);
