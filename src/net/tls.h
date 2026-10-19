@@ -545,11 +545,8 @@ static inline bool tls_decrypt_pending(tls_client_t *t) {
     return true;
 }
 
-/* Up to `cap` bytes. 0 = nothing available yet (not an error), -1 = closed. */
-static inline int tls_recv(tls_client_t *t, void *buf, uint32_t cap) {
-    if (!t->connected) return -1;
-
-    for (;;) {
+/* Buffered plaintext, up to `cap` bytes: what it took, or -1 when there is none. */
+static inline int tls_plain_take(tls_client_t *t, void *buf, uint32_t cap) {
         /* Hand back buffered plaintext first. */
         if (t->plain_off < t->plain_used) {
             uint32_t avail = t->plain_used - t->plain_off;
@@ -559,6 +556,16 @@ static inline int tls_recv(tls_client_t *t, void *buf, uint32_t cap) {
             if (t->plain_off == t->plain_used) t->plain_off = t->plain_used = 0;
             return (int)take;
         }
+    return -1;
+}
+
+/* Up to `cap` bytes. 0 = nothing available yet (not an error), -1 = closed. */
+static inline int tls_recv(tls_client_t *t, void *buf, uint32_t cap) {
+    if (!t->connected) return -1;
+
+    for (;;) {
+        int took = tls_plain_take(t, buf, cap);
+        if (took >= 0) return took;
 
         /* Drained; only now does a pending close become the answer. */
         if (t->peer_closed) { tls_fail(t, "the server closed the connection"); return -1; }
