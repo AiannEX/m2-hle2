@@ -475,6 +475,14 @@ static inline void objview__discard_target(void) {
     g_objview.rt_h = 0;
 }
 
+/* Whether both images of the offscreen target and both its attachments were made. */
+static inline bool objview__target_valid(void) {
+    return sg_query_image_state(g_objview.color_img) == SG_RESOURCESTATE_VALID &&
+           sg_query_image_state(g_objview.depth_img) == SG_RESOURCESTATE_VALID &&
+           sg_query_view_state(g_objview.color_att)  == SG_RESOURCESTATE_VALID &&
+           sg_query_view_state(g_objview.depth_att)  == SG_RESOURCESTATE_VALID;
+}
+
 /*
  * (Re)create the offscreen target at w x h.
  *
@@ -520,10 +528,7 @@ static inline bool objview__ensure_target(int w, int h) {
         g_objview.color_tex = sg_make_view(&(sg_view_desc){
             .texture.image = g_objview.color_img, .label = "objview-color-tex" });
 
-    if (sg_query_image_state(g_objview.color_img) != SG_RESOURCESTATE_VALID ||
-        sg_query_image_state(g_objview.depth_img) != SG_RESOURCESTATE_VALID ||
-        sg_query_view_state(g_objview.color_att)  != SG_RESOURCESTATE_VALID ||
-        sg_query_view_state(g_objview.depth_att)  != SG_RESOURCESTATE_VALID) {
+    if (!objview__target_valid()) {
         objview__discard_target();
         return false;
     }
