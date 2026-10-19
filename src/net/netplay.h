@@ -2603,6 +2603,30 @@ static inline bool netplay_twitch_reuse(const netplay_config_t *asked) {
     return true;
 }
 
+/* A token that went dead because someone else on this machine signed in with
+ * Twitch (another copy of the emulator, or YAMP) left its replacement in the
+ * settings file. Offer that before forgetting anything -- forgetting would save
+ * an empty token over the one that works. True when it signed in again with it. */
+static inline bool netplay_twitch_try_replaced(void) {
+    if (!g_netplay.twitch_tried_owner) {
+        netplay_config_t disk;
+        if (netplay_settings_read_current(&disk) && disk.twitch_token[0]
+            && strcmp(disk.twitch_token, g_netplay.cfg.twitch_token) != 0
+            && netplay_same_twitch_server(&disk, &g_netplay.cfg)
+            && (g_netplay.twitch_wanted || netplay_same_name(disk.twitch_npid, g_netplay.cfg.npid))) {
+            g_netplay.twitch_tried_owner = true;
+            netplay_twitch_copy(&g_netplay.cfg, &disk);
+            memcpy(g_netplay.twitch_synced, disk.twitch_token, sizeof(disk.twitch_token));
+            snprintf(g_netplay.cfg.npid, sizeof(g_netplay.cfg.npid), "%s", disk.twitch_npid);
+            netplay_log("the stored Twitch login was replaced on this machine - signing in with "
+                        "the new one as %s", g_netplay.cfg.npid);
+            netplay_do_connect(&g_netplay.cfg);
+            return true;
+        }
+    }
+    return false;
+}
+
 /*
  * The server refused a login that offered the stored Twitch token. Called once,
  * on the way into NETPLAY_FAILED.
@@ -2621,26 +2645,7 @@ static inline bool netplay_twitch_reuse(const netplay_config_t *asked) {
 static inline void netplay_twitch_refused(void) {
     if (!g_netplay.sent_twitch_token || !g_netplay.session.credential_refused) return;
 
-    /* A token that went dead because someone else on this machine signed in
-     * with Twitch (another copy of the emulator, or YAMP) left its replacement
-     * in the settings file. Offer that before forgetting anything -- forgetting
-     * would save an empty token over the one that works. */
-    if (!g_netplay.twitch_tried_owner) {
-        netplay_config_t disk;
-        if (netplay_settings_read_current(&disk) && disk.twitch_token[0]
-            && strcmp(disk.twitch_token, g_netplay.cfg.twitch_token) != 0
-            && netplay_same_twitch_server(&disk, &g_netplay.cfg)
-            && (g_netplay.twitch_wanted || netplay_same_name(disk.twitch_npid, g_netplay.cfg.npid))) {
-            g_netplay.twitch_tried_owner = true;
-            netplay_twitch_copy(&g_netplay.cfg, &disk);
-            memcpy(g_netplay.twitch_synced, disk.twitch_token, sizeof(disk.twitch_token));
-            snprintf(g_netplay.cfg.npid, sizeof(g_netplay.cfg.npid), "%s", disk.twitch_npid);
-            netplay_log("the stored Twitch login was replaced on this machine - signing in with "
-                        "the new one as %s", g_netplay.cfg.npid);
-            netplay_do_connect(&g_netplay.cfg);
-            return;
-        }
-    }
+    if (netplay_twitch_try_replaced()) return;
 
     const char *owner = g_netplay.cfg.twitch_npid;
     bool under_own_name = !owner[0] || strcmp(owner, g_netplay.cfg.npid) == 0;
