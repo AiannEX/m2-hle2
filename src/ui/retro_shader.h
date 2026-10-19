@@ -1423,9 +1423,9 @@ static inline void rs_gl_bind_add(rs_gl_pass_t *gp, const char *prefix, int kind
     gp->n_bind++;
 }
 
-static inline void rs_gl_introspect(rs_gl_pass_t *gp, int index, const rs_preset_t *p) {
-    GLuint prog = gp->prog;
-    glUseProgram(prog);
+/* The vertex attributes the pass reads: the position, the colour and up to
+ * eight texture coordinates, under their own names or the ruby-prefixed ones. */
+static inline void rs_gl_attribs(rs_gl_pass_t *gp, GLuint prog) {
     gp->a_pos = gp->a_color = -1;
     gp->n_tex_attr = 0;
     GLint count = 0;
@@ -1440,6 +1440,12 @@ static inline void rs_gl_introspect(rs_gl_pass_t *gp, int index, const rs_preset
         else if (!strcmp(bare, "COLOR") || !strcmp(bare, "Color"))    gp->a_color = loc;
         else if (gp->n_tex_attr < 8) gp->a_tex[gp->n_tex_attr++] = loc;   /* TexCoord, OrigTexCoord, ... */
     }
+}
+
+static inline void rs_gl_introspect(rs_gl_pass_t *gp, int index, const rs_preset_t *p) {
+    GLuint prog = gp->prog;
+    glUseProgram(prog);
+    rs_gl_attribs(gp, prog);
     gp->u_mvp         = rs_gl_loc(prog, "MVPMatrix");
     gp->u_frame_count = rs_gl_loc(prog, "FrameCount");
     gp->u_frame_dir   = rs_gl_loc(prog, "FrameDirection");
