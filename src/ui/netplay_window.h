@@ -367,6 +367,29 @@ static void netplay_window_signup(const netplay_status_t *st) {
     igUnindentEx(0.0f);
 }
 
+/* Connect (as the Twitch login when signed in with it), or Disconnect. */
+static void netplay_window_connect(const netplay_status_t *st) {
+    bool connected = (st->state != NETPLAY_OFF && st->state != NETPLAY_FAILED);
+    if (!connected) {
+        if (igButton("Connect")) {
+            if (st->twitch_signed_in) {
+                /* The account boxes above are greyed out, so what is in them
+                 * is left over from before and is nobody's input. Signed in
+                 * with Twitch, Connect means "as that login" - which
+                 * TWITCH_START now is, without a browser, while the token
+                 * holds (netplay_twitch_reuse). */
+                netplay_config_t as_twitch = g_np_ui;
+                as_twitch.npid[0] = '\0';
+                netplay_post(NETPLAY_CMD_TWITCH_START, &as_twitch);
+            } else {
+                netplay_post(NETPLAY_CMD_CONNECT, &g_np_ui);
+            }
+        }
+    } else {
+        if (igButton("Disconnect")) netplay_post(NETPLAY_CMD_DISCONNECT, &g_np_ui);
+    }
+}
+
 /* The server, the sign-in and the account boxes. */
 static void netplay_window_account(const netplay_status_t *st) {
     igInputText("Server", g_np_ui.server, sizeof(g_np_ui.server), 0);
@@ -407,25 +430,7 @@ static void netplay_window_account(const netplay_status_t *st) {
                      "be joined from here - they are listed so an empty lobby can be told "
                      "apart from an empty lobby with people next door.");
 
-    bool connected = (st->state != NETPLAY_OFF && st->state != NETPLAY_FAILED);
-    if (!connected) {
-        if (igButton("Connect")) {
-            if (st->twitch_signed_in) {
-                /* The account boxes above are greyed out, so what is in them
-                 * is left over from before and is nobody's input. Signed in
-                 * with Twitch, Connect means "as that login" - which
-                 * TWITCH_START now is, without a browser, while the token
-                 * holds (netplay_twitch_reuse). */
-                netplay_config_t as_twitch = g_np_ui;
-                as_twitch.npid[0] = '\0';
-                netplay_post(NETPLAY_CMD_TWITCH_START, &as_twitch);
-            } else {
-                netplay_post(NETPLAY_CMD_CONNECT, &g_np_ui);
-            }
-        }
-    } else {
-        if (igButton("Disconnect")) netplay_post(NETPLAY_CMD_DISCONNECT, &g_np_ui);
-    }
+    netplay_window_connect(st);
     igSameLine();
     if (igButton(g_np_ui_show_signup ? "Hide sign-up" : "No account yet?"))
         g_np_ui_show_signup = !g_np_ui_show_signup;
