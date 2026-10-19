@@ -1874,6 +1874,30 @@ static inline void game_render__ramp_begin(void) {
     g_game_render.ramp_count = 0;
 }
 
+/* The row a shade key holds in the hash slots, made in the first free slot
+ * if new; -1 when it is new but no row can be made, or 64 probes find none. */
+static inline int game_render__shade_find(const game_render_shade_key_t *k) {
+    uint32_t h = (k->lb * 2654435761u) ^ ((uint32_t)k->poly * 40503u) ^ ((uint32_t)k->col * 2246822519u);
+    for (uint32_t probe = 0; probe < 64u; probe++) {
+        uint32_t s = (h + probe) & (GAME_RENDER_SHADE_SLOTS - 1u);
+        uint16_t held = g_shade_slot_row[s];
+        if (held) {
+            const game_render_shade_key_t *e = &g_shade_key[held - 1];
+            if (e->lb == k->lb && e->poly == k->poly && e->col == k->col) return held - 1;
+            continue;
+        }
+        if (g_ramp_uploaded || g_game_render.ramp_count == GAME_RENDER_RAMP_ROWS) return -1;
+        int row = g_game_render.ramp_count++;
+        g_shade_key[row]     = *k;
+        g_shade_is_row[row]  = 1;
+        g_shade_slot_row[s]  = (uint16_t)(row + 1);
+        game_render__shade_fill(row);
+        g_game_render.ramp_dirty = true;
+        return row;
+    }
+    return -1;
+}
+
 /* The shade row for a face's (luma band, poly_luma, colour), made if new; -1
  * when the face keeps the shader's lumaram + ramp lookups. */
 static inline int game_render__shade_row(float lb, float pl, float r, float g, float b) {
@@ -1884,25 +1908,7 @@ static inline int game_render__shade_row(float lb, float pl, float r, float g, f
     float plc = pl < 0.0f ? 0.0f : (pl > 1.0f ? 1.0f : pl);
     game_render_shade_key_t k = { (uint32_t)lb, (uint16_t)(plc * 255.0f + 0.5f),
                                   (uint16_t)((r5 << 10) | (g5 << 5) | b5) };
-    uint32_t h = (k.lb * 2654435761u) ^ ((uint32_t)k.poly * 40503u) ^ ((uint32_t)k.col * 2246822519u);
-    for (uint32_t probe = 0; probe < 64u; probe++) {
-        uint32_t s = (h + probe) & (GAME_RENDER_SHADE_SLOTS - 1u);
-        uint16_t held = g_shade_slot_row[s];
-        if (held) {
-            const game_render_shade_key_t *e = &g_shade_key[held - 1];
-            if (e->lb == k.lb && e->poly == k.poly && e->col == k.col) return held - 1;
-            continue;
-        }
-        if (g_ramp_uploaded || g_game_render.ramp_count == GAME_RENDER_RAMP_ROWS) return -1;
-        int row = g_game_render.ramp_count++;
-        g_shade_key[row]     = k;
-        g_shade_is_row[row]  = 1;
-        g_shade_slot_row[s]  = (uint16_t)(row + 1);
-        game_render__shade_fill(row);
-        g_game_render.ramp_dirty = true;
-        return row;
-    }
-    return -1;
+    return game_render__shade_find(&k);
 }
 
 /* The ramp row for a fill colour (as the shader rounds it to 5 bits a channel),
