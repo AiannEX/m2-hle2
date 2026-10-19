@@ -2456,6 +2456,12 @@ static inline void geo3d_direct_link(uint32_t attr, vec3_t *p0, vec3_t *p1, vec3
     }
 }
 
+/* check_culling: the rear without the double-sided bit, link type 0,
+ * and a polygon wholly behind the eye */
+static inline bool geo3d_direct_culled(uint32_t attr, uint32_t lw, float max_z) {
+    return (((attr >> 17) & 1u) == 0 && (lw & 0x00800000u)) || ((attr >> 8) & 3u) == 0 || max_z < 0.0f;
+}
+
 static inline void geo3d_decode_direct(const uint32_t *w, uint32_t n, const geo3d_models_t *md,
                                        float fx, float fy) {
     const uint8_t *materials = md->materials, *main_data = md->main_data;
@@ -2478,9 +2484,7 @@ static inline void geo3d_decode_direct(const uint32_t *w, uint32_t n, const geo3
 
         float max_z = geo3d_direct_zsort(d.v, d.nv, attr);
 
-        /* check_culling: the rear without the double-sided bit, link type 0,
-         * and a polygon wholly behind the eye */
-        bool cull = (((attr >> 17) & 1u) == 0 && (lw & 0x00800000u)) || ((attr >> 8) & 3u) == 0 || max_z < 0.0f;
+        bool cull = geo3d_direct_culled(attr, lw, max_z);
         if (have_th && !cull)
             geo3d_direct_emit(&d, main_data, main_data_size);
 
