@@ -1331,6 +1331,12 @@ static inline bool rs_gl_program_hoist(char **body, const char *log, bool es, in
     return true;
 }
 
+/* Globals GLSL ES will not initialise: move them into main() and try
+ * the same version again, a few times, as each move can expose the next. */
+static inline bool rs_gl_program_retry(const rs_gl_tries_t *tr, size_t t, size_t round, char **body, const char *log, int *hoisted) {
+    return tr->es && tr->how[t] != RS_AS_LEGACY && round < 12 && rs_gl_program_hoist(body, log, tr->es, hoisted);
+}
+
 /* The error for a pass none of the attempts took. */
 static inline void rs_gl_program_fail(const char *name, const char *first_ver, int first_hoisted, const char *first) {
     char what[192];
@@ -1359,9 +1365,7 @@ static inline GLuint rs_gl_program(const char *src, const char *name) {
     for (size_t t = 0, round = 0; t < sizeof tr.ver / sizeof tr.ver[0] && !prog; ) {
         if (!tr.ver[t] || (tr.how[t] == RS_AS_LEGACY && tr.has_ext)) { t++; continue; }
         prog = rs_gl_attempt(body, tr.ver[t], tr.how[t], tr.es, name, log, sizeof log);
-        /* Globals GLSL ES will not initialise: move them into main() and try
-         * the same version again, a few times, as each move can expose the next. */
-        if (!prog && tr.es && tr.how[t] != RS_AS_LEGACY && round < 12 && rs_gl_program_hoist(&body, log, tr.es, &hoisted)) {
+        if (!prog && rs_gl_program_retry(&tr, t, round, &body, log, &hoisted)) {
             round++;
             continue;
         }
