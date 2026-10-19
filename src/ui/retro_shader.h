@@ -1510,13 +1510,18 @@ static inline GLenum rs_gl_target(GLuint *tex, GLuint *fbo, int w, int h, GLenum
     return ifmt;
 }
 
-static inline void rs_gl_destroy(void) {
+/* Free every pass's program, framebuffer and texture. */
+static inline void rs_gl_passes_free(void) {
     for (int i = 0; i < RS_MAX_PASSES + 1; i++) {
         rs_gl_pass_t *gp = &g_rs_gl.pass[i];
         if (gp->prog) glDeleteProgram(gp->prog);
         if (gp->fbo) glDeleteFramebuffers(1, &gp->fbo);
         if (gp->tex) glDeleteTextures(1, &gp->tex);
     }
+}
+
+static inline void rs_gl_destroy(void) {
+    rs_gl_passes_free();
     for (int i = 0; i < RS_MAX_LUTS; i++) if (g_rs_gl.lut_tex[i]) glDeleteTextures(1, &g_rs_gl.lut_tex[i]);
     rs_gl_target_free(&g_rs_gl.orig);
     for (int i = 0; i < RS_MAX_HISTORY; i++) rs_gl_target_free(&g_rs_gl.hist[i]);
