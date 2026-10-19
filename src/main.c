@@ -608,6 +608,20 @@ static void draw_bus_stats_window(void) {
     igEnd();
 }
 
+/* SKY EYE's status lines: its phase, the stage and camera it was asked for,
+ * and the game's own camera as read this frame. */
+static void draw_sky_eye_status(int have, int stage, const float p[3], const int a[3]) {
+    const sky_eye_req_t *q = &g_sky_eye.req;
+    igText("phase: %s", SKY_EYE_PHASE_NAME[g_sky_eye.phase]);
+    if (g_sky_eye.phase != SKY_EYE_OFF)
+        igText("asked: stage %d  eye %.3f %.3f %.3f  ang 0x%04X 0x%04X%s", q->stage,
+               q->pos[0], q->pos[1], q->pos[2], q->xang & 0xFFFF, q->yang & 0xFFFF,
+               q->from_explorer ? "  (from the explorer's pos)" : "");
+    if (have)
+        igText("game:  STAGE NUMBER %d  Xpos %.3f Ypos %.3f Zpos %.3f\n       Xang 0x%04X Yang 0x%04X Zang 0x%04X",
+               stage + 1, p[0], p[1], p[2], a[0] & 0xFFFF, a[1] & 0xFFFF, a[2] & 0xFFFF);
+}
+
 /* SKY EYE (core/sky_eye.h): paste a noclip view link, go to its stage and
  * camera; or copy the game's camera out as one. */
 static void draw_sky_eye_window(void) {
@@ -648,15 +662,7 @@ static void draw_sky_eye_window(void) {
     if (locked) emu_mutex_unlock(&state.emu.mutex);
     if (out[0]) igSetClipboardText(out);
     if (err[0]) igTextColored((ImVec4){1, 0.4f, 0.4f, 1}, "%s", err);
-    const sky_eye_req_t *q = &g_sky_eye.req;
-    igText("phase: %s", SKY_EYE_PHASE_NAME[g_sky_eye.phase]);
-    if (g_sky_eye.phase != SKY_EYE_OFF)
-        igText("asked: stage %d  eye %.3f %.3f %.3f  ang 0x%04X 0x%04X%s", q->stage,
-               q->pos[0], q->pos[1], q->pos[2], q->xang & 0xFFFF, q->yang & 0xFFFF,
-               q->from_explorer ? "  (from the explorer's pos)" : "");
-    if (have)
-        igText("game:  STAGE NUMBER %d  Xpos %.3f Ypos %.3f Zpos %.3f\n       Xang 0x%04X Yang 0x%04X Zang 0x%04X",
-               stage + 1, p[0], p[1], p[2], a[0] & 0xFFFF, a[1] & 0xFFFF, a[2] & 0xFFFF);
+    draw_sky_eye_status(have, stage, p, a);
     igEnd();
 }
 
