@@ -57,9 +57,13 @@ static const game_profile_t vcop_profile = {
     .preliminary  = "original Model 2 board (model2o memory map), Model 1 I/O board "
                     "with light guns, Model 1 sound board (68000 + 2x MultiPCM)",
     .quirks = {
-        /* noclip games.js `vcop`: 0x4D2 entries of 16 bytes; palette at 0x4C0000. */
+        /* noclip games.js `vcop`: 0x4E3 entries of 16 bytes; palette at 0x4C0000.
+         * 0x4D2 on are read from the second table (0x28693F0[n*16]), their
+         * headers in texture RAM, which the game fills at game start. */
         .model_table_offset = 0x4c8000,
-        .model_table_count  = 0x4d2,
+        .model_table_count  = 0x4e3,
+        .model_table_past_from   = 0x4d2,
+        .model_table_past_offset = 0x8693f0,
         .model_layout       = MODEL_LAYOUT_VCOP,
         .mesh_ptr_subtract  = 0x02000010,
         .mesh_ptr_add       = 0x10,

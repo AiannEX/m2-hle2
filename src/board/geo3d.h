@@ -2229,7 +2229,7 @@ typedef struct {
     int       records;            /* vertex-pair records walked, the end one included */
     int       faces, textured;    /* faces with corners A and B, and of those the textured */
     int       palette_max;        /* highest colour index of any header read; -1: none */
-    uint32_t *reads;              /* textures-ROM byte indices, the first reads_cap of n_reads */
+    uint32_t *reads;              /* textures-ROM byte indices (not texture RAM's), the first reads_cap */
     int       n_reads, reads_cap;
     uint32_t *tri_face;           /* each triangle's face (faces so far), the first tris_cap */
     geo3d_reads_tri_t *tri;       /* each triangle, the first tris_cap; may be NULL */
@@ -2238,7 +2238,9 @@ typedef struct {
     int       n_hdrs, hdrs_cap;
 } geo3d_mesh_reads_t;
 
+/* Texture-RAM words (bit 23 of the word address) are no textures-ROM bytes. */
 static inline void geo3d_reads_bytes(geo3d_mesh_reads_t *r, uint32_t byte, int n) {
+    if (byte & 0x01000000u) return;
     for (int k = 0; k < n; k++, r->n_reads++)
         if (r->n_reads < r->reads_cap) r->reads[r->n_reads] = byte + (uint32_t)k;
 }
