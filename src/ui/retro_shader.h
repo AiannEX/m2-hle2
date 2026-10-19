@@ -1106,13 +1106,10 @@ static inline void rs_gl_err(const char *fmt, const char *a, const char *b) {
     snprintf(g_rs_gl.err, sizeof g_rs_gl.err, fmt, a, b);
 }
 
-/* The source with its own #version taken out (returned in `ver`) and its
- * parameter pragmas blanked, which some GLSL ES compilers reject. */
-static inline char *rs_gl_strip(const char *src, char *ver, size_t vercap) {
-    size_t n = strlen(src);
-    char *out = (char *)malloc(n + 1);
-    if (!out) return NULL;
-    memcpy(out, src, n + 1);
+/* For rs_gl_strip: the first #version in `out`, if it starts a word, blanked
+ * in place, and what followed it on its line, trimmed, into `ver` ("" when
+ * there is none). */
+static inline void rs_gl_take_version(char *out, char *ver, size_t vercap) {
     ver[0] = '\0';
     char *v = strstr(out, "#version");
     if (v && (v == out || v[-1] == '\n' || v[-1] == '\r' || v[-1] == ' ' || v[-1] == '\t')) {
@@ -1125,6 +1122,16 @@ static inline char *rs_gl_strip(const char *src, char *ver, size_t vercap) {
         snprintf(ver, vercap, "%s", rs_trim(tmp));
         memset(v, ' ', (size_t)(e - v));
     }
+}
+
+/* The source with its own #version taken out (returned in `ver`) and its
+ * parameter pragmas blanked, which some GLSL ES compilers reject. */
+static inline char *rs_gl_strip(const char *src, char *ver, size_t vercap) {
+    size_t n = strlen(src);
+    char *out = (char *)malloc(n + 1);
+    if (!out) return NULL;
+    memcpy(out, src, n + 1);
+    rs_gl_take_version(out, ver, vercap);
     for (char *p = out; (p = strstr(p, "#pragma parameter")) != NULL; ) {
         while (*p && *p != '\n' && *p != '\r') *p++ = ' ';
     }
