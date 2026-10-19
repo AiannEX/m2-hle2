@@ -1622,9 +1622,9 @@ static inline int rs_gl_dim(rs_scale_type_t t, float s, int src, int vp) {
     return n < 1 ? 1 : n > 8192 ? 8192 : n;
 }
 
-/* Sizes for this frame; targets remade where they changed. */
-static inline void rs_gl_layout(int sw, int sh, int vw, int vh) {
-    rs_preset_t *p = g_rs_gl.preset;
+/* The source frame's target and the history's, remade where the source
+ * size or the first pass's mipmapping changed (which drops the history). */
+static inline void rs_gl_layout_orig(const rs_preset_t *p, int sw, int sh) {
     bool orig_mips = p->pass[0].mipmap_input;
     if (g_rs_gl.orig.w != sw || g_rs_gl.orig.h != sh || g_rs_gl.orig.mips != orig_mips || !g_rs_gl.orig.tex) {
         rs_gl_target(&g_rs_gl.orig.tex, &g_rs_gl.orig.fbo, sw, sh, GL_RGBA8);
@@ -1636,6 +1636,12 @@ static inline void rs_gl_layout(int sw, int sh, int vw, int vh) {
         rs_gl_target_t *h = &g_rs_gl.hist[i];
         if (!h->tex) { rs_gl_target(&h->tex, &h->fbo, sw, sh, GL_RGBA8); h->w = sw; h->h = sh; }
     }
+}
+
+/* Sizes for this frame; targets remade where they changed. */
+static inline void rs_gl_layout(int sw, int sh, int vw, int vh) {
+    rs_preset_t *p = g_rs_gl.preset;
+    rs_gl_layout_orig(p, sw, sh);
     int w = sw, h = sh;
     for (int i = 0; i < g_rs_gl.n - 1; i++) {
         rs_gl_pass_t *gp = &g_rs_gl.pass[i];
