@@ -299,7 +299,7 @@ m2hle --rom sfight.zip --ggpo-lobby default --ggpo-user FRIEND --ggpo-pass PASSW
 ```
 
 `--ggpo-signup` creates the account first, and `--ggpo-delay N` sets the local input delay
-(2 frames by default). `--ggpo-remote IP:PORT --ggpo-player 1|2 --ggpo-local PORT` plays straight
+(`auto` by default: picked from the first ping, 2 to 7 frames). `--ggpo-remote IP:PORT --ggpo-player 1|2 --ggpo-local PORT` plays straight
 to an address with no lobby. Over the MCP bridge, `{"cmd":"ggpo_lobby"}` reports and drives the
 lobby.
 

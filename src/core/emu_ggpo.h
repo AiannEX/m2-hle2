@@ -66,13 +66,13 @@ typedef struct {
     char            remote_ip[64];
     uint16_t        remote_port;
     int             player;            /* 1 or 2 */
-    int             delay;             /* local input delay, frames */
+    int             delay;             /* local input delay, frames; -1 from the ping */
     int             synctest_frames;   /* how far synctest rolls back */
     char            synclog_dir[240];
     bool            no_solo;           /* --ggpo-solo 0: a linked game's board runs alone */
 } emu_ggpo_cfg_t;
 
-static emu_ggpo_cfg_t g_ggpo_cfg = { EMU_GGPO_OFF, 7000, "", 7001, 1, 2, 1, "", false };
+static emu_ggpo_cfg_t g_ggpo_cfg = { EMU_GGPO_OFF, 7000, "", 7001, 1, -1, 1, "", false };
 
 #ifdef M2HLE_GGPO
 #include "../net/ggpo_lobby.h"   /* the lobby that sets up a match (ggpo.sonicthefighte.rs) */
@@ -106,7 +106,7 @@ static inline bool emu_ggpo_cli_arg(int argc, char **argv, int *i) {
         else LOG_WARN("--ggpo-remote %s: expected IP:PORT", v);
     }
     else if (strcmp(a, "player") == 0)    g_ggpo_cfg.player = atoi(v) == 2 ? 2 : 1;
-    else if (strcmp(a, "delay") == 0)     g_ggpo_cfg.delay = atoi(v);
+    else if (strcmp(a, "delay") == 0)     g_ggpo_cfg.delay = strcmp(v, "auto") == 0 ? -1 : atoi(v);
     else if (strcmp(a, "synctest") == 0) {
         g_ggpo_cfg.mode = EMU_GGPO_SYNCTEST;
         g_ggpo_cfg.synctest_frames = atoi(v) > 0 ? atoi(v) : 1;
@@ -129,6 +129,28 @@ static inline bool emu_ggpo_cli_arg(int argc, char **argv, int *i) {
 
 #define EMU_GGPO_INPUT_SIZE  ((int)sizeof(uint32_t))   /* one word a player */
 #define EMU_GGPO_SKIP_MAX    8                         /* frames a timesync may hold us */
+#define EMU_GGPO_HOLD_GAP    4                         /* frames run between two of them */
+
+/* The input delay from the ping (--ggpo-delay auto, the default; Pinboard
+ * #1258). GGPO's delay is the local side's alone, so each machine picks its
+ * own, once, before its first input: a change later leaves a gap in the
+ * frames GGPO sends the peer. The peer's input for frame F reaches us about
+ * a one-way trip and a poll after it was pressed, so a rollback goes back
+ * that much less the delay; the delay keeps it near EMU_GGPO_AUTO_ROLLBACK.
+ * A long rollback runs every frame again in one host frame (~3.5 ms each for
+ * VF2 here), and beyond GGPO's 8 frames of prediction the board stops dead. */
+#define EMU_GGPO_AUTO_MIN       2     /* the old fixed delay: near peers keep it */
+#define EMU_GGPO_AUTO_MAX       7
+#define EMU_GGPO_AUTO_ROLLBACK  3
+#define EMU_GGPO_AUTO_WAIT      360   /* frames to wait for GGPO's first ping: it
+                                       * reports once a second, and the first is often
+                                       * lost on a peer still synchronizing */
+
+static inline int emu_ggpo_auto_delay(int ping_ms) {
+    int one_way = (ping_ms * 3 + 99) / 100;     /* ping / 2 in frames, rounded up */
+    int d = one_way + 1 - EMU_GGPO_AUTO_ROLLBACK;
+    return d < EMU_GGPO_AUTO_MIN ? EMU_GGPO_AUTO_MIN : d > EMU_GGPO_AUTO_MAX ? EMU_GGPO_AUTO_MAX : d;
+}
 
 static struct {
     bool              on;          /* a session is open */
@@ -136,6 +158,12 @@ static struct {
     bool              running;     /* GGPO said RUNNING */
     bool              resim;       /* inside a rollback's advance_frame */
     int               skip;        /* frames to hold for a timesync */
+    int               since_hold;  /* frames run since the last one */
+    int               delay;       /* the input delay set, -1 not yet */
+    int               delay_wait;  /* frames waited for a ping */
+    int               ping;        /* GGPO's last round trip, ms */
+    uint32_t          holds;       /* frames held for a timesync */
+    uint32_t          stalls;      /* frames GGPO's prediction limit held */
     emu_thread_ctx_t *ctx;
     uint32_t          frames;      /* frames run live */
     uint32_t          rollbacks;   /* loads */
@@ -407,7 +435,7 @@ static inline int emu_ggpo_open(emu_thread_ctx_t *ctx) {
     int err = ggpo_port_start_p2p(&cb, EMU_GGPO_INPUT_SIZE, c->local_port, c->player,
                                   c->remote_ip, c->remote_port);
     if (err == GGPO_PORT_OK) {
-        ggpo_port_set_frame_delay(c->delay);
+        if (c->delay >= 0) ggpo_port_set_frame_delay(c->delay);
         ggpo_port_set_disconnect_timeout(5000);
     }
     return err;
@@ -427,12 +455,20 @@ static inline void emu_ggpo_replay_begin(emu_thread_ctx_t *ctx) {
     }
 }
 
+static inline const char *emu_ggpo__delay_name(void) {
+    static char s[16];
+    if (g_ggpo_cfg.delay < 0) return "auto";
+    snprintf(s, sizeof s, "%d", g_ggpo_cfg.delay);
+    return s;
+}
+
 /* Mutex held. */
 static inline bool emu_ggpo_start(emu_thread_ctx_t *ctx, emu_ggpo_mode_t mode) {
     memset(&g_ggpo, 0, sizeof g_ggpo);
     g_ggpo.mode = mode;
     g_ggpo.ctx = ctx;
     g_ggpo.check_frame = -1;
+    g_ggpo.delay = mode == EMU_GGPO_P2P ? g_ggpo_cfg.delay : 0;
     g_ggpo.pend_frame = g_ggpo.done_frame = -1;
     g_ggpo.vs_mode_was = g_vs_mode;
     /* Both boards play the same rules, and a decided match goes back to
@@ -473,12 +509,12 @@ static inline bool emu_ggpo_start(emu_thread_ctx_t *ctx, emu_ggpo_mode_t mode) {
         LOG_INFO("ggpo: synctest, rolling back %d frame(s) every frame; snapshot %zu bytes",
                  g_ggpo_cfg.synctest_frames, emu_ggpo__size());
     else if (!ggpo_port_bound())
-        LOG_INFO("ggpo: player %d through the lobby's transport, delay %d; snapshot %zu bytes",
-                 g_ggpo_cfg.player, g_ggpo_cfg.delay, emu_ggpo__size());
+        LOG_INFO("ggpo: player %d through the lobby's transport, delay %s; snapshot %zu bytes",
+                 g_ggpo_cfg.player, emu_ggpo__delay_name(), emu_ggpo__size());
     else
-        LOG_INFO("ggpo: player %d on UDP %u, peer %s:%u, delay %d; snapshot %zu bytes",
+        LOG_INFO("ggpo: player %d on UDP %u, peer %s:%u, delay %s; snapshot %zu bytes",
                  g_ggpo_cfg.player, (unsigned)g_ggpo_cfg.local_port, g_ggpo_cfg.remote_ip,
-                 (unsigned)g_ggpo_cfg.remote_port, g_ggpo_cfg.delay, emu_ggpo__size());
+                 (unsigned)g_ggpo_cfg.remote_port, emu_ggpo__delay_name(), emu_ggpo__size());
     return true;
 }
 
@@ -498,8 +534,10 @@ static inline void emu_ggpo_stop(void) {
     backup_ram_reattach();
     g_vs_mode = g_ggpo.vs_mode_was;
     if (solo) LOG_INFO("solo: over after %u frames; the board is alone", g_ggpo.frames);
-    else LOG_INFO("ggpo: session over: %u frames, %u rollbacks, %u frames run again, %u sync errors",
-             g_ggpo.frames, g_ggpo.rollbacks, g_ggpo.resim_frames, ggpo_port_sync_errors());
+    else LOG_INFO("ggpo: session over: %u frames, %u rollbacks, %u frames run again, %u sync errors; "
+             "delay %d, ping %d ms, %u frames held for the peer, %u for timesyncs",
+             g_ggpo.frames, g_ggpo.rollbacks, g_ggpo.resim_frames, ggpo_port_sync_errors(),
+             g_ggpo.delay, g_ggpo.ping, g_ggpo.stalls, g_ggpo.holds);
     g_ggpo.on = false;
 }
 
@@ -529,6 +567,42 @@ static inline void emu_ggpo_report_check(void) {
     LOG_INFO("%s", g_ggpo.check_line);
     g_ggpo.check_seq++;
     g_ggpo.check_frame = -1;
+}
+
+/* GGPO's round trip, when it has one. */
+static inline int emu_ggpo__ping(void) {
+    int ping = 0, kbps = 0, lb = 0, rb = 0;
+    return ggpo_port_stats(&ping, &kbps, &lb, &rb) == GGPO_PORT_OK ? ping : 0;
+}
+
+/* --ggpo-delay auto: no input goes in until the delay is set, from GGPO's
+ * first ping after RUNNING (its quality report, one round trip), or the
+ * minimum if none comes. The peer runs on into its prediction meanwhile. */
+static inline bool emu_ggpo__delay_ready(void) {
+    if (g_ggpo.delay >= 0) return true;
+    if (!g_ggpo.running) return false;
+    int ping = emu_ggpo__ping();
+    if (ping <= 0 && ++g_ggpo.delay_wait < EMU_GGPO_AUTO_WAIT) return false;
+    g_ggpo.ping  = ping;
+    g_ggpo.delay = ping > 0 ? emu_ggpo_auto_delay(ping) : EMU_GGPO_AUTO_MIN;
+    ggpo_port_set_frame_delay(g_ggpo.delay);
+    if (ping > 0) LOG_INFO("ggpo: ping %d ms: input delay %d frames", ping, g_ggpo.delay);
+    else LOG_WARN("ggpo: no ping from the peer in %d frames: input delay %d", EMU_GGPO_AUTO_WAIT, g_ggpo.delay);
+    return true;
+}
+
+/* The link as the players had it, beside the check lines: a log sent in
+ * from far away says what the match ran on (Pinboard #1258). */
+static inline void emu_ggpo_report_net(void) {
+    if (g_ggpo_cfg.mode != EMU_GGPO_P2P || g_ggpo.frames % EMU_GGPO_CHECK_EVERY != 0) return;
+    int ping = emu_ggpo__ping();
+    if (ping > 0) g_ggpo.ping = ping;
+    const ggl_status_t *st = &g_ggl.st;
+    const char *path = !st->match[0] ? "straight" : st->direct ? "direct" : "relayed";
+    LOG_INFO("ggpo: net frame %u: ping %d ms, delay %d, %s; %u rollbacks, %u frames again, "
+             "%u frames held for the peer, %u for timesyncs",
+             g_ggpo.frames, g_ggpo.ping, g_ggpo.delay, path, g_ggpo.rollbacks, g_ggpo.resim_frames,
+             g_ggpo.stalls, g_ggpo.holds);
 }
 
 /* A result no rollback can take back any more is counted. */
@@ -571,8 +645,10 @@ static inline bool emu_ggpo_frame(emu_thread_ctx_t *ctx) {
         err = ggpo_port_add_local_input(0, &w0, EMU_GGPO_INPUT_SIZE);
         if (err == GGPO_PORT_OK) err = ggpo_port_add_local_input(1, &w1, EMU_GGPO_INPUT_SIZE);
     } else {
+        if (!emu_ggpo__delay_ready()) return false;
         uint32_t w = emu_ggpo_sample_local();
         err = ggpo_port_add_local_input(0, &w, EMU_GGPO_INPUT_SIZE);
+        if (err == GGPO_PORT_PREDICTION_LIMIT) g_ggpo.stalls++;
     }
     if (err != GGPO_PORT_OK) return false;     /* not running yet, or too far ahead */
     uint32_t in[2] = { 0, 0 };
@@ -585,6 +661,7 @@ static inline bool emu_ggpo_frame(emu_thread_ctx_t *ctx) {
     if (g_twin.on && g_ggpo.frames % EMU_GGPO_CHECK_EVERY == 0) emu_twin_say(g_ggpo.frames);
     emu_ggpo_report_errors();
     emu_ggpo_report_check();
+    emu_ggpo_report_net();
     emu_ggpo_settle_result();
     return ran;
 }
@@ -610,9 +687,14 @@ static inline emu_ggpo_tick_t emu_ggpo_tick(emu_thread_ctx_t *ctx) {
             else g_ggpo_cfg.mode = EMU_GGPO_OFF;
         }
         r = EMU_GGPO_TICK_IDLE;
-    } else if (g_ggpo.skip > 0) {
-        g_ggpo.skip--;                         /* ahead of the peer: hold a frame */
+    } else if (g_ggpo.skip > 0 && g_ggpo.since_hold >= EMU_GGPO_HOLD_GAP) {
+        /* Ahead of the peer: hold a frame. One at a time, a few frames apart:
+         * GGPO asks for up to 9 at once, and 9 held together are a freeze. */
+        g_ggpo.skip--;
+        g_ggpo.since_hold = 0;
+        g_ggpo.holds++;
     } else if (emu_ggpo_frame(ctx)) {
+        g_ggpo.since_hold++;
         r = EMU_GGPO_TICK_RAN;
     }
     emu_mutex_unlock(&ctx->mutex);
