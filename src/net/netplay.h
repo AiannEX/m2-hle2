@@ -3979,6 +3979,19 @@ static inline void netplay_member_stop_session(const room_state_t *r) {
     }
 }
 
+/* The room's last result, when our board did not reach it itself. */
+static inline void netplay_member_missed_result(const room_state_t *r, uint16_t me) {
+    /* A result our board did not see -- we were not running it, or dropped out
+     * of it -- is still ours to record, and still moves our entry request. */
+    if (r->phase == ROOM_PHASE_LOBBY && r->match && r->last_result <= 1
+        && g_netplay.me.result_match != r->match && !g_netplay.match_live) {
+        if (room_after_result(&g_netplay.me, me, r, r->match, r->last_result)) {
+            g_netplay.me_dirty = true;
+            netplay_after_result_ready();
+        }
+    }
+}
+
 /*
  * Every member's half, the owner's included: do what the room state says.
  * A match we have not started yet is started -- as a fighter if the state names
@@ -4012,15 +4025,7 @@ static inline void netplay_member_pump(void) {
 
     if (on_our_boards) netplay_member_stop_session(r);
 
-    /* A result our board did not see -- we were not running it, or dropped out
-     * of it -- is still ours to record, and still moves our entry request. */
-    if (r->phase == ROOM_PHASE_LOBBY && r->match && r->last_result <= 1
-        && g_netplay.me.result_match != r->match && !g_netplay.match_live) {
-        if (room_after_result(&g_netplay.me, me, r, r->match, r->last_result)) {
-            g_netplay.me_dirty = true;
-            netplay_after_result_ready();
-        }
-    }
+    netplay_member_missed_result(r, me);
 }
 
 /* A fighter whose board has reached the result goes on repeating its last
