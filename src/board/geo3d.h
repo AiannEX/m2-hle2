@@ -205,7 +205,8 @@ typedef struct {
      * the host camera and projects the board's way instead — gproj holds focal
      * x, focal y and the projection centre in screen pixels (y from the top),
      * vp the window's scissor in screen pixels (x0, y0, x1, y1), window which
-     * window the object belongs to (earlier windows paint over later ones), and
+     * window the object belongs to (later windows cover earlier ones: MAME fills
+     * them last to first, model2_v.cpp), and
      * light the GEO light vector in host eye space. */
     bool     view_space;
     float    gproj[4];

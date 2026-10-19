@@ -131,7 +131,7 @@ camera is not drawn.
 
 **`sky_eye_link()`**
 The game's camera and stage now as a noclip link fragment (`#game=sfight&tab=stage&…`
-with `eye`/`ang`, and `pos`/`target`/`look` for a noclip without them). Append it to
+with the board's `eye`/`ang` only). Append it to
 the explorer's page URL.
 
 **`get_registers()`**
