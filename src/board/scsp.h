@@ -831,6 +831,13 @@ static inline void scsp_dsp_inputs(const scsp_dsp_t *d, int32_t *in) {
     in[0x31] = d->exts[1] * 256;
 }
 
+/* scsp_dsp_step's end: DEC down a step and MIXS cleared, unless the program ended early. */
+static inline void scsp_dsp_step_end(scsp_dsp_t *d, int run) {
+    if (run < d->last_step) return;   /* the program ended on a bad IRA: no DEC, MIXS kept */
+    d->dec--;
+    memset(d->mixs, 0, sizeof d->mixs);
+}
+
 static void scsp_dsp_step(scsp_t *s) {
     scsp_dsp_t *d = &s->dsp;
     if (d->stopped) return;
@@ -899,9 +906,7 @@ static void scsp_dsp_step(scsp_t *s) {
     }
     memcpy(d->mems, in, sizeof d->mems);
     memcpy(d->efreg, efreg, sizeof d->efreg);
-    if (run < d->last_step) return;   /* the program ended on a bad IRA: no DEC, MIXS kept */
-    d->dec--;
-    memset(d->mixs, 0, sizeof d->mixs);
+    scsp_dsp_step_end(d, run);
 }
 
 /* ---- interrupts ------------------------------------------------------------------- */
