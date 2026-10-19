@@ -510,10 +510,10 @@ static inline void controls_detect_poll(bool pads_on) {
     if (g_ctl.det_role < 0) return;
     SDL_Joystick *joy = SDL_GetJoystickFromID((SDL_JoystickID)g_ctl.det_id);
     if (!joy) { g_ctl.det_role = -1; return; }
-    int n = SDL_GetNumJoystickAxes(joy), best = -1, far = 12000;
+    int n = SDL_GetNumJoystickAxes(joy), best = -1, most = 12000;
     for (int k = 0; k < n && k < 16; k++) {
         int d = abs(SDL_GetJoystickAxis(joy, k) - g_ctl.det_start[k]);
-        if (d > far) { far = d; best = k; }
+        if (d > most) { most = d; best = k; }
     }
     if (best < 0) return;
     controls_edit_begin();
