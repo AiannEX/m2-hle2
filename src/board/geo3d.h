@@ -3116,6 +3116,14 @@ static inline bool geo3d_mesh_texhdr(const uint8_t *materials, size_t materials_
     return true;
 }
 
+/* For geo3d_mesh_build: whether a face's first two corners, a and b, are
+ * both among the mesh's n_sv points (the face is skipped when not). */
+static inline bool geo3d_mesh_edge_in(int a, int b, int n_sv) {
+    if (a < 0 || a >= n_sv) return false;
+    if (b < 0 || b >= n_sv) return false;
+    return true;
+}
+
 /* The static half of geo3d_decode_model for one (model, material, UV): same
  * walk, same face loop, no matrix. Returns false if out of memory. */
 static inline bool geo3d_mesh_build(geo3d_cmesh_t *m, uint32_t mesh_offset,
@@ -3149,8 +3157,7 @@ static inline bool geo3d_mesh_build(geo3d_cmesh_t *m, uint32_t mesh_offset,
         if (have_uv) geo3d_uv_read(materials, materials_size, uv_word, tri_cnt, h.textured, uvu, uvv);
         uv_word += (uint32_t)nv * 2u;
 
-        if (ai < 0 || ai >= n_sv) continue;
-        if (bi < 0 || bi >= n_sv) continue;
+        if (!geo3d_mesh_edge_in(ai, bi, n_sv)) continue;
         bool has_c = (ci >= 0 && ci < n_sv), has_d = (di >= 0 && di < n_sv);
         /* Before the skip below, not after: the z-sort state is carried across
          * every face of the walk, including the ones nothing is drawn for. */
