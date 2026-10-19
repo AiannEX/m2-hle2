@@ -944,6 +944,21 @@ static inline bool rpcn_addr_is_private(uint32_t ip_be) {
         || (ip >> 20) == (172u << 4 | 1u) || (ip >> 16) == (192u << 8 | 168u);
 }
 
+/* Two players behind one public address are told each other's LAN address on
+ * port 3658 whatever port they really have (RPCN hardcodes it), and a player
+ * whose 3658 was taken is on one of the next few (rpcn_session_start). Knock
+ * on those too until one answers: the punch names us, so they adopt the port
+ * it came from. */
+static inline void rpcn_session_punch_lan_ports(rpcn_session_t *s, const rpcn_peer_t *p,
+                                                const uint8_t *punch) {
+    if (p->heard || p->port != RPCN_P2P_PORT || !rpcn_addr_is_private(p->ip)) return;
+    for (uint16_t k = 1; k < RPCN_P2P_PORT_TRIES; k++) {
+        uint16_t port = (uint16_t)(RPCN_P2P_PORT + k);
+        if (p->ip == s->client.local_ip && port == s->client.local_port) continue;
+        rpcn_send_to(&s->client, p->ip, port, punch, RPCN_PUNCH_SIZE);
+    }
+}
+
 static inline void rpcn_session_pump_punch(rpcn_session_t *s) {
     uint8_t punch[RPCN_PUNCH_SIZE];
     memcpy(punch, g_rpcn_punch_tag, sizeof(g_rpcn_punch_tag));
@@ -958,17 +973,7 @@ static inline void rpcn_session_pump_punch(rpcn_session_t *s) {
         rpcn_send_to(&s->client, p->ip, p->port, punch, sizeof(punch));
         if (!p->heard && p->alt_ip && p->alt_port && (p->alt_ip != p->ip || p->alt_port != p->port))
             rpcn_send_to(&s->client, p->alt_ip, p->alt_port, punch, sizeof(punch));
-        /* Two players behind one public address are told each other's LAN
-         * address on port 3658 whatever port they really have (RPCN hardcodes
-         * it), and a player whose 3658 was taken is on one of the next few
-         * (rpcn_session_start). Knock on those too until one answers: the
-         * punch names us, so they adopt the port it came from. */
-        if (!p->heard && p->port == RPCN_P2P_PORT && rpcn_addr_is_private(p->ip))
-            for (uint16_t k = 1; k < RPCN_P2P_PORT_TRIES; k++) {
-                uint16_t port = (uint16_t)(RPCN_P2P_PORT + k);
-                if (p->ip == s->client.local_ip && port == s->client.local_port) continue;
-                rpcn_send_to(&s->client, p->ip, port, punch, sizeof(punch));
-            }
+        rpcn_session_punch_lan_ports(s, p, punch);
     }
 }
 
