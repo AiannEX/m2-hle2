@@ -162,6 +162,7 @@ static struct {
     int               delay;       /* the input delay set, -1 not yet */
     int               delay_wait;  /* frames waited for a ping */
     int               ping;        /* GGPO's last round trip, ms */
+    int               ping_unset;  /* what GGPO's stats said at RUNNING */
     uint32_t          holds;       /* frames held for a timesync */
     uint32_t          stalls;      /* frames GGPO's prediction limit held */
     emu_thread_ctx_t *ctx;
@@ -379,6 +380,12 @@ static void emu_ggpo_cb_log(void *ud, const char *filename, const void *buf, int
     fclose(f);
 }
 
+/* GGPO's round trip, when it has one. */
+static inline int emu_ggpo__ping(void) {
+    int ping = 0, kbps = 0, lb = 0, rb = 0;
+    return ggpo_port_stats(&ping, &kbps, &lb, &rb) == GGPO_PORT_OK ? ping : 0;
+}
+
 static void emu_ggpo_cb_event(void *ud, int code, int handle, int a, int b) {
     (void)ud; (void)handle;
     /* GGPO's handle is the order players were added in; the only peer a
@@ -388,7 +395,11 @@ static void emu_ggpo_cb_event(void *ud, int code, int handle, int a, int b) {
     case GGPO_PORT_EV_CONNECTED:     LOG_INFO("ggpo: connected to player %d", player + 1); break;
     case GGPO_PORT_EV_SYNCHRONIZING: break;
     case GGPO_PORT_EV_SYNCHRONIZED:  LOG_INFO("ggpo: synchronized with player %d", player + 1); break;
-    case GGPO_PORT_EV_RUNNING:       LOG_INFO("ggpo: running"); g_ggpo.running = true; break;
+    case GGPO_PORT_EV_RUNNING:
+        LOG_INFO("ggpo: running");
+        g_ggpo.running = true;
+        g_ggpo.ping_unset = emu_ggpo__ping();
+        break;
     case GGPO_PORT_EV_DISCONNECTED:
         LOG_WARN("ggpo: player %d disconnected; the session ends", player + 1);
         g_ggpo_cfg.mode = EMU_GGPO_OFF;
@@ -569,19 +580,16 @@ static inline void emu_ggpo_report_check(void) {
     g_ggpo.check_frame = -1;
 }
 
-/* GGPO's round trip, when it has one. */
-static inline int emu_ggpo__ping(void) {
-    int ping = 0, kbps = 0, lb = 0, rb = 0;
-    return ggpo_port_stats(&ping, &kbps, &lb, &rb) == GGPO_PORT_OK ? ping : 0;
-}
-
 /* --ggpo-delay auto: no input goes in until the delay is set, from GGPO's
  * first ping after RUNNING (its quality report, one round trip), or the
- * minimum if none comes. The peer runs on into its prediction meanwhile. */
+ * minimum if none comes. The peer runs on into its prediction meanwhile.
+ * GGPO leaves its round trip uninitialised until the first reply, so the
+ * value read at RUNNING is not a ping (it read 616435125 ms; #1268). */
 static inline bool emu_ggpo__delay_ready(void) {
     if (g_ggpo.delay >= 0) return true;
     if (!g_ggpo.running) return false;
     int ping = emu_ggpo__ping();
+    if (ping == g_ggpo.ping_unset) ping = 0;
     if (ping <= 0 && ++g_ggpo.delay_wait < EMU_GGPO_AUTO_WAIT) return false;
     g_ggpo.ping  = ping;
     g_ggpo.delay = ping > 0 ? emu_ggpo_auto_delay(ping) : EMU_GGPO_AUTO_MIN;

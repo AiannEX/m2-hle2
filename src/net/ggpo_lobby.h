@@ -16,8 +16,8 @@
  *                   "GGPO" | LOCAL (6) | the same: one of the peer's LAN
  *                   addresses, when both of us come from one public IP
  *                   "GGPO" | DATA (5) | a GGPO packet the peer relayed
- *   peer to peer    "GGPO" | PUNCH (0x10) | heard, every 250 ms for 10 s;
- *                   anything else is GGPO's own
+ *   peer to peer    "GGPO" | PUNCH (0x10) | heard | [len][match id], every
+ *                   250 ms for 10 s; anything else is GGPO's own
  *
  * A browser has no UDP, so the web build sends the same datagrams to the
  * server as binary messages on its lobby WebSocket instead, and the server
@@ -38,6 +38,17 @@
  * the relay in the US and back, 300+ ms between two players in one city
  * (Pinboard #1258). So the punches also go to every LOCAL address, and the
  * first one the peer answers from becomes the peer's address.
+ *
+ * A NAT that maps each destination to a new port ("symmetric") shows the
+ * peer another port than the one the server saw, so punches to the PEER
+ * address die at both ends and the match relays (Pinboard #1268: a home
+ * router's next port was the server's + 3..6 on the live lobby once HELLO
+ * waited for the session; iVPN Tokyo keeps its ports).
+ * So until the peer is heard, the punches also go to the GGL_GUESS ports
+ * above the PEER address, which opens our NAT to the peer's new one, and a
+ * punch that names the match, from wherever it comes, becomes the peer's
+ * address (a "peer-reflexive" one, as ICE calls it). An old peer's punch
+ * names no match: only its PEER address counts, as before.
  *
  * Threads. The pump (ggl_pump) runs on the emu thread outside the emu mutex,
  * like emu_netplay_pump: the WebSocket connect blocks (natively; the web
@@ -84,6 +95,7 @@
 #define GGL_RING          32              /* relayed packets waiting for GGPO (via_ws) */
 #define GGL_PACKET_MAX    1400
 #define GGL_LAN_MAX       4
+#define GGL_GUESS         32              /* ports above PEER punched too, until heard */
 
 enum { GGL_HELLO = 1, GGL_SEEN = 2, GGL_PEER = 3, GGL_RELAY = 4, GGL_DATA = 5, GGL_LOCAL = 6, GGL_PUNCH = 0x10 };
 
@@ -187,6 +199,7 @@ static struct {
     int          n_lan;
     bool         heard;             /* the peer reaches us directly */
     int64_t      hello_next, punch_next, punch_until;
+    int64_t      hello_first; /* when this match's first HELLO went */
     uint32_t     virt_ip;
     bool         ggpo_seen;         /* GGPO's session opened for this match */
 } g_ggl;
@@ -386,10 +399,26 @@ static inline void ggl__hello(void) {
     ggl__to_server(b, n);
 }
 
+/* A punch: whether we hear the peer, and the match, so that the peer can
+ * take it from a port the server never saw (an old peer ignores the tail). */
 static inline void ggl__punch(void) {
-    uint8_t b[6] = { 'G', 'G', 'P', 'O', GGL_PUNCH, (uint8_t)g_ggl.heard };
-    net_udp_send(g_ggl.sock, g_ggl.peer_ip, g_ggl.peer_port, b, sizeof b);
-    for (int i = 0; i < g_ggl.n_lan; i++) net_udp_send(g_ggl.sock, g_ggl.lan_ip[i], g_ggl.lan_port[i], b, sizeof b);
+    uint8_t b[7 + sizeof g_ggl.st.match] = { 'G', 'G', 'P', 'O', GGL_PUNCH, (uint8_t)g_ggl.heard };
+    size_t len = strlen(g_ggl.st.match);
+    b[6] = (uint8_t)len;
+    memcpy(b + 7, g_ggl.st.match, len);
+    uint32_t n = 7 + (uint32_t)len;
+    net_udp_send(g_ggl.sock, g_ggl.peer_ip, g_ggl.peer_port, b, n);
+    for (int i = 0; i < g_ggl.n_lan; i++) net_udp_send(g_ggl.sock, g_ggl.lan_ip[i], g_ggl.lan_port[i], b, n);
+    if (g_ggl.heard) return;
+    for (uint32_t k = 1; k <= GGL_GUESS && g_ggl.pub_port + k <= 65535; k++)
+        net_udp_send(g_ggl.sock, g_ggl.pub_ip, (uint16_t)(g_ggl.pub_port + k), b, n);
+}
+
+/* A punch that names our match: the peer, wherever it comes from. */
+static inline bool ggl__punch_ours(const uint8_t *b, int n) {
+    size_t len = strlen(g_ggl.st.match);
+    return n >= 7 + (int)len && memcmp(b, "GGPO", 4) == 0 && b[4] == GGL_PUNCH && len > 0 &&
+           b[6] == len && memcmp(b + 7, g_ggl.st.match, len) == 0;
 }
 
 static inline bool ggl__send_cb(void *ctx, uint32_t ip_be, uint16_t port, const void *data, uint32_t len) {
@@ -433,7 +462,9 @@ static inline int ggl__from_server(uint8_t *buf, int n) {
         g_ggl.peer_port = g_ggl.pub_port = port;
         g_ggl.st.peer_known = true;
         g_ggl.punch_until = net_now_ms() + GGL_PUNCH_FOR_MS;
-        LOG_INFO("ggpo lobby: the peer is at %.*s:%u", buf[5], (const char *)buf + 6, (unsigned)port);
+        /* a symmetric NAT's next port drifts from the one HELLO got as this grows */
+        LOG_INFO("ggpo lobby: the peer is at %.*s:%u, %d ms after our first hello", buf[5], (const char *)buf + 6,
+                 (unsigned)port, g_ggl.hello_first ? (int)(net_now_ms() - g_ggl.hello_first) : -1);
     }
     if (buf[4] == GGL_LOCAL && !g_ggl.via_ws && g_ggl.n_lan < GGL_LAN_MAX && ggl__addr(buf, n, &ip, &port)) {
         if (ip == g_ggl.peer_ip && port == g_ggl.peer_port) return 0;   /* on it already (keepalive's repeat) */
@@ -522,6 +553,15 @@ static inline int ggl__recv_udp(uint8_t *buf, uint32_t cap) {
         int got = 0;
         if (ip == g_ggl.srv_ip && p == g_ggl.srv_port) got = ggl__from_server(buf, n);
         else if (ggl__is_peer(ip, p)) got = ggl__from_peer(buf, n);
+        else if (g_ggl.st.peer_known && !g_ggl.heard && ggl__punch_ours(buf, n)) {
+            char a[32];
+            g_ggl.peer_ip = ip;
+            g_ggl.peer_port = p;
+            g_ggl.n_lan = 0;
+            LOG_INFO("ggpo lobby: the peer punches from %s, not where the server saw it",
+                     net_addr_text(a, sizeof a, ip, p));
+            got = ggl__from_peer(buf, n);
+        }
         if (got > 0) return got;
     }
     return 0;
@@ -543,6 +583,7 @@ static inline int ggl__recv_cb(void *ctx, void *out, uint32_t cap, uint32_t *ip_
 static inline void ggl__udp_tick(int64_t now) {
     if (now >= g_ggl.hello_next) {
         ggl__hello();
+        if (!g_ggl.hello_first) g_ggl.hello_first = now;
         bool paired = g_ggl.st.peer_known || (g_ggl.via_ws && g_ggl.seen);
         g_ggl.hello_next = now + (paired ? GGL_KEEPALIVE_MS : GGL_HELLO_MS);
     }
@@ -761,7 +802,7 @@ static inline void ggl__on_match(const char *m) {
     g_ggl.pub_port = 0;
     s->sent_direct = s->sent_relay = s->got_direct = s->got_relay = 0;
     s->in_id[0] = s->in_from[0] = s->out_id[0] = s->out_to[0] = '\0';
-    g_ggl.hello_next = g_ggl.punch_next = 0;
+    g_ggl.hello_next = g_ggl.punch_next = g_ggl.hello_first = 0;
     if (!ggl__open_match(host, port)) return;
     s->stage = GGL_MATCH;
     LOG_INFO("ggpo lobby: match %s against %s, player %d", s->match, s->opponent, side == 0 ? 1 : 2);
@@ -896,7 +937,10 @@ static inline void ggl__auto(int64_t now, const char *rom_set) {
 /* The match's bookkeeping: GGPO's session opening and ending. */
 static inline void ggl__match_tick(int64_t now, bool ggpo_on) {
     if (g_ggl.st.stage == GGL_MATCH) {
-        ggl__udp_tick(now);
+        /* HELLO once the session is open, not before the board reload that
+         * opens it: a symmetric NAT's next port drifts away from HELLO's for
+         * the ~5 s that took, out of the peer's GGL_GUESS (#1268). */
+        if (ggpo_on || g_ggl.ggpo_seen) ggl__udp_tick(now);
         if (ggpo_on) g_ggl.ggpo_seen = true;
         else if (g_ggl.ggpo_seen || g_ggpo_cfg.mode == EMU_GGPO_OFF) {
             /* GGPO ended it (the peer went) or would not start. */
