@@ -1712,25 +1712,9 @@ static void cleanup(void) {
     log_file_close();
 }
 
-static void event(const sapp_event* ev) {
-    simgui_handle_event(ev);
-
-    /* Alt+F4 and the taskbar's Close reach sokol as a quit request. In capture
-     * mode only the tray's Exit item is allowed to end the run — the point of
-     * the mode is that nothing on the desktop can stop the recording. */
-    if (ev->type == SAPP_EVENTTYPE_QUIT_REQUESTED && !kiosk_quit_allowed()) {
-        sapp_cancel_quit();
-        return;
-    }
-
-    /* Game input flows through the emulated I/O ports (read by the game's vblank
-     * interrupt) — set/clear the host held mask here. Routed regardless of ImGui
-     * focus so arcade muscle-memory isn't eaten by a debug window. */
-    if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && !ev->key_repeat) input_key_down((int)ev->key_code);
-    if (ev->type == SAPP_EVENTTYPE_KEY_UP)                      input_key_up((int)ev->key_code);
-    m2lua_ui_event(ev);
-
-    if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) return;
+/* The debugger's hotkeys: Esc quits, F9 runs or stops the board, F5/F6/F7
+ * step it and F8 reboots the sound board. */
+static void event_hotkey(const sapp_event* ev) {
     switch (ev->key_code) {
         case SAPP_KEYCODE_ESCAPE: if (!kiosk_active()) sapp_request_quit(); break;
         case SAPP_KEYCODE_F9:
@@ -1754,6 +1738,28 @@ static void event(const sapp_event* ev) {
             break;
         default: break;
     }
+}
+
+static void event(const sapp_event* ev) {
+    simgui_handle_event(ev);
+
+    /* Alt+F4 and the taskbar's Close reach sokol as a quit request. In capture
+     * mode only the tray's Exit item is allowed to end the run — the point of
+     * the mode is that nothing on the desktop can stop the recording. */
+    if (ev->type == SAPP_EVENTTYPE_QUIT_REQUESTED && !kiosk_quit_allowed()) {
+        sapp_cancel_quit();
+        return;
+    }
+
+    /* Game input flows through the emulated I/O ports (read by the game's vblank
+     * interrupt) — set/clear the host held mask here. Routed regardless of ImGui
+     * focus so arcade muscle-memory isn't eaten by a debug window. */
+    if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && !ev->key_repeat) input_key_down((int)ev->key_code);
+    if (ev->type == SAPP_EVENTTYPE_KEY_UP)                      input_key_up((int)ev->key_code);
+    m2lua_ui_event(ev);
+
+    if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) return;
+    event_hotkey(ev);
 }
 
 sapp_desc sokol_main(int argc, char* argv[]) {
