@@ -468,33 +468,9 @@ static void netplay_window_room_options(void) {
                      "as usual.");
 }
 
-/* Hosting, joining, and the server's list of this game's rooms. */
-static void netplay_window_room_list(const netplay_status_t *st, bool online) {
-    igBeginDisabled(!online);
-    if (igButton("Host a room")) netplay_post(NETPLAY_CMD_HOST, &g_np_ui);
-    igSameLine();
-    if (igButton("Refresh list")) netplay_post(NETPLAY_CMD_SEARCH, &g_np_ui);
-    igEndDisabled();
-    if (st->search_pending) { igSameLine(); igText("searching..."); }
-
-    /* Its own row: with the two buttons above it this ran off the right edge
-     * of the default window, which put the button doing the work off-screen. */
-    igSetNextItemWidth(160.0f);
-    igInputTextWithHint("##joinid", "room id", g_np_ui_join_id, sizeof(g_np_ui_join_id),
-                        ImGuiInputTextFlags_CharsDecimal);
-    igSameLine();
-    igBeginDisabled(!online || !g_np_ui_join_id[0]);
-    if (igButton("Join by id")) {
-        netplay_config_t c = g_np_ui;
-#ifdef _WIN32
-        c.room_id = _strtoui64(g_np_ui_join_id, NULL, 10);
-#else
-        c.room_id = strtoull(g_np_ui_join_id, NULL, 10);
-#endif
-        if (c.room_id) netplay_post(NETPLAY_CMD_JOIN, &c);
-    }
-    igEndDisabled();
-
+/* The server's rooms, one row each: its number (click to pick it), host, head
+ * count, lock, and why this build can't join it or the delay it plays at. */
+static void netplay_window_room_table(const netplay_status_t *st) {
     ImGuiTableFlags tf = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                        | ImGuiTableFlags_SizingFixedFit;
     if (igBeginTable("##rooms", 5, tf)) {
@@ -527,6 +503,36 @@ static void netplay_window_room_list(const netplay_status_t *st, bool online) {
         }
         igEndTable();
     }
+}
+
+/* Hosting, joining, and the server's list of this game's rooms. */
+static void netplay_window_room_list(const netplay_status_t *st, bool online) {
+    igBeginDisabled(!online);
+    if (igButton("Host a room")) netplay_post(NETPLAY_CMD_HOST, &g_np_ui);
+    igSameLine();
+    if (igButton("Refresh list")) netplay_post(NETPLAY_CMD_SEARCH, &g_np_ui);
+    igEndDisabled();
+    if (st->search_pending) { igSameLine(); igText("searching..."); }
+
+    /* Its own row: with the two buttons above it this ran off the right edge
+     * of the default window, which put the button doing the work off-screen. */
+    igSetNextItemWidth(160.0f);
+    igInputTextWithHint("##joinid", "room id", g_np_ui_join_id, sizeof(g_np_ui_join_id),
+                        ImGuiInputTextFlags_CharsDecimal);
+    igSameLine();
+    igBeginDisabled(!online || !g_np_ui_join_id[0]);
+    if (igButton("Join by id")) {
+        netplay_config_t c = g_np_ui;
+#ifdef _WIN32
+        c.room_id = _strtoui64(g_np_ui_join_id, NULL, 10);
+#else
+        c.room_id = strtoull(g_np_ui_join_id, NULL, 10);
+#endif
+        if (c.room_id) netplay_post(NETPLAY_CMD_JOIN, &c);
+    }
+    igEndDisabled();
+
+    netplay_window_room_table(st);
     if (st->room_count == 0)
         igTextDisabled(online ? "No rooms here yet - host one, and the other player joins it."
                               : "Connect to see the rooms on this server.");
