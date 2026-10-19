@@ -1596,6 +1596,31 @@ static void mcp_cmd_run_frames(const char *req, char *resp, int cap) {
              reason, (unsigned)((emu_now_us() - t0) / 1000));
 }
 
+/* The quirks of the game whose model table dump_model reads, or NULL with the
+ * error in resp: no ROM yet, no profile, or first past the end of the table. */
+static const game_quirks_t *mcp_dump_model_quirks(uint32_t first, char *resp, int cap) {
+    /* `loaded` and not merely allocated. The regions are calloc'd before they
+     * are filled, and a profile resolves in between — decoding out of the gap
+     * reads zero mesh pointers and reports every model empty, which looks like
+     * a decoder that agrees about nothing rather than like a race. */
+    if (!g_mcp.romset || !g_mcp.romset->loaded ||
+        !g_mcp.romset->main_data || !g_mcp.romset->polygons) {
+        snprintf(resp, (size_t)cap,
+                 "{\"ok\":false,\"error\":\"no ROM loaded yet\"}"); return NULL;
+    }
+    if (!g_active_profile) {
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"no game profile\"}"); return NULL;
+    }
+    const game_quirks_t *q = &g_active_profile->quirks;
+    if (first >= q->model_table_count) {
+        snprintf(resp, (size_t)cap,
+                 "{\"ok\":false,\"error\":\"model %u is past the table's %u\"}",
+                 first, q->model_table_count);
+        return NULL;
+    }
+    return q;
+}
+
 /* Decode model-table entries and write the triangles out as a file.
  *
  * This is the emulator's own index-array polygon decoder — the one in geo3d.h,
@@ -1626,25 +1651,8 @@ static void mcp_cmd_dump_model(const char *req, char *resp, int cap) {
     if (!mcp_json_get_str(req, "path", path, sizeof(path))) {
         snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"missing path\"}"); return;
     }
-    /* `loaded` and not merely allocated. The regions are calloc'd before they
-     * are filled, and a profile resolves in between — decoding out of the gap
-     * reads zero mesh pointers and reports every model empty, which looks like
-     * a decoder that agrees about nothing rather than like a race. */
-    if (!g_mcp.romset || !g_mcp.romset->loaded ||
-        !g_mcp.romset->main_data || !g_mcp.romset->polygons) {
-        snprintf(resp, (size_t)cap,
-                 "{\"ok\":false,\"error\":\"no ROM loaded yet\"}"); return;
-    }
-    if (!g_active_profile) {
-        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"no game profile\"}"); return;
-    }
-    const game_quirks_t *q = &g_active_profile->quirks;
-    if (first >= q->model_table_count) {
-        snprintf(resp, (size_t)cap,
-                 "{\"ok\":false,\"error\":\"model %u is past the table's %u\"}",
-                 first, q->model_table_count);
-        return;
-    }
+    const game_quirks_t *q = mcp_dump_model_quirks(first, resp, cap);
+    if (!q) return;
     if (count > q->model_table_count - first) count = q->model_table_count - first;
 
     FILE *f = fopen(path, "wb");
