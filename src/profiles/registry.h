@@ -15,7 +15,7 @@
 /* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
  * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop, Fighting Vipers,
  * The House of the Dead, Daytona USA, Virtua Fighter 2, Dead or Alive and
- * Air Walkers and Power Sled (the page's ?game=, web/site/m2hle-games.js). Any other set is only
+ * Air Walkers, Power Sled and Virtua Cop, with the clones of #1286 (the page's ?game=, web/site/m2hle-games.js). Any other set is only
  * download size: left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. */
 #include "srallyc.h"
@@ -24,7 +24,7 @@
 #include "fvipers.h"
 #include "hotd.h"      /* runs since Pinboard #1034, on the web since #1040 */
 #include "daytona.h"   /* runs since Pinboard #1035, on the web since #1047 */
-#include "schamp.h"    /* Pinboard #1286, desktop only */
+#include "schamp.h"    /* Pinboard #1286, on the web too */
 #include "doa.h"       /* runs since Pinboard #1050, on the web too */
 #include "vf2.h"       /* runs since Pinboard #1046, on the web since #1055 */
 #include "airwlkrs.h"  /* runs since Pinboard #1063, on the site since #1063 */
@@ -65,8 +65,7 @@ const game_profile_t *const g_profiles[] = {
     &airwlkrs_profile,
     &powsled_profile,
     &vcop_profile,
-#ifndef M2HLE_WEB
-    /* The clones of #1286: desktop only (the web page loads a set's own zips). */
+    /* The clones of #1286, on the site under their game (web/site/m2hle-games.js). */
     &schamp_profile,
     &hotdo_profile,
     &hotdp_profile,
@@ -76,6 +75,7 @@ const game_profile_t *const g_profiles[] = {
     &daytonat_profile,
     &daytonata_profile,
     &daytonagtx_profile,
+#ifndef M2HLE_WEB
     &m2snake_profile,
     &sfight_homebrew_profile,
 #endif

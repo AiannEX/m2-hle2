@@ -32,6 +32,7 @@ const m2hleGames = (() => {
       profiles: [
         { id: 'sfight_console', name: 'Console', about: 'The PS3 release: its menus, free play' },
         { id: 'sfight', name: 'Arcade', about: 'The cabinet as it was' },
+        { id: 'schamp', name: 'Championship', about: 'Sonic Championship, the USA release' },
       ],
       romHint: 'A merged <code>sfight.zip</code> or <code>schamp.zip</code>, or <code>sfight.zip</code> and <code>schamp.zip</code> together',
       labels: {},
@@ -40,7 +41,8 @@ const m2hleGames = (() => {
           title: 'ソニック・ザ・ファイターズ',
           blurb: 'ソニックたちがデスエッグで大乱闘。RPCN と GGPO でオンライン対戦。',
           profiles: { sfight_console: { name: 'コンソール', about: 'PS3 版：メニュー付き、フリープレイ' },
-                      sfight: { name: 'アーケード', about: '筐体そのまま' } },
+                      sfight: { name: 'アーケード', about: '筐体そのまま' },
+                      schamp: { name: 'チャンピオンシップ', about: 'ソニック・チャンピオンシップ、北米版' } },
           romHint: 'マージ済みの <code>sfight.zip</code> または <code>schamp.zip</code>、もしくは <code>sfight.zip</code> と <code>schamp.zip</code> を一緒に',
         },
       },
@@ -183,11 +185,14 @@ const m2hleGames = (() => {
       title: 'The House of the Dead',
       year: 1996, board: 'Model 2C-CRX', colors: ['#8c1010', '#1c0606'],
       blurb: 'Dr. Curien\'s mansion is overrun. Two agents, two guns, and the dead between them and the truth.',
-      /* src/profiles/hotd.h: Revision A or the first release (MAME's hotdo), one profile. */
+      /* src/profiles/hotd.h: Revision A or the first release (MAME's hotdo), and
+       * since #1286 the first release and the prototype as sets of their own. */
       profiles: [
         { id: 'hotd', name: 'Rev A', about: 'Revision A, or the first release' },
+        { id: 'hotdo', name: 'First', about: 'The first release' },
+        { id: 'hotdp', name: 'Prototype', about: 'The prototype, in Japanese only' },
       ],
-      romHint: 'Your <code>hotd.zip</code> (The House of the Dead)',
+      romHint: 'Your <code>hotd.zip</code> (The House of the Dead), or <code>hotdo.zip</code> or <code>hotdp.zip</code> and its parent <code>hotd.zip</code>, picked together',
       /* A light gun on the mouse or a finger (main_web.c, web_gun_event); the
        * pad's directions walk it, B1 fires, B2 reloads (board/lightgun.h). */
       labels: { b1: 'Trigger', b2: 'Reload', b3: 'Unused', b4: 'Unused' },
@@ -201,8 +206,10 @@ const m2hleGames = (() => {
         ja: {
           title: 'ザ・ハウス・オブ・ザ・デッド',
           blurb: 'キュリアン博士の館は死者であふれた。二人のエージェント、二丁の銃、そして真相を阻む死者たち。',
-          profiles: { hotd: { name: 'リビジョン A', about: 'リビジョン A または初期版' } },
-          romHint: 'お持ちの <code>hotd.zip</code>（ザ・ハウス・オブ・ザ・デッド）',
+          profiles: { hotd: { name: 'リビジョン A', about: 'リビジョン A または初期版' },
+                      hotdo: { name: '初期版', about: '最初のリリース' },
+                      hotdp: { name: 'プロトタイプ', about: 'プロトタイプ（日本語のみ）' } },
+          romHint: 'お持ちの <code>hotd.zip</code>（ザ・ハウス・オブ・ザ・デッド）、または <code>hotdo.zip</code>、<code>hotdp.zip</code> と親セットの <code>hotd.zip</code> を一緒に',
           labels: { b1: 'トリガー', b2: 'リロード', b3: '未使用', b4: '未使用' },
         },
       },
@@ -213,9 +220,16 @@ const m2hleGames = (() => {
       blurb: 'Three-Seven Speedway, Dinosaur Canyon, Seaside Street Galaxy. Rolling start!',
       profiles: [
         { id: 'daytona', name: 'Rev A', about: 'Japan, Revision A' },
+        /* The clones of #1286, each a clone of daytona.zip; MAME marks the hacks not working. */
+        { id: 'daytona93', name: 'Original', about: 'The 1993 first release' },
+        { id: 'daytonase', name: 'Special', about: 'Special Edition, Revision A' },
+        { id: 'daytonas', name: 'Saturn ads', about: 'With the Sega Saturn adverts' },
+        { id: 'daytonat', name: 'Turbo 1', about: 'Turbo hack, set 1' },
+        { id: 'daytonata', name: 'Turbo 2', about: 'Turbo hack, set 2' },
+        { id: 'daytonagtx', name: 'GTX 2004', about: 'GTX 2004 Edition (a hack)' },
       ],
       /* The I/O board's program is MAME's model1io device (src/profiles/daytona.h). */
-      romHint: 'Your <code>daytona.zip</code> and the I/O board\'s <code>model1io.zip</code>, picked together',
+      romHint: 'Your <code>daytona.zip</code> and the I/O board\'s <code>model1io.zip</code>, picked together; for another build, its own zip (<code>daytona93.zip</code>, <code>daytonase.zip</code>, ...) with those two',
       /* src/profiles/daytona.h: LEFT/RIGHT the wheel, UP/DOWN the four-speed
        * lever, B1 accelerator, B2 brake, B3/B4 VR1/VR2 (player 2's B3/B4 are
        * VR3/VR4). The wheel's force is the pad's rumble (m2hle-pad.js). */
@@ -229,8 +243,14 @@ const m2hleGames = (() => {
         ja: {
           title: 'デイトナUSA',
           blurb: 'スリーセブン・スピードウェイ、ダイナソー・キャニオン、シーサイド・ストリート・ギャラクシー。ローリングスタート！',
-          profiles: { daytona: { name: 'リビジョン A', about: '日本、リビジョン A' } },
-          romHint: 'お持ちの <code>daytona.zip</code> と I/O ボードの <code>model1io.zip</code> を一緒に',
+          profiles: { daytona: { name: 'リビジョン A', about: '日本、リビジョン A' },
+                      daytona93: { name: '初期版', about: '1993 年の最初のリリース' },
+                      daytonase: { name: 'スペシャル', about: 'スペシャルエディション、リビジョン A' },
+                      daytonas: { name: 'サターン広告', about: 'セガサターンの広告入り' },
+                      daytonat: { name: 'ターボ 1', about: 'ターボハック、セット 1' },
+                      daytonata: { name: 'ターボ 2', about: 'ターボハック、セット 2' },
+                      daytonagtx: { name: 'GTX 2004', about: 'GTX 2004 エディション（ハック版）' } },
+          romHint: 'お持ちの <code>daytona.zip</code> と I/O ボードの <code>model1io.zip</code> を一緒に。別のバージョンは、その zip（<code>daytona93.zip</code>、<code>daytonase.zip</code> など）もこの二つと一緒に',
           labels: { up: 'シフトアップ', down: 'シフトダウン', left: 'ハンドル左', right: 'ハンドル右',
                     b1: 'アクセル', b2: 'ブレーキ', b3: '視点 1', b4: '視点 2' },
         },
