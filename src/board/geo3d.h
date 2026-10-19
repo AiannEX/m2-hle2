@@ -3288,6 +3288,14 @@ typedef struct {
     float          cr, cg, cb;
 } geo3d_cdraw_t;
 
+/* Whether a cached face is wholly outside one side of the window (with cull). */
+static inline bool geo3d_cached_face_out(const geo3d_cdraw_t *d, const geo3d_cface_t *f, const uint8_t *oc) {
+    bool out = false;
+    if (d->cull && f->has_c)
+        out = (oc[f->ai] & oc[f->bi] & oc[f->ci] & (f->is_tri ? 0xFFu : oc[f->di])) != 0;
+    return out;
+}
+
 /* One face of a cached mesh, drawn at the instance's matrix. */
 static inline void geo3d_cached_face(const geo3d_cdraw_t *d, const geo3d_cface_t *f) {
     const vec3_t *tv = d->tv;
@@ -3303,9 +3311,7 @@ static inline void geo3d_cached_face(const geo3d_cdraw_t *d, const geo3d_cface_t
     const bool flat = g_geo3d_zflat && g_geo3d_flat_list;
     g_geo3d_emit_flat = flat ? geo3d_flat_depth(tv, f->zsrc, f->zmode) : -1.0f;
     g_geo3d_emit_zs   = flat ? GEO3D_ZSORT_NONE : geo3d_sort_z(tv, f->zsrc, f->zmode);
-    bool out = false;
-    if (d->cull && f->has_c)
-        out = (oc[f->ai] & oc[f->bi] & oc[f->ci] & (f->is_tri ? 0xFFu : oc[f->di])) != 0;
+    bool out = geo3d_cached_face_out(d, f, oc);
     /* Out of the window: a triangle has nothing left to do; a quad still
      * records its diagonal below, if the board would have drawn it. */
     if (out && f->is_tri) return;
