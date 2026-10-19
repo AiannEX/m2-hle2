@@ -387,6 +387,15 @@ static inline char *rs_unquote(char *v) {
     return rs_trim(v);
 }
 
+/* One `key = value` line, cut at its '=' in place; a line with none is left out. */
+static inline void rs_parse_kv(rs_kvs_t *t, char *l, const char *base) {
+    char *eq = strchr(l, '=');
+    if (eq) {
+        *eq = '\0';
+        rs_kvs_set(t, rs_trim(l), rs_unquote(eq + 1), base);
+    }
+}
+
 static inline bool rs_parse_file(rs_kvs_t *t, const char *path, int depth, char *err, size_t errlen) {
     if (depth > 8) { snprintf(err, errlen, "%s: #reference nests too deeply", rs_path_base(path)); return false; }
     uint8_t *data; size_t len;
@@ -404,11 +413,7 @@ static inline bool rs_parse_file(rs_kvs_t *t, const char *path, int depth, char 
             rs_path_join(base, rs_unquote(l + 10), ref, sizeof ref);
             ok = rs_parse_file(t, ref, depth + 1, err, errlen);
         } else if (*l && *l != '#' && !(l[0] == '/' && l[1] == '/')) {
-            char *eq = strchr(l, '=');
-            if (eq) {
-                *eq = '\0';
-                rs_kvs_set(t, rs_trim(l), rs_unquote(eq + 1), base);
-            }
+            rs_parse_kv(t, l, base);
         }
         line = nl;
     }
