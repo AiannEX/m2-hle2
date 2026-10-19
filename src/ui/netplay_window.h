@@ -292,6 +292,21 @@ static void netplay_window_status(const netplay_status_t *st) {
     }
 }
 
+/* The code to approve on twitch.tv while the server waits, and its page. */
+static void netplay_window_twitch_code(const netplay_status_t *st) {
+    igTextColored((ImVec4){0.6f, 0.8f, 1.0f, 1.0f}, "Enter this code on twitch.tv:");
+    igSameLine();
+    igTextColored((ImVec4){1.0f, 1.0f, 0.6f, 1.0f}, "%s", st->twitch_user_code);
+    igTextWrapped("A browser should have opened at %s - the code is already filled in "
+                  "there. Check it matches the one above before you approve it.",
+                  st->twitch_uri);
+    if (igButton("Open the page again")) netplay_open_url(st->twitch_uri);
+    igSameLine();
+    if (igButton("Copy code")) igSetClipboardText(st->twitch_user_code);
+    igSameLine();
+    if (igButton("Cancel")) netplay_post(NETPLAY_CMD_TWITCH_CANCEL, &g_np_ui);
+}
+
 /*
  * Above the password boxes on purpose: for anyone who has a Twitch
  * account this is the whole of signing up and signing in, and the
@@ -313,17 +328,7 @@ static void netplay_window_twitch(const netplay_status_t *st) {
         igSameLine();
         if (igButton("Cancel")) netplay_post(NETPLAY_CMD_TWITCH_CANCEL, &g_np_ui);
     } else if (st->twitch_state == RPCN_TWITCH_WAITING) {
-        igTextColored((ImVec4){0.6f, 0.8f, 1.0f, 1.0f}, "Enter this code on twitch.tv:");
-        igSameLine();
-        igTextColored((ImVec4){1.0f, 1.0f, 0.6f, 1.0f}, "%s", st->twitch_user_code);
-        igTextWrapped("A browser should have opened at %s - the code is already filled in "
-                      "there. Check it matches the one above before you approve it.",
-                      st->twitch_uri);
-        if (igButton("Open the page again")) netplay_open_url(st->twitch_uri);
-        igSameLine();
-        if (igButton("Copy code")) igSetClipboardText(st->twitch_user_code);
-        igSameLine();
-        if (igButton("Cancel")) netplay_post(NETPLAY_CMD_TWITCH_CANCEL, &g_np_ui);
+        netplay_window_twitch_code(st);
     } else {
         if (igButton("Sign in with Twitch")) netplay_post(NETPLAY_CMD_TWITCH_START, &g_np_ui);
         if (igIsItemHovered(0))
