@@ -1964,6 +1964,22 @@ static bool mcp_dl_write_index(const mcp_dl_req_t *q, size_t n, size_t nmarks, i
     return true;
 }
 
+/* The side files asked for, each only if every one before it was written. */
+static bool mcp_dl_write_extras(const mcp_dl_req_t *q, size_t nmarks) {
+    if (q->slots && !mcp_dl_dump(q->path, ".slots.bin", q->slots, sizeof(uint32_t) * DL_SLOT_WORDS, nmarks))
+        return false;
+    if (q->unit && !mcp_dl_dump(q->path, ".unit.bin", q->unit, sizeof(float) * MCP_DL_UNIT_PER_MARK, nmarks))
+        return false;
+    if (q->blocks && !mcp_dl_dump(q->path, ".blocks.bin", q->blocks, q->bbytes, nmarks))
+        return false;
+    if (q->cop_bufram) {
+        bool b = mcp_dl_dump(q->path, ".bufram.bin", q->cop_bufram, 1, BUFF_RAM_SIZE);
+        bool d = mcp_dl_dump(q->path, ".dm.bin", q->cop_dm, sizeof(uint32_t), 0x1000);
+        if (!b || !d) return false;
+    }
+    return true;
+}
+
 /* The capture's files, each only if every one before it was written:
  * <path>.bin (address, value pairs), <path>.json, and those asked for --
  * <path>.slots.bin: DL_SLOT_WORDS bufferram words per mark (a MAME capture's
@@ -1981,18 +1997,7 @@ static bool mcp_dl_write(const mcp_dl_req_t *q, size_t n, size_t nmarks, int ove
     }
     fclose(f);
     if (!ok || !mcp_dl_write_index(q, n, nmarks, overflow)) return false;
-    if (q->slots && !mcp_dl_dump(q->path, ".slots.bin", q->slots, sizeof(uint32_t) * DL_SLOT_WORDS, nmarks))
-        return false;
-    if (q->unit && !mcp_dl_dump(q->path, ".unit.bin", q->unit, sizeof(float) * MCP_DL_UNIT_PER_MARK, nmarks))
-        return false;
-    if (q->blocks && !mcp_dl_dump(q->path, ".blocks.bin", q->blocks, q->bbytes, nmarks))
-        return false;
-    if (q->cop_bufram) {
-        bool b = mcp_dl_dump(q->path, ".bufram.bin", q->cop_bufram, 1, BUFF_RAM_SIZE);
-        bool d = mcp_dl_dump(q->path, ".dm.bin", q->cop_dm, sizeof(uint32_t), 0x1000);
-        if (!b || !d) return false;
-    }
-    return true;
+    return mcp_dl_write_extras(q, nmarks);
 }
 
 static void mcp_cmd_capture_dl(const char *req, char *resp, int cap) {
