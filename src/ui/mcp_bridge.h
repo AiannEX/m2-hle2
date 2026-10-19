@@ -1438,6 +1438,24 @@ static void mcp_cmd_dump_geo_list(const char *req, char *resp, int cap) {
              ok ? "true" : "false", head[0], head[1], (int16_t)sync[0], (int16_t)sync[1]);
 }
 
+/* Copies size bytes of the bus at addr into buf and counts the ones that
+ * are not zero. */
+static uint32_t mcp_dump_snapshot(uint32_t addr, uint32_t size, uint8_t *buf) {
+    /* One consistent snapshot: the i960 must not write half of texture RAM
+     * between the first byte and the last. Copy under the emu mutex, write the
+     * file outside it — disk I/O inside the critical section stalls the UI. */
+    int locked = g_mcp.emu && g_mcp.emu->thread_alive;
+    if (locked) emu_mutex_lock(&g_mcp.emu->mutex);
+    uint32_t nonzero = 0;
+    for (uint32_t i = 0; i < size; i++) {
+        uint8_t b = mem_read8(g_mcp.bus, addr + i);
+        buf[i] = b;
+        if (b) nonzero++;
+    }
+    if (locked) emu_mutex_unlock(&g_mcp.emu->mutex);
+    return nonzero;
+}
+
 static void mcp_cmd_dump_memory_file(const char *req, char *resp, int cap) {
     uint32_t addr = 0, size = 0;
     char path[512] = {0};
@@ -1455,18 +1473,7 @@ static void mcp_cmd_dump_memory_file(const char *req, char *resp, int cap) {
     uint8_t *buf = (uint8_t *)malloc(size ? size : 1);
     if (!buf) { snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"out of memory\"}"); return; }
 
-    /* One consistent snapshot: the i960 must not write half of texture RAM
-     * between the first byte and the last. Copy under the emu mutex, write the
-     * file outside it — disk I/O inside the critical section stalls the UI. */
-    int locked = g_mcp.emu && g_mcp.emu->thread_alive;
-    if (locked) emu_mutex_lock(&g_mcp.emu->mutex);
-    uint32_t nonzero = 0;
-    for (uint32_t i = 0; i < size; i++) {
-        uint8_t b = mem_read8(g_mcp.bus, addr + i);
-        buf[i] = b;
-        if (b) nonzero++;
-    }
-    if (locked) emu_mutex_unlock(&g_mcp.emu->mutex);
+    uint32_t nonzero = mcp_dump_snapshot(addr, size, buf);
 
     FILE *f = fopen(path, "wb");
     if (!f) {
