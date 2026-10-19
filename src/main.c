@@ -1418,14 +1418,9 @@ static int headless_main(void) {
     return 0;
 }
 
-/* The debug windows and the menu bar: everything but the game. */
-static void draw_windows(void) {
-    draw_menu_bar();
-    draw_file_dialog();
-    shader_ui_draw(state.file_dialog);
-    replay_ui_dialog(&state.emu, state.file_dialog);
-    replay_ui_window(&state.emu, state.file_dialog);
-
+/* The main board's debug windows: the i960, memory, breakpoints, the COP,
+ * the 3D decoder and the object viewer. */
+static void draw_board_windows(void) {
     if (state.show_cpu)
         cpu_window_draw(&state.emu.cpu_snapshot, &state.emu.cpu_prev_snapshot, &state.show_cpu);
     if (state.show_memview)     memview_draw(&state.bus, &state.show_memview);
@@ -1438,6 +1433,17 @@ static void draw_windows(void) {
         geo3d_window_draw(&state.geo3d, &state.show_geo3d, &md);
     }
     objview_window_draw(&state.show_objview, &state.romset, &state.bus);
+}
+
+/* The debug windows and the menu bar: everything but the game. */
+static void draw_windows(void) {
+    draw_menu_bar();
+    draw_file_dialog();
+    shader_ui_draw(state.file_dialog);
+    replay_ui_dialog(&state.emu, state.file_dialog);
+    replay_ui_window(&state.emu, state.file_dialog);
+
+    draw_board_windows();
     if (state.show_bus_stats)   draw_bus_stats_window();
     if (state.show_sky_eye)     draw_sky_eye_window();
     if (state.show_m68k_cpu || state.show_m68k_mem) sound_settle();   /* not mid-run on the sound thread */
