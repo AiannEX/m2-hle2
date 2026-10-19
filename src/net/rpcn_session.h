@@ -1788,6 +1788,18 @@ static inline bool rpcn_account_resend(rpcn_account_t *a, const char *server, ui
     return true;
 }
 
+/* The job fails because the connection closed before the reply came. Say why
+ * when the transport knows. On the web it is often the gateway, not RPCN, that
+ * closed -- one that does not serve this server refuses the socket -- and "the
+ * server hung up" sent issue #109 looking at RPCN, which answers Create fine. */
+static inline void rpcn_account_closed(rpcn_account_t *a) {
+    const char *why = a->client.error[0] ? a->client.error : tls_last_error(&a->client.tls);
+    if (why && *why)
+        rpcn_account_fail(a, "the connection closed before the server answered: %s", why);
+    else
+        rpcn_account_fail(a, "the server closed the connection without answering");
+}
+
 static inline void rpcn_account_update(rpcn_account_t *a) {
     if (a->state != RPCN_ACCOUNT_WORKING) return;
 
@@ -1813,15 +1825,7 @@ static inline void rpcn_account_update(rpcn_account_t *a) {
     }
 
     if (!rpcn_is_connected(&a->client)) {
-        /* Say why when the transport knows. On the web it is often the gateway,
-         * not RPCN, that closed -- one that does not serve this server refuses
-         * the socket -- and "the server hung up" sent issue #109 looking at
-         * RPCN, which answers Create fine. */
-        const char *why = a->client.error[0] ? a->client.error : tls_last_error(&a->client.tls);
-        if (why && *why)
-            rpcn_account_fail(a, "the connection closed before the server answered: %s", why);
-        else
-            rpcn_account_fail(a, "the server closed the connection without answering");
+        rpcn_account_closed(a);
         return;
     }
     if (a->deadline_ms != 0 && net_now_ms() > a->deadline_ms)
