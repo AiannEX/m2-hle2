@@ -99,14 +99,8 @@ static inline void game_frame_prepare(video_state_t *video, geo3d_state_t *geo3d
     hprof_leave(zone);
 }
 
-/* Draw the game into the viewport vp of the current pass.
- * Layer order: back colour → background tiles → 3D scene → foreground/HUD. */
-static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
-                                   memory_bus_t *bus, const romset_t *rs,
-                                   game_rect_t vp, float lerp_t) {
-    const int ox = vp.x, oy = vp.y, w = vp.w, h = vp.h;
-    int64_t t0 = emu_now_us();
-    int zone = hprof_enter(HPROF_UPLOAD);   /* host_prof.h */
+/* Upload the texture atlas and the luma/colorxlat tables the game changed. */
+static inline void game_frame__upload(memory_bus_t *bus) {
     /* Decode both 4-bit luma texture banks → GPU atlas for textured fills, and
      * upload the luma/colorxlat tables — each only when a write changed its RAM
      * since the last upload (sampled before uploading, so a write that lands
@@ -126,6 +120,17 @@ static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
         s_luts_valid = true;
         s_luts_gen   = lut_gen;
     }
+}
+
+/* Draw the game into the viewport vp of the current pass.
+ * Layer order: back colour → background tiles → 3D scene → foreground/HUD. */
+static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
+                                   memory_bus_t *bus, const romset_t *rs,
+                                   game_rect_t vp, float lerp_t) {
+    const int ox = vp.x, oy = vp.y, w = vp.w, h = vp.h;
+    int64_t t0 = emu_now_us();
+    int zone = hprof_enter(HPROF_UPLOAD);   /* host_prof.h */
+    game_frame__upload(bus);
     int64_t t1 = emu_now_us();
     g_game_frame_times.upload_us += t1 - t0;
     hprof_enter(HPROF_TILES);
