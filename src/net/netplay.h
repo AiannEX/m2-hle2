@@ -3267,6 +3267,27 @@ static inline void netplay_heal_take_room(bool host, uint64_t room_id) {
     netplay_room_or_defer(&cmd);
 }
 
+/* While a heal looks for the owner's new room: join it once the room list
+ * has it, search again now and then, and give up when the time is out. */
+static inline void netplay_heal_find_room(uint64_t now) {
+    if (!g_netplay.heal_find_until_ms || g_netplay.state != NETPLAY_ONLINE) return;
+    if (now > g_netplay.heal_find_until_ms) {
+        netplay_log("%s has not opened a room again; pick one from the list", g_netplay.heal_owner);
+        g_netplay.heal_find_until_ms = 0;
+        return;
+    }
+    const rpcn_session_t *ss = &g_netplay.session;
+    for (uint32_t i = 0; i < ss->room_count; i++) {
+        if (!rpcn_same_npid(ss->rooms[i].owner, g_netplay.heal_owner)) continue;
+        netplay_heal_take_room(false, ss->rooms[i].room_id);
+        return;
+    }
+    if (now - g_netplay.heal_search_ms >= NETPLAY_HEAL_SEARCH_MS && !rpcn_session_search_pending(ss)) {
+        g_netplay.heal_search_ms = now;
+        rpcn_session_search(&g_netplay.session, false, NULL);
+    }
+}
+
 /* The room half of a heal, once signed in again. */
 static inline void netplay_heal_room_pump(void) {
     uint64_t now = net_now_ms();
@@ -3296,22 +3317,7 @@ static inline void netplay_heal_room_pump(void) {
             g_netplay.heal_find_until_ms = now + NETPLAY_HEAL_FIND_MS;
         }
     }
-    if (!g_netplay.heal_find_until_ms || g_netplay.state != NETPLAY_ONLINE) return;
-    if (now > g_netplay.heal_find_until_ms) {
-        netplay_log("%s has not opened a room again; pick one from the list", g_netplay.heal_owner);
-        g_netplay.heal_find_until_ms = 0;
-        return;
-    }
-    const rpcn_session_t *ss = &g_netplay.session;
-    for (uint32_t i = 0; i < ss->room_count; i++) {
-        if (!rpcn_same_npid(ss->rooms[i].owner, g_netplay.heal_owner)) continue;
-        netplay_heal_take_room(false, ss->rooms[i].room_id);
-        return;
-    }
-    if (now - g_netplay.heal_search_ms >= NETPLAY_HEAL_SEARCH_MS && !rpcn_session_search_pending(ss)) {
-        g_netplay.heal_search_ms = now;
-        rpcn_session_search(&g_netplay.session, false, NULL);
-    }
+    netplay_heal_find_room(now);
 }
 
 /* Once per slice: the next attempt, when it is due. */
