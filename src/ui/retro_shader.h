@@ -1164,19 +1164,27 @@ static inline GLuint rs_gl_compile(GLenum stage, const char *version, const char
     return sh;
 }
 
+/* For rs_gl_rewrite: the first of from[0..n) that stands at src + i as a
+ * whole word, its length in `k`; -1 when none does, or src + i does not start
+ * a word. */
+static inline int rs_gl_word_at(const char *src, size_t i, const char *const *from, int n, size_t *k) {
+    const bool edge = i == 0 || !(isalnum((unsigned char)src[i - 1]) || src[i - 1] == '_');
+    int hit = -1;
+    for (int t = 0; edge && t < n && hit < 0; t++) {
+        *k = strlen(from[t]);
+        if (!strncmp(src + i, from[t], *k) && !(isalnum((unsigned char)src[i + *k]) || src[i + *k] == '_')) hit = t;
+    }
+    return hit;
+}
+
 /* `src` with whole-word tokens replaced: from[i] becomes to[i]. */
 static inline char *rs_gl_rewrite(const char *src, const char *const *from, const char *const *to, int n) {
     size_t len = strlen(src), cap = len + len / 2 + 64, o = 0;
     char *out = (char *)malloc(cap);
     if (!out) return NULL;
     for (size_t i = 0; i < len; ) {
-        const bool edge = i == 0 || !(isalnum((unsigned char)src[i - 1]) || src[i - 1] == '_');
-        int hit = -1;
         size_t k = 0;
-        for (int t = 0; edge && t < n && hit < 0; t++) {
-            k = strlen(from[t]);
-            if (!strncmp(src + i, from[t], k) && !(isalnum((unsigned char)src[i + k]) || src[i + k] == '_')) hit = t;
-        }
+        const int hit = rs_gl_word_at(src, i, from, n, &k);
         const char *put = hit >= 0 ? to[hit] : NULL;
         size_t need = put ? strlen(put) : 1;
         if (o + need + 1 >= cap) {
