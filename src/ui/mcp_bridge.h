@@ -344,12 +344,14 @@ static void mcp_set_camera_depth(const char *req) {
     if (mcp_json_get_str(req,"zkey0",   v,sizeof v)) g_geo3d_zsort_key0 = (atoi(v) != 0);
 }
 
-/* set_camera's fill fields: texture wrap, checker phase and corner normals. */
+/* set_camera's fill fields: texture wrap, checker phase, microtextures and corner normals. */
 static void mcp_set_camera_fill(const char *req) {
     char v[32];
     /* 0: the texture filter wraps at every tile edge, ignoring the faces' wrap bits. */
     if (mcp_json_get_str(req,"texclamp",v,sizeof v)) g_geo3d_tex_clamp = (atoi(v) != 0);
     if (mcp_json_get_str(req,"checker",v,sizeof v)) g_geo3d_checker_phase = (atoi(v) != 0);
+    /* 0: no face blends its microtexture square (GEO3D_FACE_MICRO). */
+    if (mcp_json_get_str(req,"microtex",v,sizeof v)) g_geo3d_microtex = (atoi(v) != 0);
     /* 0: a list in mode 2 or 3 is lit and culled with the ROM normals (geo3d_board_normal). */
     if (mcp_json_get_str(req,"nnormals",v,sizeof v)) g_geo3d_nn_normals = (atoi(v) != 0);
 }
