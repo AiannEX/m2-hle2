@@ -31,12 +31,14 @@
 #include "vcop.h"
 #include "daytona.h"
 #include "hotd.h"
+#include "schamp.h"
 #include "geo3d.h"
 
 #include "test_rom_dir.h"
 
 const game_profile_t *const g_prepared_profiles[] = { &vcop_profile };
 const size_t g_prepared_count = sizeof g_prepared_profiles / sizeof g_prepared_profiles[0];
+const game_profile_t *g_active_profile = NULL;   /* sfight.h's hooks read it (registry.h) */
 
 static int g_fail = 0;
 #define CHECK(cond, ...) do { \
@@ -513,12 +515,92 @@ static void check_set(const prepared_case_t *c) {
     romset_free(&rs);
 }
 
+/* The clones of Pinboard #1286: each recipe in its regions, and with the
+ * set's zip here, its load, its program and its mirrors. `zip` is where the
+ * set is looked for (hotdo's chips come in hotd.zip). */
+typedef struct {
+    const game_profile_t *p;
+    const rom_recipe_t   *recipe;
+    const char           *zip;
+} clone_case_t;
+
+static const clone_case_t k_clones[] = {
+    { &schamp_profile,     &schamp_recipe,     "schamp"     },
+    { &hotdo_profile,      &hotdo_recipe,      "hotd"       },
+    { &hotdp_profile,      &hotdp_recipe,      "hotdp"      },
+    { &daytona93_profile,  &daytona93_recipe,  "daytona93"  },
+    { &daytonase_profile,  &daytonase_recipe,  "daytonase"  },
+    { &daytonas_profile,   &daytonas_recipe,   "daytonas"   },
+    { &daytonat_profile,   &daytonat_recipe,   "daytonat"   },
+    { &daytonata_profile,  &daytonata_recipe,  "daytonata"  },
+    { &daytonagtx_profile, &daytonagtx_recipe, "daytonagtx" },
+};
+
+static void check_clone(const clone_case_t *c) {
+    const char *id = c->p->id;
+    bool own = !strcmp(id, "schamp");   /* MAME's parent of sfight: no parent zip */
+    CHECK(c->p->load_fn && c->p->install_fn && (own || c->p->parent_zip_name),
+          own ? "%s: loads and installs" : "%s: loads, installs, and names its parent", id);
+    check_recipe(c->recipe);
+    char path[1100];
+    snprintf(path, sizeof path, "%s.zip", test_rom(c->zip));
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("skip: %s not found\n", path); return; }
+    fclose(f);
+    static romset_t rs;
+    const char *parent = c->p->parent_zip_name ? test_rom(c->p->parent_zip_name) : NULL;
+    int rc = c->p->load_fn(&rs, path, parent);
+    CHECK(rc == 0 && rs.loaded, "%s: the set loads", id);
+    if (rc != 0) return;
+    for (int r = 0; r < ROM_REGION_COUNT; r++) {
+        size_t *sz;
+        rom_recipe_region(&rs, (rom_region_id_t)r, &sz);
+        if (*sz != c->recipe->size[r]) CHECK(0, "%s: region %d is 0x%zX, not 0x%X", id, r, *sz, c->recipe->size[r]);
+    }
+    check_program(id, &rs);
+    check_mirrors(id, c->recipe, &rs);
+    romset_free(&rs);
+}
+
+/* schamp's hooks are sfight's, moved: the 16 bytes at each must be the same. */
+static void check_schamp_hooks(void) {
+    static const uint32_t sfight_at[SCHAMP_HOOK_COUNT] = {
+        0x11A04, 0x77F8, 0xDC3C, 0x62688, 0x6974, 0x62674, 0x624F8, 0x11610,
+    };
+    char a[1100], b[1100];
+    snprintf(a, sizeof a, "%s.zip", test_rom("sfight"));
+    snprintf(b, sizeof b, "%s.zip", test_rom("schamp"));
+    FILE *fa = fopen(a, "rb"), *fb = fopen(b, "rb");
+    if (fa) fclose(fa);
+    if (fb) fclose(fb);
+    if (!fa || !fb) { printf("skip: sfight.zip or schamp.zip not found\n"); return; }
+    static romset_t sf, sc;
+    if (sfight_load(&sf, a, b) != 0 || schamp_load(&sc, b, NULL) != 0) {
+        CHECK(0, "schamp: sfight and schamp load");
+        romset_free(&sf); romset_free(&sc);
+        return;
+    }
+    int bad = 0;
+    for (int i = 0; i < SCHAMP_HOOK_COUNT; i++) {
+        uint32_t at = schamp_profile.hooks[i].addr;
+        if (memcmp(sf.maincpu + sfight_at[i], sc.maincpu + at, 16)) {
+            printf("      %s: 0x%X in sfight, 0x%X here\n", schamp_profile.hooks[i].name, sfight_at[i], at);
+            bad++;
+        }
+    }
+    CHECK(bad == 0, "schamp: its %d hooks are on sfight's instructions", SCHAMP_HOOK_COUNT);
+    romset_free(&sf);
+    romset_free(&sc);
+}
+
 int main(void) {
     for (size_t i = 0; i < sizeof k_cases / sizeof k_cases[0]; i++) check_profile(&k_cases[i]);
     char msg[64];
     CHECK(!profile_prepared_for_rom_set("sfight") && !profile_prepared_message("sfight", msg, sizeof msg),
           "a runnable set is not a prepared one");
     for (size_t i = 0; i < sizeof k_cases / sizeof k_cases[0]; i++) check_set(&k_cases[i]);
+    for (size_t i = 0; i < sizeof k_clones / sizeof k_clones[0]; i++) check_clone(&k_clones[i]);
+    check_schamp_hooks();
     printf(g_fail ? "\nFAILED (%d)\n" : "\nPASSED\n", g_fail);
     return g_fail ? 1 : 0;
 }

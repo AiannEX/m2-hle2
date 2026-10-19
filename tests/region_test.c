@@ -53,8 +53,15 @@ static const struct { const char *id; game_region_kind_t kind; } g_region_unhook
     { "doaae",            REGION_PROGRAM_ROM },
     { "airwlkrs",         REGION_PROGRAM_ROM },
     { "vonj",            REGION_PROGRAM_ROM },
+    { "hotdp",           REGION_PROGRAM_ROM },   /* runs Japan only (hotd.h) */
     { "powsled",         REGION_TODO },
     { "daytona",         REGION_TODO },
+    { "daytona93",       REGION_TODO },
+    { "daytonase",       REGION_TODO },
+    { "daytonas",        REGION_TODO },
+    { "daytonat",        REGION_TODO },
+    { "daytonata",       REGION_TODO },
+    { "daytonagtx",      REGION_TODO },
     { "m2snake",         REGION_HOMEBREW },
     { "sfight_homebrew", REGION_HOMEBREW },
 };

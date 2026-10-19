@@ -93,6 +93,12 @@ the next game cheaper instead of being spent on a single ROM set.
 Game profiles live in [src/profiles/](src/profiles/): `sfight_console`, `sfight`, `fvipers`,
 `m2snake` (the web build carries the two Sonic the Fighters profiles only).
 
+The desktop builds also run these clone sets, each picked by its zip's name (Pinboard #1286):
+`schamp` (Sonic Championship), `hotdo` and `hotdp` (The House of the Dead's first release and
+prototype; `hotdp` runs in Japanese only), and the Daytona USA builds `daytona93`, `daytonase`,
+`daytonas`, `daytonat`, `daytonata` and `daytonagtx` (MAME's `model1io.zip` beside them).
+`daytonam` (To The MAXX) is not one: it passes its protection check, then crashes.
+
 ### Sonic the Fighters: Console and Arcade
 
 `sfight.zip` runs as one of two profiles:

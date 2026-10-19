@@ -24,6 +24,7 @@
 #include "fvipers.h"
 #include "hotd.h"      /* runs since Pinboard #1034, on the web since #1040 */
 #include "daytona.h"   /* runs since Pinboard #1035, on the web since #1047 */
+#include "schamp.h"    /* Pinboard #1286, desktop only */
 #include "doa.h"       /* runs since Pinboard #1050, on the web too */
 #include "vf2.h"       /* runs since Pinboard #1046, on the web since #1055 */
 #include "airwlkrs.h"  /* runs since Pinboard #1063, on the site since #1063 */
@@ -64,6 +65,16 @@ const game_profile_t *const g_profiles[] = {
     &airwlkrs_profile,
     &powsled_profile,
 #ifndef M2HLE_WEB
+    /* The clones of #1286: desktop only (the web page loads a set's own zips). */
+    &schamp_profile,
+    &hotdo_profile,
+    &hotdp_profile,
+    &daytona93_profile,
+    &daytonase_profile,
+    &daytonas_profile,
+    &daytonat_profile,
+    &daytonata_profile,
+    &daytonagtx_profile,
     &m2snake_profile,
     &sfight_homebrew_profile,
 #endif
