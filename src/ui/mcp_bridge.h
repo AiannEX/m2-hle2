@@ -1084,16 +1084,10 @@ static void mcp_cmd_reset_sound(const char *req, char *resp, int cap) {
              restart ? "true" : "false", n, g_sound.m68k.cpu.pc, sc->mi_drops, sc->mi_hi);
 }
 
-static void mcp_cmd_dump_geo_stream(char *resp, int cap) {
-    char *p = resp; int left = cap, n;
-    int fe = g_cop.geo_frame_end, fs = g_cop.geo_frame_start;
-    int total = fe - fs;
-    if (total <= 0 || total > GEO_CAPTURE_SIZE) {
-        total = g_cop.geo_capture_count;
-        if (total > GEO_CAPTURE_SIZE) total = GEO_CAPTURE_SIZE;
-        fe = g_cop.geo_capture_head;
-    }
-    int head = fe;
+/* dump_geo_stream's reply after its first line: the captured commands, each
+ * with its arguments, from p on, left bytes free. */
+static inline void mcp_geo_stream_cmds(char *p, int left, int total, int head) {
+    int n;
 #define DAPPEND(...) do { n = snprintf(p, (size_t)left, __VA_ARGS__); p += n; left -= n; } while(0)
     DAPPEND("{\"ok\":true,\"total\":%d,\"cmds\":[", total);
     int first = 1;
@@ -1114,6 +1108,19 @@ static void mcp_cmd_dump_geo_stream(char *resp, int cap) {
     }
     DAPPEND("]}");
 #undef DAPPEND
+}
+
+static void mcp_cmd_dump_geo_stream(char *resp, int cap) {
+    char *p = resp; int left = cap;
+    int fe = g_cop.geo_frame_end, fs = g_cop.geo_frame_start;
+    int total = fe - fs;
+    if (total <= 0 || total > GEO_CAPTURE_SIZE) {
+        total = g_cop.geo_capture_count;
+        if (total > GEO_CAPTURE_SIZE) total = GEO_CAPTURE_SIZE;
+        fe = g_cop.geo_capture_head;
+    }
+    int head = fe;
+    mcp_geo_stream_cmds(p, left, total, head);
 }
 
 static void mcp_cmd_dump_midi_log(char *resp, int cap) {
