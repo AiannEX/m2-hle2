@@ -29,14 +29,14 @@
 #include "vf2.h"       /* runs since Pinboard #1046, on the web since #1055 */
 #include "airwlkrs.h"  /* runs since Pinboard #1063, on the site since #1063 */
 #include "powsled.h"   /* runs since Pinboard #1052, on the site since #1089 */
+#include "vcop.h"      /* runs since Pinboard #1286 */
 #ifndef M2HLE_WEB
 #include "m2snake.h"
 #include "sfight_homebrew.h"
 #endif
 /* Prepared, not runnable (Pinboard #660): the sets noclip reads that the
  * board cannot run yet. A few hundred bytes of chip lists, so the web build
- * has them too. */
-#include "vcop.h"
+ * has them too. None today: Virtua Cop, the last, runs since #1286. */
 
 /* Order matters: the first profile for a ROM set is its default
  * (profile_for_rom_set), so Console comes before Arcade. */
@@ -64,6 +64,7 @@ const game_profile_t *const g_profiles[] = {
     &vf2o_profile,
     &airwlkrs_profile,
     &powsled_profile,
+    &vcop_profile,
 #ifndef M2HLE_WEB
     /* The clones of #1286: desktop only (the web page loads a set's own zips). */
     &schamp_profile,
@@ -84,10 +85,8 @@ const size_t g_profile_count = sizeof(g_profiles) / sizeof(g_profiles[0]);
 
 const game_profile_t *g_active_profile = NULL;
 
-const game_profile_t *const g_prepared_profiles[] = {
-    &vcop_profile,
-};
+const game_profile_t *const g_prepared_profiles[] = { NULL };
 
-const size_t g_prepared_count = sizeof(g_prepared_profiles) / sizeof(g_prepared_profiles[0]);
+const size_t g_prepared_count = 0;
 
 #endif /* PROFILES_REGISTRY_H */

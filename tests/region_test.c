@@ -62,6 +62,7 @@ static const struct { const char *id; game_region_kind_t kind; } g_region_unhook
     { "daytonat",        REGION_TODO },
     { "daytonata",       REGION_TODO },
     { "daytonagtx",      REGION_TODO },
+    { "vcop",            REGION_TODO },
     { "m2snake",         REGION_HOMEBREW },
     { "sfight_homebrew", REGION_HOMEBREW },
 };

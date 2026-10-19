@@ -438,7 +438,8 @@ static void input_gun_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int
     }
 }
 
-static inline void input_attach_lightgun(mem_region_t *r) {
+/* The guns' controls and ranges from the profile, both at rest. */
+static inline void input_lightgun_setup(void) {
     const game_quirks_t *q = &g_active_profile->quirks;
     for (int p = 0; p < LIGHTGUN_PLAYERS; p++) {
         g_lightgun_controls[p] = (lightgun_controls_t){ q->gun[p].up, q->gun[p].down, q->gun[p].left,
@@ -448,6 +449,10 @@ static inline void input_attach_lightgun(mem_region_t *r) {
     }
     g_lightgun_held_fn     = input_board_held;
     lightgun_reset();
+}
+
+static inline void input_attach_lightgun(mem_region_t *r) {
+    input_lightgun_setup();
     r->read_cb  = input_gun_read_cb;
     r->write_cb = input_gun_write_cb;
 }
@@ -559,6 +564,13 @@ static inline void input_attach(memory_bus_t *bus) {
         g_io5649_from_net_fn = input_board_from_net;
         g_model1io_vr4       = q->model1_io_vr4;
         LOG_INFO("input: Model 1 I/O board");
+        return;
+    }
+    if (g_active_profile && g_active_profile->quirks.model1_io2) {
+        /* The Advanced board's Z80 reads the buttons and, through its FPGA,
+         * the guns (model1io.h). */
+        if (g_active_profile->quirks.lightgun) input_lightgun_setup();
+        LOG_INFO("input: Advanced Model 1 I/O board");
         return;
     }
     for (int i = 0; i < bus->region_count; i++) {
