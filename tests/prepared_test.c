@@ -1,8 +1,8 @@
 /*
  * prepared_test.c — the prepared profiles (registry.h, g_prepared_profiles;
- * Pinboard #660): Virtua Cop, which no board here can run yet, and The House
- * of the Dead and Daytona USA, which run since Pinboard #1034 and #1035 and
- * keep their noclip checks here.
+ * Pinboard #660). None is left: Virtua Cop, The House of the Dead and Daytona
+ * USA run since Pinboard #1286, #1034 and #1035 and keep their noclip checks
+ * here.
  *
  * Without ROMs (the canary): every recipe part lands inside a region the
  * recipe gives a size, every prepared profile says what its board lacks and
@@ -35,8 +35,9 @@
 
 #include "test_rom_dir.h"
 
-const game_profile_t *const g_prepared_profiles[] = { &vcop_profile };
-const size_t g_prepared_count = sizeof g_prepared_profiles / sizeof g_prepared_profiles[0];
+/* registry.h's: empty since Virtua Cop runs (#1286). */
+const game_profile_t *const g_prepared_profiles[] = { NULL };
+const size_t g_prepared_count = 0;
 
 static int g_fail = 0;
 #define CHECK(cond, ...) do { \

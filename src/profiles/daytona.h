@@ -13,7 +13,7 @@
  * The board: an original Model 2 (MAME model2o), like Virtua Cop. The i960
  * talks to an MB86234 TGP running the game's program (board/tgp.h, as Sega
  * Rally's; Daytona sends some arguments with halfword stores, model2a.h), the
- * model2o memory map is daytona_install's, the Model 1 I/O board is
+ * model2o memory map is board/model2o.h's, the Model 1 I/O board is
  * board/model1io.h (its Z80 runs model1io.zip's program), and M2COMM answers
  * as a link of one. The sound board is MAME's segam1audio: a 68000, two
  * MultiPCMs and a YM3438 whose timers run but whose FM voices are not made
@@ -30,7 +30,7 @@
 #include "game_profile.h"
 #include "rom_recipe.h"
 #include "memory.h"
-#include "model2a.h"
+#include "model2o.h"
 #include "model1io.h"
 #include "sound.h"
 #include "m2comm.h"
@@ -85,11 +85,6 @@ static inline int daytona_load(romset_t *rs, const char *child, const char *pare
     return rom_recipe_load(rs, child, parent, &daytona_recipe);
 }
 
-static inline uint32_t daytona_read32(const uint8_t *buf, uint32_t off) {
-    return (uint32_t)buf[off] | (uint32_t)buf[off + 1] << 8
-         | (uint32_t)buf[off + 2] << 16 | (uint32_t)buf[off + 3] << 24;
-}
-
 /* The settings block (Pinboard #1035): the test menu's GAME ASSIGNMENTS, 128
  * bytes the boot (ROM 0x28A60) takes from the first copy that is valid -- the
  * I/O board's EEPROM, read into backup RAM at 0x1D00000, then backup RAM's own
@@ -129,39 +124,14 @@ static inline void daytona_settings_single(memory_bus_t *bus, const uint8_t *rom
     b[9] = (uint8_t)(crc >> 8);
 }
 
-/* The original Model 2 (MAME model2o_mem): model2_tgp_mem, the TGP's map,
- * with RAM at 0x200000-0x21FFFF, the program's second 128 KB mirrored at
- * 0x220000, and the I/O board's dual-port RAM at 0x01C00000. */
+/* The original Model 2 (model2o.h) with the Model 1 I/O board (model1io.h). */
 static inline void daytona_install(const romset_t *rs, i960_cpu_t *cpu, memory_bus_t *bus) {
     if (!rs->loaded) { LOG_ERROR("daytona_install: romset not loaded"); return; }
 
-    i960_reset(cpu);
-    mem_init(bus, rs->maincpu, rs->maincpu_size);
+    model2o_install_bus(rs, cpu, bus);
     daytona_settings_single(bus, rs->maincpu, rs->maincpu_size);
-    model2a_install(bus, rs->tgp_tables, rs->copro_data, rs->copro_data_size);
-
-    mem_region_t *r = model2a_region_named(bus, "RAM2");
-    if (r) r->size = 0x20000u;
-    if (rs->maincpu_size >= 0x40000u)
-        mem_add_region(bus, "ROM_MIRROR", 0x00220000u, 0x20000u, rs->maincpu + 0x20000u, 1);
     model1io_install(bus, rs->iocpu, rs->iocpu_size);
-    /* The comm board (MAME model2o: M2COMM), alone: the boot's network check
-     * waits for it to answer. */
-    m2comm_install(bus, 0x1C0u);
-
-    if (rs->main_data && bus->main_data) {
-        size_t n = rs->main_data_size < MAIN_DATA_SIZE ? rs->main_data_size : MAIN_DATA_SIZE;
-        memcpy(bus->main_data, rs->main_data, n);
-    }
-
-    uint32_t prcb = daytona_read32(rs->maincpu, 0x04);
-    if (prcb + 0x2C < rs->maincpu_size) {
-        uint32_t isp = daytona_read32(rs->maincpu, prcb + PRCB_INTR_STACK);
-        cpu->globals.fp = isp;
-        cpu->locals.sp  = isp + 64;
-        uint32_t start_ip_ptr = daytona_read32(rs->maincpu, prcb + PRCB_START_IP);
-        if (start_ip_ptr < rs->maincpu_size) cpu->sfr.ip = daytona_read32(rs->maincpu, start_ip_ptr);
-    }
+    model2o_install_finish(rs, cpu, bus);
     io5649_reset();
     savestate_extra("daytona", "IO5649", &g_io5649, sizeof g_io5649);
     savestate_extra("daytona", "MODEL1IO", &g_model1io, sizeof g_model1io);
@@ -170,7 +140,6 @@ static inline void daytona_install(const romset_t *rs, i960_cpu_t *cpu, memory_b
     savestate_extra("daytona", "I960FRAC", &g_i960_cyc_frac, sizeof g_i960_cyc_frac);
     savestate_extra("daytona", "I960BT", &g_i960_bt, sizeof g_i960_bt);
     savestate_extra("daytona", "M1SOUND", &g_sound.m1, sizeof g_sound.m1);
-    LOG_INFO("daytona_install: PRCB=0x%08X initial IP=0x%08X", prcb, cpu->sfr.ip);
 }
 
 static const game_profile_t daytona_profile = {

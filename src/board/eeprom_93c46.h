@@ -163,6 +163,22 @@ static inline void eeprom_port_a(uint8_t v) {
     }
 }
 
+/* The pins set one by one, CLK first, DI, then CS, as MAME's model1io2
+ * io_pf_w does (the Advanced Model 1 I/O board's port F): a rising CLK
+ * clocks in the DI the pin held before this write. */
+static inline void eeprom_pins_clk_first(uint8_t clk, uint8_t di, uint8_t cs) {
+    eeprom_t *e = &g_eeprom;
+    if (clk != e->clk) {
+        e->clk = clk;
+        if (clk && e->state != EEP_RESET) eeprom_clock();
+    }
+    e->di = di;
+    if (cs != e->cs) {
+        e->cs = cs;
+        e->state = cs ? (e->state == EEP_RESET ? EEP_START : e->state) : EEP_RESET;
+    }
+}
+
 /* IN0 as the board reads it: in control mode the top half is the EEPROM's. */
 static inline uint8_t eeprom_in0(uint8_t in0) {
     if (!(g_eeprom.port_a & 1u)) return in0;

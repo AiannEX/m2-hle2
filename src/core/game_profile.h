@@ -214,6 +214,10 @@ typedef struct {
      * bit of the button IN1 bit 0 reads. */
     bool     model1_io;
     uint32_t model1_io_vr4;
+    /* The Advanced Model 1 I/O board (model1io.h, model1io_install_advanced;
+     * Virtua Cop): its own Z80 map and an FPGA that reads `lightgun`'s guns.
+     * Not model1_io, which is Daytona's wheel board. */
+    bool     model1_io2;
 
     /* A four-player cabinet on the 315-5649 (MAME model2a_airwlkrs_state):
      * port F bit 7 picks the side IN1 / IN2 and IN0's start bits answer for,

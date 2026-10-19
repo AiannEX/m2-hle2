@@ -90,8 +90,14 @@ the next game cheaper instead of being spent on a single ROM set.
 | Streaming | Raw board video and audio on one socket and one clock (`--av-port`), and a plugin that paints over the picture (`--overlay`) |
 | Picture filters | The Arcade switch (a real board's tone curve, ghosting, noise and 4:3 shape; every build), and over it Lost Judgment's CRT scanlines, as YAMP ports them, or a libretro GLSL shader preset of your own (web and Linux builds): the Video menu, `--arcade`, `--crt`, `--shader`; the browser's Picture tab. Depth per pixel (`--pixel-depth`, off by default) draws each pixel at its own depth instead of the board's one sort key a polygon |
 
-Game profiles live in [src/profiles/](src/profiles/): `sfight_console`, `sfight`, `fvipers`,
-`m2snake` (the web build carries the two Sonic the Fighters profiles only).
+Game profiles live in [src/profiles/](src/profiles/), one per ROM set (`registry.h`): Sonic the
+Fighters (`sfight_console`, `sfight`), Sega Rally Championship (`srallyc`), Virtual-On (`vonj`),
+Dynamite Cop / Dynamite Deka 2 (`dynamcop`, `dyndeka2`, `dynamcopb`, `dyndeka2b`, `dynamcopc`),
+Fighting Vipers (`fvipers`), The House of the Dead (`hotd`), Daytona USA (`daytona`), Dead or Alive
+(`doa`, `doab`, `doaa`, `doaab`, `doaae`), Virtua Fighter 2 (`vf2`, `vf2b`, `vf2a`, `vf2o`), Air
+Walkers (`airwlkrs`), Power Sled (`powsled`) and Virtua Cop (`vcop`, with the I/O board's
+`model1io2.zip`; the mouse is the gun, a shot off the picture reloads). The desktop build adds the
+homebrew `m2snake` and `sfight_homebrew`.
 
 ### Sonic the Fighters: Console and Arcade
 
