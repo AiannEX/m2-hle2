@@ -12,7 +12,11 @@
  *                                       input_keycode_by_name's names; none)
  *   pad.<button>=<actions>             (south east west north start back l1 r1
  *                                       l3 r3 guide; b1+b2, start, service, none)
+ *   pad.device=<guid> <name>           (the gamepad that plays; absent: any)
+ *   wheel.device=<guid> <name>         (the wheel; absent: one SDL calls a wheel)
+ *   wheel.pedals=<guid> <name>         (pedals on their own lead; absent: the wheel's)
  *   wheel.axes=<steer>,<accel>,<brake> (joystick axis numbers)
+ *   wheel.rest=<accel>,<brake>         (pedals released, -32768..32767 or auto)
  *   wheel.<n>=<actions>                (joystick button n, 0-31)
  *
  * The map is the host's only (input.h, sdl_pads.h): the board sees actions, so
@@ -47,7 +51,10 @@ static struct {
     char status[160];
     struct { char opt[24], val[256]; } cli[CONTROLS_CLI_MAX];   /* --pad-map and the like */
     int  cli_n;
-} g_ctl = { .cap_action = -1 };
+    int  det_role;                  /* the wheel axis a Detect button waits for (0 steer, 1 accel, 2 brake); -1: none */
+    uint32_t det_id;                /* the device it watches */
+    int  det_start[16];             /* its axes when Detect was clicked */
+} g_ctl = { .cap_action = -1, .det_role = -1 };
 
 /* The words the window shows for the actions. */
 static const char *const g_ctl_action_label[GAME_INPUT_COUNT] = {
@@ -104,6 +111,23 @@ static inline void controls_apply_line(char *line) {
 #if M2HLE_PADS
     if (!strcmp(k, "device")) {
         for (int d = 0; d < PAD_DEVICE_COUNT; d++) if (!strcmp(v, g_pad_device_names[d])) g_pad_device = d;
+    } else if (!strcmp(k, "pad.device")) {
+        pad_pick_parse(&g_pad_pick, v);
+    } else if (!strcmp(k, "wheel.device")) {
+        pad_pick_parse(&g_wheel_opt.dev, v);
+    } else if (!strcmp(k, "wheel.pedals")) {
+        pad_pick_parse(&g_wheel_opt.pedals, v);
+    } else if (!strcmp(k, "wheel.rest")) {
+        char buf[64];
+        snprintf(buf, sizeof buf, "%s", v);
+        char *b = strchr(buf, ',');
+        if (!b) return;
+        *b++ = '\0';
+        const char *r[2] = { buf, b };
+        for (int i = 0; i < 2; i++) {
+            g_wheel_opt.rest_set[i] = strcmp(r[i], "auto") != 0;
+            g_wheel_opt.rest[i] = g_wheel_opt.rest_set[i] ? atoi(r[i]) : 0;
+        }
     } else if (!strncmp(k, "pad.", 4)) {
         uint32_t acts;
         for (int b = 0; b < PAD_BIND_COUNT; b++)
@@ -142,7 +166,7 @@ static inline void controls_load(const game_profile_t *p) {
 }
 
 static inline void controls_save(void) {
-    char path[640], name[16], acts[64];
+    char path[640], name[16], acts[64], pick[112];
     if (!controls_path(g_ctl.loaded, path, sizeof path)) return;
     FILE *f = fopen(path, "w");
     if (!f) {
@@ -166,6 +190,16 @@ static inline void controls_save(void) {
     for (int b = 0; b < PAD_BIND_COUNT; b++)
         fprintf(f, "pad.%s=%s\n", g_pad_binds[b].name, input_combo_format(g_pad_binds[b].acts, acts, sizeof acts));
     fprintf(f, "wheel.axes=%d,%d,%d\n", g_wheel_opt.steer, g_wheel_opt.accel, g_wheel_opt.brake);
+    if (g_pad_pick.guid[0])        { pad_pick_format(&g_pad_pick, pick, sizeof pick);        fprintf(f, "pad.device=%s\n", pick); }
+    if (g_wheel_opt.dev.guid[0])    { pad_pick_format(&g_wheel_opt.dev, pick, sizeof pick);    fprintf(f, "wheel.device=%s\n", pick); }
+    if (g_wheel_opt.pedals.guid[0]) { pad_pick_format(&g_wheel_opt.pedals, pick, sizeof pick); fprintf(f, "wheel.pedals=%s\n", pick); }
+    if (g_wheel_opt.rest_set[0] || g_wheel_opt.rest_set[1]) {
+        fprintf(f, "wheel.rest=");
+        for (int i = 0; i < 2; i++)
+            if (g_wheel_opt.rest_set[i]) fprintf(f, "%s%d", i ? "," : "", g_wheel_opt.rest[i]);
+            else                         fprintf(f, "%sauto", i ? "," : "");
+        fprintf(f, "\n");
+    }
     for (int b = 0; b < WHEEL_BUTTONS; b++)
         if (g_wheel_opt.button[b])
             fprintf(f, "wheel.%d=%s\n", b, input_combo_format(g_wheel_opt.button[b], acts, sizeof acts));
@@ -348,7 +382,8 @@ static inline SDL_Gamepad *controls_first_pad(void) {
     int count = 0;
     SDL_JoystickID *ids = SDL_GetGamepads(&count);
     SDL_Gamepad *pad = NULL;
-    for (int i = 0; ids && i < count && !pad; i++) if (pad_plays_here(i)) pad = SDL_GetGamepadFromID(ids[i]);
+    for (int i = 0, g = 0; ids && i < count && !pad; i++)
+        if (gamepad_is(ids[i]) && pad_plays_here(g++)) pad = SDL_GetGamepadFromID(ids[i]);
     SDL_free(ids);
     return pad;
 }
@@ -361,6 +396,52 @@ static inline SDL_Joystick *controls_first_wheel(void) {
         if (wheel_is(ids[i]) && pad_plays_here(w++)) joy = SDL_GetJoystickFromID(ids[i]);
     SDL_free(ids);
     return joy;
+}
+
+/* What SDL takes a joystick for. */
+static inline const char *controls_joy_kind(SDL_JoystickID id) {
+    if (SDL_IsGamepad(id)) return "gamepad";
+    switch (SDL_GetJoystickTypeForID(id)) {
+        case SDL_JOYSTICK_TYPE_WHEEL:    return "wheel";
+        case SDL_JOYSTICK_TYPE_THROTTLE: return "throttle";
+        case SDL_JOYSTICK_TYPE_FLIGHT_STICK: return "flight stick";
+        default:                         return "joystick";
+    }
+}
+
+/* A device picker: none_label, then the connected devices (gamepads only, or
+ * every joystick), and the picked one while it is unplugged; true when *p
+ * changed. */
+static inline bool controls_pick_combo(const char *label, pad_pick_t *p, const char *none_label, bool gamepads) {
+    char cur[112];
+    SDL_JoystickID now = pad_pick_find(p);
+    if (!p->guid[0]) snprintf(cur, sizeof cur, "%s", none_label);
+    else snprintf(cur, sizeof cur, "%s%s", p->name, now ? "" : " (not connected)");
+    bool changed = false;
+    igSetNextItemWidth(300.0f);
+    if (!igBeginCombo(label, cur, 0)) return false;
+    if (igSelectableEx(none_label, !p->guid[0], 0, (ImVec2){ 0, 0 }) && p->guid[0]) {
+        controls_edit_begin();
+        memset(p, 0, sizeof *p);
+        changed = true;
+    }
+    int count = 0;
+    SDL_JoystickID *ids = SDL_GetJoysticks(&count);
+    for (int i = 0; ids && i < count; i++) {
+        if (gamepads && !SDL_IsGamepad(ids[i])) continue;
+        const char *n = SDL_GetJoystickNameForID(ids[i]);
+        char item[128];
+        snprintf(item, sizeof item, "%s (%s)##%u", n ? n : "?", controls_joy_kind(ids[i]), (unsigned)ids[i]);
+        if (igSelectableEx(item, pad_pick_is(p, ids[i]), 0, (ImVec2){ 0, 0 }) && !pad_pick_is(p, ids[i])) {
+            controls_edit_begin();
+            pad_pick_set(p, ids[i]);
+            changed = true;
+        }
+    }
+    SDL_free(ids);
+    if (p->guid[0] && !now) igSelectableEx(cur, true, ImGuiSelectableFlags_Disabled, (ImVec2){ 0, 0 });
+    igEndCombo();
+    return changed;
 }
 
 static inline void controls_devices(bool pads_on) {
@@ -383,11 +464,14 @@ static inline void controls_devices(bool pads_on) {
     SDL_JoystickID *ids = SDL_GetJoysticks(&count);
     if (!count) igTextDisabled("No gamepad or wheel is connected.");
     for (int i = 0; ids && i < count; i++) {
-        bool pad = SDL_IsGamepad(ids[i]), wheel = !pad && wheel_is(ids[i]);
-        const char *name = pad ? SDL_GetGamepadNameForID(ids[i]) : SDL_GetJoystickNameForID(ids[i]);
-        bool plays = (pad || wheel) && pad_device_takes(wheel);
-        igBulletText("%s: %s%s", pad ? "Gamepad" : wheel ? "Wheel" : "Joystick", name ? name : "?",
-                     plays ? "" : (pad || wheel) ? " (not playing)" : " (not a wheel: see the Wheel tab)");
+        SDL_JoystickID id = ids[i];
+        bool wheel = wheel_is(id), pedals = pedals_is(id), pad = gamepad_is(id);
+        const char *name = SDL_GetJoystickNameForID(id);
+        const char *role = wheel ? (pad_device_takes(true) ? "the wheel" : "the wheel, not playing")
+                         : pedals ? (pad_device_takes(true) ? "the pedals" : "the pedals, not playing")
+                         : pad ? (pad_device_takes(false) ? "a gamepad" : "a gamepad, not playing")
+                         : SDL_IsGamepad(id) ? "a gamepad, not picked" : "unused: pick it in the Wheel tab";
+        igBulletText("%s (%s) - %s", name ? name : "?", controls_joy_kind(id), role);
     }
     SDL_free(ids);
 }
@@ -395,6 +479,10 @@ static inline void controls_devices(bool pads_on) {
 static inline void controls_tab_gamepad(bool pads_on) {
     igTextWrapped("The d-pad and the left stick are player 1's directions; a driving game's wheel is "
                   "the stick, R2 the accelerator and L2 the brake. A held button lights its row.");
+    if (pads_on && controls_pick_combo("Gamepad", &g_pad_pick, "Any gamepad", true)) {
+        controls_pads_changed(pads_on);
+        controls_save();
+    }
     SDL_Gamepad *pad = pads_on ? controls_first_pad() : NULL;
     if (!igBeginTableEx("padbinds", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV, (ImVec2){ 0, 0 }, 0.0f)) return;
     igTableSetupColumnEx("Button", ImGuiTableColumnFlags_WidthFixed, 90.0f, 0);
@@ -414,29 +502,92 @@ static inline void controls_tab_gamepad(bool pads_on) {
     igEndTable();
 }
 
+/* A Detect button's wait: the axis of the watched device that moved
+ * furthest from where it was when the button was clicked, once one has
+ * moved past a sixth of its range; a pedal's released position is where it
+ * was then. */
+static inline void controls_detect_poll(bool pads_on) {
+    if (g_ctl.det_role < 0) return;
+    SDL_Joystick *joy = SDL_GetJoystickFromID((SDL_JoystickID)g_ctl.det_id);
+    if (!joy) { g_ctl.det_role = -1; return; }
+    int n = SDL_GetNumJoystickAxes(joy), best = -1, far = 12000;
+    for (int k = 0; k < n && k < 16; k++) {
+        int d = abs(SDL_GetJoystickAxis(joy, k) - g_ctl.det_start[k]);
+        if (d > far) { far = d; best = k; }
+    }
+    if (best < 0) return;
+    controls_edit_begin();
+    int r = g_ctl.det_role;
+    int *ax[3] = { &g_wheel_opt.steer, &g_wheel_opt.accel, &g_wheel_opt.brake };
+    *ax[r] = best;
+    if (r) { g_wheel_opt.rest[r - 1] = g_ctl.det_start[best]; g_wheel_opt.rest_set[r - 1] = true; }
+    snprintf(g_ctl.status, sizeof g_ctl.status, "%s is axis %d.", r == 0 ? "The wheel" : r == 1 ? "The accelerator" : "The brake", best);
+    g_ctl.det_role = -1;
+    controls_pads_changed(pads_on);
+    controls_save();
+}
+
 static inline void controls_tab_wheel(bool pads_on) {
-    igTextWrapped("A racing wheel SDL has no gamepad mapping for. Turn the wheel and press the pedals "
-                  "to see which axis is which; a held button lights its row.");
-    SDL_Joystick *joy = pads_on ? controls_first_wheel() : NULL;
+    igTextWrapped("Pick the wheel, and the pedals if they have their own USB lead (they are a second "
+                  "device then). Detect: click it, then turn the wheel or press the pedal all the way.");
+    if (!pads_on) { igTextDisabled("No wheels this run."); return; }
+    if (controls_pick_combo("Wheel", &g_wheel_opt.dev, "Any device SDL calls a wheel", false)) {
+        g_ctl.det_role = -1;
+        controls_pads_changed(pads_on);
+        controls_save();
+    }
+    if (controls_pick_combo("Pedals", &g_wheel_opt.pedals, "The wheel's own pedals", false)) {
+        g_ctl.det_role = -1;
+        g_wheel_opt.rest_set[0] = g_wheel_opt.rest_set[1] = false;
+        controls_pads_changed(pads_on);
+        controls_save();
+    }
+    SDL_Joystick *joy = controls_first_wheel();
+    SDL_JoystickID wid = joy ? SDL_GetJoystickID(joy) : 0, pid = wid;
+    if (g_wheel_opt.pedals.guid[0] && !pad_pick_is(&g_wheel_opt.pedals, wid)) pid = pad_pick_find(&g_wheel_opt.pedals);
+    SDL_Joystick *pj = pid ? SDL_GetJoystickFromID(pid) : NULL;
     int naxes = joy ? SDL_GetNumJoystickAxes(joy) : 0, nbut = joy ? SDL_GetNumJoystickButtons(joy) : 0;
     if (joy) igText("Wheel: %s (%d axes, %d buttons)", SDL_GetJoystickName(joy), naxes, nbut);
     else     igTextDisabled("No wheel is connected.");
+    if (g_wheel_opt.pedals.guid[0] && !pj) igTextDisabled("The pedals are not connected.");
+    controls_detect_poll(pads_on);
     int *ax[3] = { &g_wheel_opt.steer, &g_wheel_opt.accel, &g_wheel_opt.brake };
     static const char *const ax_name[3] = { "Wheel axis", "Accelerator axis", "Brake axis" };
     for (int k = 0; k < 3; k++) {
+        SDL_Joystick *dj = k ? pj : joy;
+        SDL_JoystickID did = k ? pid : wid;
         int v = *ax[k];
+        igPushIDInt(k);
         igSetNextItemWidth(120.0f);
         if (igInputIntEx(ax_name[k], &v, 1, 1, 0) && v >= 0 && v < 16) {
             controls_edit_begin();
             *ax[k] = v;
+            if (k) g_wheel_opt.rest_set[k - 1] = false;
             controls_pads_changed(pads_on);
             controls_save();
         }
-        if (joy && *ax[k] < naxes) {
+        /* SameLine only before an item, or the next axis joins this row. */
+        if (g_ctl.det_role == k) {
             igSameLine();
-            float f = (SDL_GetJoystickAxis(joy, *ax[k]) + 32768.0f) / 65535.0f;
-            igProgressBar(f, (ImVec2){ 160.0f, 0 }, "");
+            if (igButton("Waiting... (cancel)")) g_ctl.det_role = -1;
+        } else if (dj && (igSameLine(), igButton("Detect"))) {
+            g_ctl.det_role = k;
+            g_ctl.det_id = (uint32_t)did;
+            int n = SDL_GetNumJoystickAxes(dj);
+            for (int a = 0; a < 16; a++) g_ctl.det_start[a] = a < n ? SDL_GetJoystickAxis(dj, a) : 0;
         }
+        if (dj && *ax[k] < SDL_GetNumJoystickAxes(dj)) {
+            igSameLine();
+            int raw = SDL_GetJoystickAxis(dj, *ax[k]);
+            float f;
+            if (k == 0) f = (raw + 32768.0f) / 65535.0f;
+            else {
+                int rest = g_wheel_opt.rest_set[k - 1] ? g_wheel_opt.rest[k - 1] : joy_rest(did, *ax[k]);
+                f = wheel_host_pedal(raw, rest) / (float)IO5649_AXIS_MAX;
+            }
+            igProgressBar(f, (ImVec2){ 140.0f, 0 }, "");
+        }
+        igPopID();
     }
     int rows = nbut > 12 ? nbut : 12;
     if (rows > WHEEL_BUTTONS) rows = WHEEL_BUTTONS;
@@ -488,6 +639,7 @@ static inline void controls_window_draw(bool *open, bool pads_on) {
     igSeparator();
     if (igButton("Reset to defaults") && p) {
         g_ctl.cli_n = 0;
+        g_ctl.det_role = -1;
         if (controls_path(p, path, sizeof path)) remove(path);
         controls_load(p);
         controls_pads_changed(pads_on);
