@@ -1054,9 +1054,18 @@ static inline void geo3d__dl_light(const geo3d_dl_walk_t *w, uint32_t p) {
     g_light_dir[0] = lx; g_light_dir[1] = ly; g_light_dir[2] = -lz;
 }
 
+/* direct_data (cmd 2): not walked yet; warns once, and the walk stops. */
+static inline bool geo3d__dl_direct(void) {
+    static int warned_direct = 0;
+        if (!warned_direct) {
+            LOG_WARN("geo3d displaylist: direct_data (cmd 2) not yet decoded; stopping walk");
+            warned_direct = 1;
+        }
+        return false;   /* variable-length inline geometry — can't skip reliably yet */
+}
+
 /* One command of the walk; false where the walk stops. */
 static inline bool geo3d__dl_command(geo3d_dl_walk_t *w, uint32_t p, uint32_t cmd) {
-    static int warned_direct = 0;
     const uint32_t buff_words = w->buff_words;
     if ((cmd == 0xb || cmd == 0x1b) && p + 12u < buff_words) {
         geo3d__dl_matrix(w, p);
@@ -1067,11 +1076,7 @@ static inline bool geo3d__dl_command(geo3d_dl_walk_t *w, uint32_t p, uint32_t cm
     } else if (cmd == 0xa && p + 3u < buff_words) {
         geo3d__dl_light(w, p);
     } else if (cmd == 2 || cmd == 0x12) {
-        if (!warned_direct) {
-            LOG_WARN("geo3d displaylist: direct_data (cmd 2) not yet decoded; stopping walk");
-            warned_direct = 1;
-        }
-        return false;   /* variable-length inline geometry — can't skip reliably yet */
+        return geo3d__dl_direct();
     }
     return true;
 }
