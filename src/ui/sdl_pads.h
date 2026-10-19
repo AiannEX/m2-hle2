@@ -65,6 +65,51 @@ static bool pad_device_takes(bool wheel) {
     return g_pad_device == PAD_DEVICE_ANY || g_pad_device == (wheel ? PAD_DEVICE_WHEEL : PAD_DEVICE_GAMEPAD);
 }
 
+/* One device the Controls window picked for a part (the gamepad, the wheel,
+ * the pedals), kept by SDL's GUID, with its name to show while it is
+ * unplugged; guid "" = no pick, SDL's types decide. Two of the same model
+ * share a GUID: the first plugged in is the one. */
+typedef struct { char guid[33]; char name[64]; } pad_pick_t;
+static pad_pick_t g_pad_pick;   /* the gamepad that plays; "" = every gamepad */
+
+static bool pad_pick_is(const pad_pick_t *p, SDL_JoystickID id) {
+    if (!p->guid[0] || !id) return false;
+    char g[33];
+    SDL_GUIDToString(SDL_GetJoystickGUIDForID(id), g, sizeof g);
+    return !strcmp(g, p->guid);
+}
+
+static void pad_pick_set(pad_pick_t *p, SDL_JoystickID id) {
+    memset(p, 0, sizeof *p);
+    if (!id) return;
+    SDL_GUIDToString(SDL_GetJoystickGUIDForID(id), p->guid, sizeof p->guid);
+    const char *n = SDL_GetJoystickNameForID(id);
+    snprintf(p->name, sizeof p->name, "%s", n ? n : "?");
+}
+
+/* The connected device the pick names; 0 if it is not plugged in. */
+static SDL_JoystickID pad_pick_find(const pad_pick_t *p) {
+    if (!p->guid[0]) return 0;
+    int count = 0;
+    SDL_JoystickID *ids = SDL_GetJoysticks(&count), id = 0;
+    for (int i = 0; ids && i < count && !id; i++) if (pad_pick_is(p, ids[i])) id = ids[i];
+    SDL_free(ids);
+    return id;
+}
+
+/* "<guid> <name>" for a controls file; "" for no pick. */
+static void pad_pick_format(const pad_pick_t *p, char *buf, size_t cap) {
+    snprintf(buf, cap, "%s%s%s", p->guid, p->guid[0] ? " " : "", p->guid[0] ? p->name : "");
+}
+
+static void pad_pick_parse(pad_pick_t *p, const char *v) {
+    memset(p, 0, sizeof *p);
+    size_t n = strcspn(v, " ");
+    if (n != 32) return;
+    memcpy(p->guid, v, 32);
+    snprintf(p->name, sizeof p->name, "%s", v[n] ? v + n + 1 : "?");
+}
+
 /* An action, or a combo of player-1 actions ("b1+b2"); false if neither. */
 static bool actions_by_name(const char *s, uint32_t *acts) {
     if (!strcmp(s, "none"))    { *acts = 0; return true; }
@@ -118,10 +163,17 @@ static bool pad_plays_here(int i) {
  * at either end of its axis reads the right way round. */
 #define WHEEL_BUTTONS 32
 
+/* The Controls window can pick the wheel's device (any joystick, gamepads
+ * too: a wheel SDL took for something else) and a second device for the
+ * pedals (pedals on their own USB lead, as Fanatec's and others' are), and
+ * set each pedal's released position, which its Detect button reads. */
 typedef struct {
-    int  steer, accel, brake;          /* axis indices */
+    int  steer, accel, brake;          /* axis indices; accel and brake on the pedals' device */
     bool forced;                       /* --wheel-axes given: any joystick */
     uint32_t button[WHEEL_BUTTONS];    /* acts */
+    pad_pick_t dev, pedals;            /* "" = a joystick SDL calls a wheel; the wheel's own pedals */
+    int  rest[2];                      /* accelerator, brake released */
+    bool rest_set[2];                  /* false: where it was when the device came */
 } wheel_opt_t;
 #define WHEEL_OPT_DEFAULT { 0, 1, 2, false,                                                                 \
                   { [0] = ACT(GAME_INPUT_P1_B3), [4] = ACT(GAME_INPUT_P1_UP), [5] = ACT(GAME_INPUT_P1_DOWN), \
@@ -135,6 +187,7 @@ static void sdl_pads_default(void) {
     static const wheel_opt_t wheel = WHEEL_OPT_DEFAULT;
     for (int b = 0; b < PAD_BIND_COUNT; b++) g_pad_binds[b].acts = binds[b].acts;
     g_wheel_opt = wheel;
+    memset(&g_pad_pick, 0, sizeof g_pad_pick);
     g_pad_device = PAD_DEVICE_ANY;
 }
 
@@ -160,34 +213,58 @@ static bool wheel_buttons_option(const char *list) {
     return true;
 }
 
-/* An open wheel's pedals at rest. */
-static struct { SDL_JoystickID id; Sint16 rest[2]; } g_wheel_rest[4];
+/* Every open joystick's axes where they were when it came (a pedal's
+ * released position, unless the Controls window set one). */
+#define JOY_REST_AXES 8
+static struct { SDL_JoystickID id; Sint16 rest[JOY_REST_AXES]; } g_joy_rest[8];
 
+static int joy_rest(SDL_JoystickID id, int axis) {
+    for (int s = 0; s < 8; s++)
+        if (g_joy_rest[s].id == id && axis >= 0 && axis < JOY_REST_AXES) return g_joy_rest[s].rest[axis];
+    return 32767;
+}
+
+/* The wheel: the picked device, else a joystick SDL calls a wheel (any that
+ * is not a gamepad, with --wheel-axes). */
 static bool wheel_is(SDL_JoystickID id) {
+    if (g_wheel_opt.dev.guid[0]) return pad_pick_is(&g_wheel_opt.dev, id);
     if (SDL_IsGamepad(id)) return false;
     return g_wheel_opt.forced || SDL_GetJoystickTypeForID(id) == SDL_JOYSTICK_TYPE_WHEEL;
 }
 
+/* A picked pedal device that is not the wheel itself. */
+static bool pedals_is(SDL_JoystickID id) {
+    return pad_pick_is(&g_wheel_opt.pedals, id) && !wheel_is(id);
+}
+
+/* A gamepad that plays as one: not the wheel or the pedals, and the picked
+ * one if there is a pick. */
+static bool gamepad_is(SDL_JoystickID id) {
+    if (!SDL_IsGamepad(id) || wheel_is(id) || pedals_is(id)) return false;
+    return !g_pad_pick.guid[0] || pad_pick_is(&g_pad_pick, id);
+}
+
+/* Every joystick is opened, so that any can be picked as the wheel or the
+ * pedals, and its axes shown, without plugging it in again. */
 static void wheel_open(SDL_JoystickID id) {
-    if (!wheel_is(id)) return;
     SDL_Joystick *joy = SDL_OpenJoystick(id);
     if (!joy) return;
     int s = 0;
-    while (s < 4 && g_wheel_rest[s].id && g_wheel_rest[s].id != id) s++;
-    if (s < 4) {
-        g_wheel_rest[s].id = id;
-        const int ax[2] = { g_wheel_opt.accel, g_wheel_opt.brake };
-        for (int k = 0; k < 2; k++)
-            if (!SDL_GetJoystickAxisInitialState(joy, ax[k], &g_wheel_rest[s].rest[k]))
-                g_wheel_rest[s].rest[k] = SDL_GetJoystickAxis(joy, ax[k]);
+    while (s < 8 && g_joy_rest[s].id && g_joy_rest[s].id != id) s++;
+    if (s < 8) {
+        g_joy_rest[s].id = id;
+        int n = SDL_GetNumJoystickAxes(joy);
+        for (int k = 0; k < JOY_REST_AXES && k < n; k++)
+            if (!SDL_GetJoystickAxisInitialState(joy, k, &g_joy_rest[s].rest[k]))
+                g_joy_rest[s].rest[k] = SDL_GetJoystickAxis(joy, k);
     }
-    printf("m2hle: wheel %s\n", SDL_GetJoystickName(joy));
+    if (wheel_is(id)) printf("m2hle: wheel %s\n", SDL_GetJoystickName(joy));
 }
 
 static void wheel_close(SDL_JoystickID id) {
-    for (int s = 0; s < 4; s++) if (g_wheel_rest[s].id == id) g_wheel_rest[s].id = 0;
+    for (int s = 0; s < 8; s++) if (g_joy_rest[s].id == id) g_joy_rest[s].id = 0;
     SDL_Joystick *joy = SDL_GetJoystickFromID(id);
-    if (joy && wheel_is(id)) SDL_CloseJoystick(joy);
+    if (joy) SDL_CloseJoystick(joy);
 }
 
 /* One pad's actions into now[]: the d-pad and left stick steer, the binds press. */
@@ -218,13 +295,18 @@ static void pad_refresh(void) {
         if (!wheel_is(jids[i])) continue;
         SDL_Joystick *joy = SDL_GetJoystickFromID(jids[i]);
         if (!joy || !pad_plays_here(w++)) continue;
-        int s = 0;
-        while (s < 4 && g_wheel_rest[s].id != jids[i]) s++;
-        Sint16 rest[2] = { 32767, 32767 };
-        if (s < 4) { rest[0] = g_wheel_rest[s].rest[0]; rest[1] = g_wheel_rest[s].rest[1]; }
+        /* The pedals: their own device when one is picked (none while it is
+         * unplugged), else the wheel's. */
+        SDL_JoystickID pid = jids[i];
+        if (g_wheel_opt.pedals.guid[0] && !pad_pick_is(&g_wheel_opt.pedals, jids[i])) pid = pad_pick_find(&g_wheel_opt.pedals);
+        SDL_Joystick *pj = pid ? SDL_GetJoystickFromID(pid) : NULL;
+        const int pax[2] = { g_wheel_opt.accel, g_wheel_opt.brake };
+        int ped[2] = { 0, 0 };
+        for (int k = 0; pj && k < 2; k++)
+            ped[k] = wheel_host_pedal(SDL_GetJoystickAxis(pj, pax[k]),
+                                      g_wheel_opt.rest_set[k] ? g_wheel_opt.rest[k] : joy_rest(pid, pax[k]));
         int st = wheel_host_steer(SDL_GetJoystickAxis(joy, g_wheel_opt.steer), 0);
-        int ac = wheel_host_pedal(SDL_GetJoystickAxis(joy, g_wheel_opt.accel), rest[0]);
-        int br = wheel_host_pedal(SDL_GetJoystickAxis(joy, g_wheel_opt.brake), rest[1]);
+        int ac = ped[0], br = ped[1];
         if (!an_wheel) an_steer = st;
         an_on = an_wheel = true;
         if (ac > an_accel) an_accel = ac;
@@ -243,8 +325,8 @@ static void pad_refresh(void) {
     }
     SDL_free(jids);
     SDL_JoystickID *ids = pad_device_takes(false) ? SDL_GetGamepads(&count) : NULL;
-    for (int i = 0; ids && i < count; i++) {
-        if (!pad_plays_here(i)) continue;
+    for (int i = 0, g = 0; ids && i < count; i++) {
+        if (!gamepad_is(ids[i]) || !pad_plays_here(g++)) continue;
         SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
         if (!pad) continue;
         int nth = here++;
@@ -390,7 +472,7 @@ static void ffb_update(void) {
         if (g_ffb_pad[s].id && !here) ffb_close_pad(s);
     }
     for (int i = 0, np = 0, nw = 0; ids && i < count; i++) {
-        SDL_Gamepad  *pad = SDL_IsGamepad(ids[i]) ? SDL_GetGamepadFromID(ids[i]) : NULL;
+        SDL_Gamepad  *pad = gamepad_is(ids[i]) ? SDL_GetGamepadFromID(ids[i]) : NULL;
         SDL_Joystick *joy = pad ? SDL_GetGamepadJoystick(pad)
                           : wheel_is(ids[i]) ? SDL_GetJoystickFromID(ids[i]) : NULL;
         if (!joy || !pad_plays_here(pad ? np++ : nw++) || !pad_device_takes(!pad)) continue;
@@ -444,7 +526,7 @@ static void sdl_pads_event(const SDL_Event *ev, bool *changed) {
         case SDL_EVENT_GAMEPAD_AXIS_MOTION:
             *changed = true;
             break;
-        case SDL_EVENT_JOYSTICK_ADDED:      /* a racing wheel with no gamepad mapping */
+        case SDL_EVENT_JOYSTICK_ADDED:      /* every joystick: any can be the wheel or the pedals */
             g_ffb_last = -1;
             wheel_open(ev->jdevice.which);
             *changed = true;
@@ -456,7 +538,7 @@ static void sdl_pads_event(const SDL_Event *ev, bool *changed) {
         case SDL_EVENT_JOYSTICK_AXIS_MOTION:
         case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
         case SDL_EVENT_JOYSTICK_BUTTON_UP:
-            if (wheel_is(ev->jdevice.which)) *changed = true;
+            if (wheel_is(ev->jdevice.which) || pedals_is(ev->jdevice.which)) *changed = true;
             break;
         default: break;
     }

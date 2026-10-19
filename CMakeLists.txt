@@ -854,6 +854,16 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     # UI headers); linking sokol propagates the includes.
     target_link_libraries(emu_test   PRIVATE miniz sokol)   # emu_thread.h -> savestate.h
     target_link_libraries(input_test PRIVATE miniz sokol)
+    # The Controls window's device picks on SDL's virtual joysticks (no hardware).
+    if(M2HLE_PADS)
+        add_executable(pads_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/pads_test.c)
+        target_include_directories(pads_test PRIVATE ${TEST_INCLUDES})
+        target_link_libraries(pads_test PRIVATE miniz sokol SDL3::SDL3)
+        if(MSVC)
+            target_compile_definitions(pads_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+        endif()
+        add_test(NAME pads_test COMMAND pads_test)
+    endif()
     # audio_out.h calls into sokol_audio (its device path is not under test).
     target_link_libraries(audio_out_test PRIVATE sokol)
 
