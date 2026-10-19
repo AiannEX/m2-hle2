@@ -3455,6 +3455,17 @@ static void geo3d_extract_tile(FILE *mf, int model_idx, int t, const geo3d_extra
                     t, tl->s, tx, ty, tw, th, path);
 }
 
+/* Opens a model's texture listing and writes its header line. */
+static inline FILE *geo3d_extract_model_open(int model_idx, uint32_t uv_ptr, uint32_t mat_ptr,
+                                             uint32_t mesh_ptr, uint32_t nfaces) {
+    char path[160];
+    snprintf(path, sizeof path, "model_%d_tex.txt", model_idx);
+    FILE *mf = fopen(path, "w");
+    if (mf) fprintf(mf, "# model %d  uv_ptr=%u mat_ptr=%u mesh_ptr=%u  faces=%u\n",
+                    model_idx, uv_ptr, mat_ptr, mesh_ptr, nfaces);
+    return mf;
+}
+
 /* md: the data and textures ROMs and the model table. */
 static void geo3d_extract_model_texture(int model_idx, const geo3d_models_t *md,
                                         const uint8_t *texram0, const uint8_t *texram1) {
@@ -3475,11 +3486,7 @@ static void geo3d_extract_model_texture(int model_idx, const geo3d_models_t *md,
     uint32_t mat_base = mat_ptr * 2u;
 
     geo3d_extract_tile_t tiles[256]; int nt = 0;
-    char path[160];
-    snprintf(path, sizeof path, "model_%d_tex.txt", model_idx);
-    FILE *mf = fopen(path, "w");
-    if (mf) fprintf(mf, "# model %d  uv_ptr=%u mat_ptr=%u mesh_ptr=%u  faces=%u\n",
-                    model_idx, uv_ptr, mat_ptr, mesh_ptr, nfaces);
+    FILE *mf = geo3d_extract_model_open(model_idx, uv_ptr, mat_ptr, mesh_ptr, nfaces);
 
     for (uint32_t f = 0; f < nfaces; f++) {
         uint32_t rec = mat_base + f * 8u;
