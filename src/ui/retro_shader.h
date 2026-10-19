@@ -1551,6 +1551,18 @@ static inline void rs_gl_destroy(void) {
     memcpy(g_rs_gl.err, err, sizeof err);
 }
 
+/* Upload `p`'s LUTs into the runner's textures, mipmapped where asked. */
+static inline void rs_gl_upload_luts(const rs_preset_t *p) {
+    for (int l = 0; l < p->n_luts; l++) {
+        glGenTextures(1, &g_rs_gl.lut_tex[l]);
+        glBindTexture(GL_TEXTURE_2D, g_rs_gl.lut_tex[l]);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, p->lut[l].w, p->lut[l].h, 0, GL_RGBA, GL_UNSIGNED_BYTE, p->lut[l].rgba);
+        if (p->lut[l].mipmap) glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
 /* Build the programs and upload the LUTs for `p`, which must outlive the runner. */
 static inline bool rs_gl_create(rs_preset_t *p) {
     rs_gl_destroy();
@@ -1582,14 +1594,7 @@ static inline bool rs_gl_create(rs_preset_t *p) {
     }
     glUseProgram(0);
 
-    for (int l = 0; l < p->n_luts; l++) {
-        glGenTextures(1, &g_rs_gl.lut_tex[l]);
-        glBindTexture(GL_TEXTURE_2D, g_rs_gl.lut_tex[l]);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, p->lut[l].w, p->lut[l].h, 0, GL_RGBA, GL_UNSIGNED_BYTE, p->lut[l].rgba);
-        if (p->lut[l].mipmap) glGenerateMipmap(GL_TEXTURE_2D);
-    }
-    glBindTexture(GL_TEXTURE_2D, 0);
+    rs_gl_upload_luts(p);
 
     /* VertexCoord then TexCoord, 0..1. The first four vertices are the
      * offscreen passes' quad; the second four put v = 0 at the TOP of the
