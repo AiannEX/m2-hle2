@@ -953,6 +953,25 @@ static void web_count_render(int64_t render_t0) {
     if (render_us > g_web_perf.render_us_max) g_web_perf.render_us_max = render_us;
 }
 
+/* Where the game goes on the page, and the passes drawn before the
+ * swapchain's (the filter's source, the offscreen render scale). */
+static void web_place_picture(web_picture_t *pic, bool game) {
+    /* A filter over the picture (post_shader.h) reads the game from a target of
+     * its own, at the render scale, and only covers the game's rectangle. */
+    game_rect_t r = game_render_letterbox(sapp_width(), sapp_height(),
+                                          web_picture_width(), VIDEO_HEIGHT);
+    pic->ox = r.x; pic->oy = r.y; pic->w = r.w; pic->h = r.h;
+    crt_pots_place(&pic->ox, &pic->oy, &pic->w, &pic->h);
+    post_shader_set_input_scale(g_web_rt.want);
+    web_cheats_place(pic, game && !pic->overlay && !g_web_objview_show);
+    pic->post = game && !g_web_objview_show && post_shader_active();
+    if (pic->post) web_draw_post_source(pic->w, pic->h, pic->lerp_t);
+
+    /* Offscreen first, when there is a render scale: the game at N x 496x384. */
+    pic->offscreen = game && !pic->post && g_web_rt.scale > 0;
+    if (pic->offscreen) web_draw_offscreen(pic->lerp_t);
+}
+
 static void frame(void) {
     web_count_callback();
 
@@ -983,20 +1002,7 @@ static void frame(void) {
         pic.lerp_t = game_frame_lerp();
     }
 
-    /* A filter over the picture (post_shader.h) reads the game from a target of
-     * its own, at the render scale, and only covers the game's rectangle. */
-    game_rect_t r = game_render_letterbox(sapp_width(), sapp_height(),
-                                          web_picture_width(), VIDEO_HEIGHT);
-    pic.ox = r.x; pic.oy = r.y; pic.w = r.w; pic.h = r.h;
-    crt_pots_place(&pic.ox, &pic.oy, &pic.w, &pic.h);
-    post_shader_set_input_scale(g_web_rt.want);
-    web_cheats_place(&pic, game && !pic.overlay && !g_web_objview_show);
-    pic.post = game && !g_web_objview_show && post_shader_active();
-    if (pic.post) web_draw_post_source(pic.w, pic.h, pic.lerp_t);
-
-    /* Offscreen first, when there is a render scale: the game at N x 496x384. */
-    pic.offscreen = game && !pic.post && g_web_rt.scale > 0;
-    if (pic.offscreen) web_draw_offscreen(pic.lerp_t);
+    web_place_picture(&pic, game);
 
     web_present(&pic, &lobby_cv);
     if (g_web_shot_want) web_shot_done(&pic);
