@@ -99,6 +99,12 @@ Walkers (`airwlkrs`), Power Sled (`powsled`) and Virtua Cop (`vcop`, with the I/
 `model1io2.zip`; the mouse is the gun, a shot off the picture reloads). The desktop build adds the
 homebrew `m2snake` and `sfight_homebrew`.
 
+Every build, the web one too, also runs these clone sets, each picked by its zip's name (Pinboard #1286):
+`schamp` (Sonic Championship), `hotdo` and `hotdp` (The House of the Dead's first release and
+prototype; `hotdp` runs in Japanese only), and the Daytona USA builds `daytona93`, `daytonase`,
+`daytonas`, `daytonat`, `daytonata` and `daytonagtx` (MAME's `model1io.zip` beside them).
+`daytonam` (To The MAXX) is not one: it passes its protection check, then crashes.
+
 ### Sonic the Fighters: Console and Arcade
 
 `sfight.zip` runs as one of two profiles:

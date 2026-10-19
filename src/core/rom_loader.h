@@ -208,6 +208,16 @@ static inline uint8_t *zip_extract_from_set(const char *child_zip, const char *p
     if (!data && parent_zip) data = zip_extract(parent_zip, filename, out_size, &actual);
     if (!data && child_zip  && (data = zip_extract_by_crc(child_zip,  expected_crc, out_size))) actual = expected_crc;
     if (!data && parent_zip && (data = zip_extract_by_crc(parent_zip, expected_crc, out_size))) actual = expected_crc;
+    /* A file under the right name with the wrong CRC: the set may hold the
+     * right one under another name (daytonagtx.zip has bank0.bin and bank1.bin
+     * the other way round from MAME's list). Take that one if it is there. */
+    if (data && actual != expected_crc) {
+        size_t n2 = 0;
+        uint8_t *by_crc = NULL;
+        if (child_zip)            by_crc = zip_extract_by_crc(child_zip,  expected_crc, &n2);
+        if (!by_crc && parent_zip) by_crc = zip_extract_by_crc(parent_zip, expected_crc, &n2);
+        if (by_crc) { free(data); data = by_crc; *out_size = n2; actual = expected_crc; }
+    }
     if (!data) {
         if (!g_rl_quiet_missing) LOG_ERROR("ROM not found: %s", filename);
         return NULL;
