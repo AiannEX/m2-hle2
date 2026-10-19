@@ -1284,12 +1284,9 @@ static void ps3ui_app_ask_leave_link(ps3ui_app_t *a)
     ps3ui_app_ask(a, PS3UI_DLG_LEAVE, "Do you want to exit this session?");
 }
 
-/* In a room or at its barrier: the result first, then the room or VS screen. */
-static void ps3ui_follow_room(ps3ui_app_t *a)
+/* A new match number: note it, and with a result in the lobby, show it (1). */
+static int ps3ui_follow_result(ps3ui_app_t *a, const netplay_status_t *st)
 {
-    const netplay_status_t *st = &a->st;
-    if (ps3ui_follow_link(a) || a->scr == PS3UI_SCR_RESULT)
-        return;
     /* a result has come in: show it first */
     if (st->room.match != a->last_match) {
         uint16_t prev = a->last_match;
@@ -1298,9 +1295,20 @@ static void ps3ui_follow_room(ps3ui_app_t *a)
             a->result_side = st->room.last_result;
             a->result_t = 0.0f;
             ps3ui_app_go(a, PS3UI_SCR_RESULT);
-            return;
+            return 1;
         }
     }
+    return 0;
+}
+
+/* In a room or at its barrier: the result first, then the room or VS screen. */
+static void ps3ui_follow_room(ps3ui_app_t *a)
+{
+    const netplay_status_t *st = &a->st;
+    if (ps3ui_follow_link(a) || a->scr == PS3UI_SCR_RESULT)
+        return;
+    if (ps3ui_follow_result(a, st))
+        return;
     int two = st->member_count <= 2 || st->max_slot <= 2;
     ps3ui_screen_t want = two && st->member_count >= 2 ? PS3UI_SCR_VS : PS3UI_SCR_ROOM;
     if (st->state == NETPLAY_SYNCING)
