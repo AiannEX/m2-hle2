@@ -55,6 +55,7 @@ static const struct { const char *id; game_region_kind_t kind; } g_region_unhook
     { "vonj",            REGION_PROGRAM_ROM },
     { "powsled",         REGION_TODO },
     { "daytona",         REGION_TODO },
+    { "vcop",            REGION_TODO },
     { "m2snake",         REGION_HOMEBREW },
     { "sfight_homebrew", REGION_HOMEBREW },
 };

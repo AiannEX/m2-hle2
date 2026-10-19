@@ -236,6 +236,32 @@ const m2hleGames = (() => {
         },
       },
     },
+    vcop: {
+      title: 'Virtua Cop',
+      year: 1994, board: 'Model 2', colors: ['#d8b01d', '#14204c'],
+      blurb: 'Rage and Smarty of the Virtua City police take on EVL Inc. The sight turns red on whoever is about to shoot.',
+      /* src/profiles/vcop.h: Revision B, one profile. */
+      profiles: [
+        { id: 'vcop', name: 'Rev B', about: 'Revision B' },
+      ],
+      /* The I/O board's program is MAME's model1io2 device (src/profiles/vcop.h). */
+      romHint: 'Your <code>vcop.zip</code> and the I/O board\'s <code>model1io2.zip</code>, picked together',
+      /* The House of the Dead's gun (board/lightgun.h): B1 fires, B2 reloads. */
+      labels: { b1: 'Trigger', b2: 'Reload', b3: 'Unused', b4: 'Unused' },
+      gun: true,
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'バーチャコップ',
+          blurb: 'バーチャシティ警察のレイジとスマーティが EVL 社に立ち向かう。撃とうとする相手の照準が赤く光る。',
+          profiles: { vcop: { name: 'リビジョン B', about: 'リビジョン B' } },
+          romHint: 'お持ちの <code>vcop.zip</code> と I/O ボードの <code>model1io2.zip</code> を一緒に',
+          labels: { b1: 'トリガー', b2: 'リロード', b3: '未使用', b4: '未使用' },
+        },
+      },
+    },
     vf2: {
       title: 'Virtua Fighter 2',
       year: 1994, board: 'Model 2A-CRX', colors: ['#1d8fc8', '#0b2a3d'],
