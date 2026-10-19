@@ -131,6 +131,8 @@ typedef struct {
     uint32_t mesh_ptr_add;          /* 0 = board default 0x10 */
     uint32_t model_table_offset;    /* byte offset of model table within main_data */
     uint32_t model_table_count;     /* number of entries in the model table */
+    uint32_t model_table_past_from; /* entries from here on read at model_table_past_offset (0: none) */
+    uint32_t model_table_past_offset;
     model_layout_t model_layout;    /* the entry's shape (model_table.h); zero = 1995's */
     uint32_t camera_struct_addr;    /* RAM address of camera eye (x,y,z f32; 0 = no game camera) */
     /* Absolute RAM address of the camera angle word (low16 = pitch, high16 = yaw).
@@ -409,7 +411,8 @@ static inline bool profile_runs_set(const game_profile_t *p, const char *set) {
 /* The quirks' model table as the board reads it (model_table.h). No quirks:
  * an empty table. */
 static inline model_table_t profile_model_table(const game_quirks_t *q) {
-    return q ? model_table_make(q->model_table_offset, q->model_table_count, q->model_layout)
+    return q ? model_table_past(model_table_make(q->model_table_offset, q->model_table_count, q->model_layout),
+                                q->model_table_past_from, q->model_table_past_offset)
              : model_table_make(0, 0, (model_layout_t)MODEL_LAYOUT_1995);
 }
 
