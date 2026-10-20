@@ -6,7 +6,8 @@
  *   arcade.sonicthefighte.rs/?game=sfight&profile=sfight_console
  *
  * ?game= is a key of GAMES, ?profile= one of its profiles (the first is the
- * default, as in src/profiles/registry.h). A game lists every variant MAME
+ * default, as in src/profiles/registry.h; a game's `first` can name another
+ * for a language, Virtual-On's Japanese game on the Japanese page). A game lists every variant MAME
  * knows; one marked `soon` has no profile in the emulator yet, so the front page
  * shows it greyed and ?profile= cannot pick it. Without ?game=, a page named for a
  * game (sfight.html, srallyc.html: web/stamp-site.cmake) or a host named for
@@ -82,15 +83,19 @@ const m2hleGames = (() => {
     vonj: {
       title: 'Cyber Troopers Virtual-On',
       year: 1995, board: 'Model 2B-CRX', colors: ['#2a9d8f', '#0b3d3a'],
-      blurb: 'Giant robots, two sticks each, one arena. The Japanese release.',
+      blurb: 'Giant robots, two sticks each, one arena.',
+      /* von is the English game, the USA Revision B program in von.zip
+       * (src/profiles/vonj.h, Pinboard #1342), and vonj the Japanese one, the
+       * Japanese page's first. MAME's current von.zip holds the Export program
+       * instead, which m2-hle2 does not run yet. */
       profiles: [
+        { id: 'von', name: 'USA', about: 'Twin, Revision B (USA)' },
         { id: 'vonj', name: 'Japan', about: 'Twin, Revision B (Japan)' },
-        { id: 'von', name: 'Export', about: 'Twin (Export)', soon: true },
-        { id: 'vonu', name: 'USA', about: 'Twin (USA, Revision B)', soon: true },
         { id: 'vonr', name: 'Relay', about: 'Relay (Japan)', soon: true },
       ],
+      first: { ja: 'vonj' },
       /* vonj is a clone: its zip and its parent's, picked together, or a merged one. */
-      romHint: 'Your <code>vonj.zip</code> and its parent <code>von.zip</code>, picked together, or a merged <code>vonj.zip</code>',
+      romHint: 'Your <code>von.zip</code> (USA); for Japan, <code>vonj.zip</code> and its parent <code>von.zip</code> picked together, or a merged <code>vonj.zip</code>',
       /* src/profiles/vonj.h: the left lever is UP/DOWN/LEFT/RIGHT, B1 its
        * trigger, B2 its dash; B3 both triggers, B4 both dashes. The right lever
        * is player 2's directions and B1 / B2, which a pad plays as rows of its
@@ -107,12 +112,11 @@ const m2hleGames = (() => {
       i18n: {
         ja: {
           title: '電脳戦機バーチャロン',
-          blurb: '巨大ロボット、ツインスティック、ひとつの戦場。日本版。',
+          blurb: '巨大ロボット、ツインスティック、ひとつの戦場。',
           profiles: { vonj: { name: '日本', about: 'ツイン、リビジョン B（日本）' },
-                      von: { name: '海外', about: 'ツイン（海外）' },
-                      vonu: { name: '北米', about: 'ツイン（北米、リビジョン B）' },
+                      von: { name: '北米', about: 'ツイン、リビジョン B（北米）' },
                       vonr: { name: 'リレー', about: 'リレー（日本）' } },
-          romHint: 'お持ちの <code>vonj.zip</code> と親セットの <code>von.zip</code> を一緒に選ぶか、マージ済みの <code>vonj.zip</code>',
+          romHint: 'お持ちの <code>vonj.zip</code> と親セットの <code>von.zip</code> を一緒に選ぶか、マージ済みの <code>vonj.zip</code>（北米版は <code>von.zip</code> だけ）',
           labels: { up: '左レバー上', down: '左レバー下', left: '左レバー左', right: '左レバー右',
                     rup: '右レバー上', rdown: '右レバー下', rleft: '右レバー左', rright: '右レバー右',
                     b1: '左ショット', b2: '左ダッシュ', rshot: '右ショット', rdash: '右ダッシュ',
@@ -404,6 +408,16 @@ const m2hleGames = (() => {
     },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
+  /* ?game= names that are another game's set: { game, profile }. */
+  const ALIASES = { von: { id: 'vonj', profile: 'von' } };
+
+  /* A game's default profile on this page: its `first` for the language, or
+   * its first. */
+  function first(id) {
+    const g = GAMES[id];
+    const want = (g.first || {})[m2hleLang.lang];
+    return (g.profiles.find((p) => p.id === want && !p.soon) || g.profiles[0]).id;
+  }
 
   /* { id, profile } for this visit, or null for the front page. */
   function pick(loc) {
@@ -411,20 +425,22 @@ const m2hleGames = (() => {
     const page = (/\/([a-z0-9_]+)\.html$/.exec(loc.pathname) || [])[1];
     const host = (/^([a-z]+)\./.exec(loc.hostname) || [])[1];
     let id = null;
-    if (q.has('game')) id = GAMES[q.get('game')] ? q.get('game') : null;
+    const alias = ALIASES[q.get('game')] || (!q.has('game') && ALIASES[page]);
+    if (alias) id = alias.id;
+    else if (q.has('game')) id = GAMES[q.get('game')] ? q.get('game') : null;
     else if (GAMES[page]) id = page;
     else if (HOSTS[host]) id = HOSTS[host];
     else if ([...q.keys()].some((k) => k !== 'lang')) id = 'sfight';
     if (!id) return null;
     const profiles = GAMES[id].profiles;
-    const profile = profiles.find((p) => p.id === q.get('profile') && !p.soon) || profiles[0];
-    return { id, profile: profile.id };
+    const profile = profiles.find((p) => p.id === (q.get('profile') || (alias && alias.profile)) && !p.soon);
+    return { id, profile: profile ? profile.id : first(id) };
   }
 
   /* The link that plays a game, relative to the site's root, in this page's
    * language. */
   function href(id, profile) {
-    const q = new URLSearchParams({ game: id, profile: profile || GAMES[id].profiles[0].id });
+    const q = new URLSearchParams({ game: id, profile: profile || first(id) });
     return './?' + m2hleLang.keep(q);
   }
 

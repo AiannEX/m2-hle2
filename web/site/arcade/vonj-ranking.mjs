@@ -3,7 +3,8 @@
 // Shared by the server and the page, like srally-ranking.mjs. m2-hle2's web build keeps the
 // 16 KB of backup RAM in localStorage as hex (m2hle2.nvram.vonj). Read out of the vonj
 // program (Pinboard #1091; names from the PS3 build's symbol table, rokuYAMP
-// docs/von-rom-symbols.md):
+// docs/von-rom-symbols.md). von, the USA program, keeps the same block with the same
+// header at the same addresses, and its board is shared (games.mjs, Pinboard #1342):
 //
 // The game keeps one 0x20C-byte block twice, at 0 and 0x20C (BackupBKRAM 0x2330 copies the
 // first over the second after every change). At boot InitBackup (0x2440) checks the first:

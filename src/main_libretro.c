@@ -1162,7 +1162,9 @@ static void lr_shell_reset(void *u) {
     if (state.emu.run_state != EMU_RUNNING) emu_run(&state.emu);
 }
 
-static bool lr_shell_von(void) { return g_active_profile && !strcmp(g_active_profile->id, "vonj"); }
+static bool lr_shell_von(void) {
+    return g_active_profile && (!strcmp(g_active_profile->id, "vonj") || !strcmp(g_active_profile->id, "von"));
+}
 
 static void lr_shell_apply(void *u, const uint8_t v[8], int versus) {
     (void)u;

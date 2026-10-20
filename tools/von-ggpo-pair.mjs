@@ -30,6 +30,8 @@ const opt = (name, def) => {
 };
 const EXE     = opt('exe', null);
 const ROM     = opt('rom', path.join(process.env.ROMS_DIR ?? '', 'vonj.zip'));
+/* The profile is the set's (vonj Japan, von USA; profiles/vonj.h). */
+const PROFILE = path.basename(ROM, '.zip') === 'von' ? 'von' : 'vonj';
 const SECONDS = Number(opt('seconds', '60'));
 const DELAY   = opt('delay', '2');
 const DIR     = opt('dir', null) ?? fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'von-ggpo-'));
@@ -48,7 +50,7 @@ const le = (hex, n) => {
     return v;
 };
 
-/* profiles/vonj.h's addresses. */
+/* profiles/vonj.h's addresses, the same in von. */
 async function signs(c) {
     const r = await c.rpc('read_many', { ranges: [['0x01D00028', 1], ['0x005770B0', 2], ['0x005039F4', 4],
                                                    ['0x00503A7C', 4], ['0x00503A98', 4], ['0x00503A9C', 4]] });
@@ -62,7 +64,7 @@ async function launch(name, player, local, remote, delay) {
     fs.mkdirSync(dir, { recursive: true });
     const port = await freePort();
     const c = await M2Hle.launch({
-        rom: ROM, port, exe: EXE, profile: 'vonj', region: null, cwd: dir,
+        rom: ROM, port, exe: EXE, profile: PROFILE, region: null, cwd: dir,
         extraArgs: ['--no-nvram', '--net-config', path.join(dir, 'netplay.cfg'),
                     '--ggpo-local', String(local), '--ggpo-remote', `127.0.0.1:${remote}`,
                     '--ggpo-player', String(player), '--ggpo-delay', delay],

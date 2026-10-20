@@ -45,6 +45,7 @@ const game_profile_t *const g_profiles[] = {
     &sfight_profile,
     &srallyc_profile,
     &vonj_profile,
+    &von_profile,
     &dynamcopb_profile,
     &dyndeka2b_profile,
     &dynamcop_profile,
