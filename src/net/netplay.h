@@ -219,8 +219,11 @@
  * 32: a frame is the board's 434,600 i960 cycles (16 MHz over 656 x 424 at
  *    25 MHz), not 60 Hz's 416,667: every game gets MAME's time between
  *    vblanks, and Fighting Vipers' texture loader keeps up (Pinboard #1075).
+ * 34: Fighting Vipers' COP ops 0x79, 0x7C, 0x7D and 0x7E (its inner 3x3
+ *    tables), which went down as commands; a broken cage's pieces land
+ *    (Pinboard #1331). 33 is #1137's (PR #479).
  */
-#define NETPLAY_PROTO_REV 32
+#define NETPLAY_PROTO_REV 34
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.

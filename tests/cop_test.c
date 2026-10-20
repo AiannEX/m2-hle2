@@ -85,6 +85,41 @@ int main(void) {
     CHECK(ang_near(ga0, 0) && ang_near(ga1, 0) && ang_near(ga2, 0xF000),
           "get_glo_ang after ang_z 22.5 = (0, 0, 0xF000)");
 
+    /* ---- the inner 3x3 tables (0x7C load, 0x7D store, 0x7E multiply) ---- */
+    /* Two args each, a word index and the table (0: DM 0x31000, else 0x31800),
+     * no reply; T is left alone. Fighting Vipers lands a knocked-out fighter
+     * with them (Pinboard #1331). Unknown, their arguments went down as commands. */
+    cop_reset();
+    uint32_t unk_i3 = g_sharc.unknown_cmds;
+    cop_write(0x04000808); cop_write(0x00004000);             /* ang_x 90 */
+    cop_write(0x3E807D7D); cop_write(18); cop_write(0);       /* store: table 0, entry 2 */
+    float rx[3][3]; memcpy(rx, g_sharc.rot, sizeof rx);
+    CHECK(feq(b2f(g_sharc.dm[0x1000 + 18 + 4]), rx[1][1]) && feq(b2f(g_sharc.dm[0x1000 + 18 + 5]), rx[1][2]),
+          "0x7D stores the 3x3 at DM 0x31000 + index");
+    cop_write(0x08001010);                                    /* identity 3x3 (cop_reset clears DM) */
+    cop_write(0x04800909); cop_write(0x00004000);             /* ang_y 90 */
+    cop_write(0x3E807D7D); cop_write(27); cop_write(1);       /* store: table 1, entry 3 */
+    cop_write(0x04000808); cop_write(0x00004000);             /* then ang_x 90 */
+    float want[3][3]; memcpy(want, g_sharc.rot, sizeof want);  /* Ry * Rx, by post-multiply */
+    cop_write(0x08001010);                                    /* identity 3x3 (cop_reset clears DM) */
+    cop_write(0x03000606); cop_write(f2b(1.0f)); cop_write(f2b(2.0f)); cop_write(f2b(3.0f));
+    cop_write(0x3E007C7C); cop_write(27); cop_write(1);       /* load Ry */
+    CHECK(feq(r[0][2], 1) && feq(r[2][0], -1) && feq(r[1][1], 1), "0x7C loads the 3x3 from DM 0x31800 + index");
+    cop_write(0x3F007E7E); cop_write(18); cop_write(0);       /* compose with Rx */
+    int mul_ok = 1;
+    for (int c = 0; c < 3; c++) for (int w = 0; w < 3; w++) mul_ok &= feq(r[c][w], want[c][w]);
+    CHECK(mul_ok, "0x7E composes the 3x3 with the table entry, as a post-multiply");
+    CHECK(feq(g_sharc.pos[0], 1) && feq(g_sharc.pos[1], 2) && feq(g_sharc.pos[2], 3), "0x7C / 0x7E leave T alone");
+    /* Fn_ziku_rot (0x79): a turn about an axis into the table 0x7E reads with a 0.
+     * 90 degrees about +Y: col0 = (c, 0, -s), col2 = (s, 0, c) (Rodrigues). */
+    cop_write(0x3C807979); cop_write(36); cop_write(0x4000);
+    cop_write(f2b(0.0f)); cop_write(f2b(1.0f)); cop_write(f2b(0.0f));
+    cop_write(0x08001010);
+    cop_write(0x3F007E7E); cop_write(36); cop_write(0);
+    CHECK(feq(r[0][0], 0) && feq(r[0][2], -1) && feq(r[1][1], 1) && feq(r[2][0], 1) && feq(r[2][2], 0),
+          "0x79 writes the axis turn that 0x7E then composes");
+    CHECK(g_sharc.unknown_cmds == unk_i3 && cop_fifo_status() == 1, "no unknown commands and no replies");
+
     /* ---- 0x980004: reply FIFO status, bit 0 up while it is empty ---- */
     cop_reset();
     CHECK(cop_fifo_status() == 1, "FIFO status reads 1 with no replies waiting");

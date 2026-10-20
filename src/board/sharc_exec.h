@@ -88,6 +88,11 @@ static inline int sharc_args_for_cmd(uint32_t cmd) {
         case 0x3A007474: return 7;
         case 0x05800B0B: return 12;
         case 0x23004646: return 1;
+        /* The inner 3x3 tables (DM 0x31000 / 0x31800): word index, table */
+        case 0x3E007C7C: return 2;
+        case 0x3E807D7D: return 2;
+        case 0x3F007E7E: return 2;
+        case 0x3C807979: return 5;  /* Fn_ziku_rot: index, angle, axis x y z */
         /* COP internal memory (collision/afterimage data) */
         case 0x24004848: return 1;
         case 0x24804949: return 2;
@@ -273,6 +278,49 @@ static inline void sharc_load_words(const float *B) {
     for (int c = 0; c < 3; c++)
         for (int w = 0; w < 3; w++) g_sharc.rot[c][w] = B[c*3 + w];
     for (int w = 0; w < 3; w++) g_sharc.pos[w] = B[9 + w];
+}
+
+/* The inner 3x3 tables of 0x7C/0x7D/0x7E: DM 0x31000 when `table` is 0,
+ * else 0x31800, plus a word index the firmware does not bound. */
+static inline uint32_t sharc_inner_3x3_addr(uint32_t index, uint32_t table) {
+    return (table ? 0x31800u : 0x31000u) + index;
+}
+static inline void sharc_load_inner_3x3(uint32_t index, uint32_t table) {
+    uint32_t a = sharc_inner_3x3_addr(index, table);
+    for (int c = 0; c < 3; c++)
+        for (int w = 0; w < 3; w++) g_sharc.rot[c][w] = sharc_dm_getf(a + (uint32_t)(c*3 + w));
+}
+static inline void sharc_store_inner_3x3(uint32_t index, uint32_t table) {
+    uint32_t a = sharc_inner_3x3_addr(index, table);
+    for (int c = 0; c < 3; c++)
+        for (int w = 0; w < 3; w++) sharc_dm_setf(a + (uint32_t)(c*3 + w), g_sharc.rot[c][w]);
+}
+/* _L20208 makes each new column rot * M's column, the products summed in
+ * sharc_compose_words' order; T stays. */
+static inline void sharc_mul_inner_3x3(uint32_t index, uint32_t table) {
+    uint32_t a = sharc_inner_3x3_addr(index, table);
+    float B[12] = {0}, w[12];
+    for (int i = 0; i < 9; i++) B[i] = sharc_dm_getf(a + (uint32_t)i);
+    sharc_compose_words(B, w);
+    for (int c = 0; c < 3; c++)
+        for (int r = 0; r < 3; r++) g_sharc.rot[c][r] = w[c*3 + r];
+}
+
+/* Fn_ziku_rot (0x79, PM 0x20ABB): the turn by `angle` about the axis (x, y, z)
+ * into DM 0x31000 + index, the table 0x7E reads with a 0. Rodrigues' matrix,
+ * column by column, in the firmware's operation order; k is 1 - cos (DM
+ * 0x30301 holds the 1.0). The axis is taken as given, not normalised. */
+static inline void sharc_ziku_rot(uint32_t index, int32_t angle, float x, float y, float z) {
+    float s, c;
+    sharc_sincos(angle, &s, &c);                                    /* _L202C1 */
+    float k = 1.0f - c, m[9], t;
+    m[0] = x * x * k + c;
+    m[4] = y * y * k + c;
+    m[8] = z * z * k + c;
+    t = k * (y * x);  m[1] = t + s * z;  m[3] = t - s * z;
+    t = (z * x) * k;  m[2] = t - s * y;  m[6] = t + s * y;
+    t = (z * y) * k;  m[5] = t + s * x;  m[7] = t - s * x;
+    for (int i = 0; i < 9; i++) sharc_dm_setf(0x31000u + index + (uint32_t)i, m[i]);
 }
 
 /* 0x44: the inner bank's matrix n becomes the current matrix. */
@@ -1690,6 +1738,32 @@ static inline void sharc_exec(uint32_t cmd, const uint32_t *args, int n) {
          * current matrix transformed by inner[n] — current = inner[n] * current. */
         case 0x23004646:
             if (n >= 1) sharc_compose_rev(sharc_inner_slot(args[0]));
+            return;
+
+        /* The inner 3x3 tables: nine words a matrix at DM 0x31000 (second arg 0)
+         * or 0x31800 (else) plus the first arg, a word index. T is left alone.
+         * Fighting Vipers keeps each fighter's body turns there; at 0x7B31C it
+         * turns the body's points by one to find the lowest, which stands the
+         * fighter on the floor. Unknown, their words went down as commands and
+         * a fighter landing from a launch stayed in the air (Pinboard #1331).
+         * 0x3E007C7C Fn_load_inner_3x3 (PM 0x2046C): the entry becomes the 3x3. */
+        case 0x3E007C7C:
+            if (n >= 2) sharc_load_inner_3x3(args[0], args[1]);
+            return;
+        /* 0x3E807D7D Fn_store_inner_3x3 (PM 0x20487): the 3x3 into the entry. */
+        case 0x3E807D7D:
+            if (n >= 2) sharc_store_inner_3x3(args[0], args[1]);
+            return;
+        /* 0x3F007E7E Fn_mul_matrix_inner3 (PM 0x203FC, _L20208): the 3x3
+         * composed with the entry, as 0x37 composes with a unit matrix. */
+        case 0x3F007E7E:
+            if (n >= 2) sharc_mul_inner_3x3(args[0], args[1]);
+            return;
+        /* 0x3C807979 Fn_ziku_rot (PM 0x20ABB): fills the table entry 0x7E then
+         * turns by. Five args, no reply. */
+        case 0x3C807979:
+            if (n >= 5) sharc_ziku_rot(args[0], (int32_t)args[1], sharc_bits_to_float(args[2]),
+                                       sharc_bits_to_float(args[3]), sharc_bits_to_float(args[4]));
             return;
 
         /* 0x2B805757: read_col1 — PM 0x02044E.
