@@ -31,6 +31,8 @@
  * 0x3x is the centring at speed; 0x4x pulses on and off, a shake. The side of
  * 0x5x / 0x6x is Supermodel's; the game alone does not tell it.
  *
+ * Sega Rally speaks another language to its drive board: drive_board_decode_srally.
+ *
  * Nothing on the board reads the drive board back (port E reads 0xFF), so
  * this is output only: it changes no frame, and needs no savestate of its own
  * (the command is model1io's `drive`, already in the state).
@@ -47,13 +49,14 @@ typedef enum {
     DRIVE_CENTER,        /* 0x3x: centring that grows with speed */
     DRIVE_VIBRATE,       /* 0x4x: shake */
     DRIVE_PUSH,          /* 0x5x right, 0x6x left */
+    DRIVE_TORQUE,        /* Sega Rally: a steady turning force, 1-32 */
 } drive_kind_t;
 
 typedef struct {
     uint8_t cmd;
     uint8_t kind;        /* drive_kind_t */
-    uint8_t level;       /* 0-7 */
-    int8_t  dir;         /* DRIVE_PUSH: +1 right, -1 left; else 0 */
+    uint8_t level;       /* 0-7; DRIVE_TORQUE 1-32 */
+    int8_t  dir;         /* DRIVE_PUSH, DRIVE_TORQUE: +1 right, -1 left; else 0 */
 } drive_effect_t;
 
 static inline drive_effect_t drive_board_decode(uint8_t cmd) {
@@ -66,6 +69,34 @@ static inline drive_effect_t drive_board_decode(uint8_t cmd) {
         case 0x5: e.kind = DRIVE_PUSH; e.dir = +1; break;
         case 0x6: e.kind = DRIVE_PUSH; e.dir = -1; break;
         default:  e.level = 0; break;
+    }
+    return e;
+}
+
+/*
+ * Sega Rally's drive board (Pinboard #1082). The game writes one byte to the
+ * 315-5649's port E (IO+0x08; io_5649.h, io5649_drive), its RAM copy at
+ * 0x202049, and sends it again only when it changes. It is not Daytona's
+ * language: the i960 works the force out itself, each frame, from the car
+ * (the race's physics at 0x5D6870 call 0x5D8C40) or from the wheel's pot
+ * alone (0x5D8750, a spring back to the centre), and the board only turns
+ * the motor:
+ *   0x80-0x9F  turn the wheel right (toward a higher pot), strength 1-32
+ *   0xC0-0xDF  turn it left, strength 1-32
+ *   0x00       motor off (attract, a standing car)
+ *   0x10-0x1F  set-up (0x10 at power-on and reset, 0x15 at the race start)
+ * The test menu's strength setting (0x20201F) scales the force and its
+ * switch (0x20201A == 1) sends only 0x00, all on the i960. The side was
+ * measured: wheel right of centre (pot 0x8C) brings 0xCx, left of it (0x74)
+ * 0x8x, the centring a cabinet feels. 0xE0-0xFF is never sent (0xFF is the
+ * port before the first write): nothing.
+ */
+static inline drive_effect_t drive_board_decode_srally(uint8_t cmd) {
+    drive_effect_t e = { cmd, DRIVE_NONE, 0, 0 };
+    if ((cmd & 0xE0u) == 0x80u || (cmd & 0xE0u) == 0xC0u) {
+        e.kind  = DRIVE_TORQUE;
+        e.level = (uint8_t)((cmd & 0x1Fu) + 1u);
+        e.dir   = (cmd & 0x40u) ? -1 : +1;
     }
     return e;
 }

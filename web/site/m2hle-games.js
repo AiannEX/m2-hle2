@@ -6,7 +6,8 @@
  *   arcade.sonicthefighte.rs/?game=sfight&profile=sfight_console
  *
  * ?game= is a key of GAMES, ?profile= one of its profiles (the first is the
- * default, as in src/profiles/registry.h). A game lists every variant MAME
+ * default, as in src/profiles/registry.h; a game's `first` can name another
+ * for a language, Virtual-On's Japanese game on the Japanese page). A game lists every variant MAME
  * knows; one marked `soon` has no profile in the emulator yet, so the front page
  * shows it greyed and ?profile= cannot pick it. Without ?game=, a page named for a
  * game (sfight.html, srallyc.html: web/stamp-site.cmake) or a host named for
@@ -15,7 +16,10 @@
  * was a front page. A bare visit, one with only ?lang=, or an unknown ?game=,
  * is the front page.
  *
- * Each game's profiles must be in the web build (registry.h, M2HLE_WEB).
+ * Each game's profiles must be in the web build (registry.h, M2HLE_WEB). A
+ * site profile can also be one of them booted in a fixed country: `runs` names
+ * the emulator's profile and `region` the --region= it gets over the page's
+ * language (m2hle-game.js; Fighting Vipers' Japanese game, Pinboard #1350).
  *
  * A game's words are English; `i18n` holds another language's (m2hle-lang.js,
  * ?lang=), any of title, blurb, romHint, labels, and a profile's name and about
@@ -32,6 +36,7 @@ const m2hleGames = (() => {
       profiles: [
         { id: 'sfight_console', name: 'Console', about: 'The PS3 release: its menus, free play' },
         { id: 'sfight', name: 'Arcade', about: 'The cabinet as it was' },
+        { id: 'schamp', name: 'Championship', about: 'Sonic Championship, the USA release' },
       ],
       romHint: 'A merged <code>sfight.zip</code> or <code>schamp.zip</code>, or <code>sfight.zip</code> and <code>schamp.zip</code> together',
       labels: {},
@@ -40,7 +45,8 @@ const m2hleGames = (() => {
           title: 'ソニック・ザ・ファイターズ',
           blurb: 'ソニックたちがデスエッグで大乱闘。RPCN と GGPO でオンライン対戦。',
           profiles: { sfight_console: { name: 'コンソール', about: 'PS3 版：メニュー付き、フリープレイ' },
-                      sfight: { name: 'アーケード', about: '筐体そのまま' } },
+                      sfight: { name: 'アーケード', about: '筐体そのまま' },
+                      schamp: { name: 'チャンピオンシップ', about: 'ソニック・チャンピオンシップ、北米版' } },
           romHint: 'マージ済みの <code>sfight.zip</code> または <code>schamp.zip</code>、もしくは <code>sfight.zip</code> と <code>schamp.zip</code> を一緒に',
         },
       },
@@ -80,15 +86,19 @@ const m2hleGames = (() => {
     vonj: {
       title: 'Cyber Troopers Virtual-On',
       year: 1995, board: 'Model 2B-CRX', colors: ['#2a9d8f', '#0b3d3a'],
-      blurb: 'Giant robots, two sticks each, one arena. The Japanese release.',
+      blurb: 'Giant robots, two sticks each, one arena.',
+      /* von is the English game, the USA Revision B program in von.zip
+       * (src/profiles/vonj.h, Pinboard #1342), and vonj the Japanese one, the
+       * Japanese page's first. MAME's current von.zip holds the Export program
+       * instead, which m2-hle2 does not run yet. */
       profiles: [
+        { id: 'von', name: 'USA', about: 'Twin, Revision B (USA)' },
         { id: 'vonj', name: 'Japan', about: 'Twin, Revision B (Japan)' },
-        { id: 'von', name: 'Export', about: 'Twin (Export)', soon: true },
-        { id: 'vonu', name: 'USA', about: 'Twin (USA, Revision B)', soon: true },
         { id: 'vonr', name: 'Relay', about: 'Relay (Japan)', soon: true },
       ],
+      first: { ja: 'vonj' },
       /* vonj is a clone: its zip and its parent's, picked together, or a merged one. */
-      romHint: 'Your <code>vonj.zip</code> and its parent <code>von.zip</code>, picked together, or a merged <code>vonj.zip</code>',
+      romHint: 'Your <code>von.zip</code> (USA); for Japan, <code>vonj.zip</code> and its parent <code>von.zip</code> picked together, or a merged <code>vonj.zip</code>',
       /* src/profiles/vonj.h: the left lever is UP/DOWN/LEFT/RIGHT, B1 its
        * trigger, B2 its dash; B3 both triggers, B4 both dashes. The right lever
        * is player 2's directions and B1 / B2, which a pad plays as rows of its
@@ -99,18 +109,17 @@ const m2hleGames = (() => {
                 b1: 'Left shot', b2: 'Left dash', rshot: 'Right shot', rdash: 'Right dash',
                 b3: 'Both shots', b4: 'Both dashes' },
       ownReplay: false,
-      /* No shared board or ranking for it (arcade/games.mjs); its save is kept
-       * in the browser (m2hle-page.js, web_backup_keep). */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: '電脳戦機バーチャロン',
-          blurb: '巨大ロボット、ツインスティック、ひとつの戦場。日本版。',
+          blurb: '巨大ロボット、ツインスティック、ひとつの戦場。',
           profiles: { vonj: { name: '日本', about: 'ツイン、リビジョン B（日本）' },
-                      von: { name: '海外', about: 'ツイン（海外）' },
-                      vonu: { name: '北米', about: 'ツイン（北米、リビジョン B）' },
+                      von: { name: '北米', about: 'ツイン、リビジョン B（北米）' },
                       vonr: { name: 'リレー', about: 'リレー（日本）' } },
-          romHint: 'お持ちの <code>vonj.zip</code> と親セットの <code>von.zip</code> を一緒に選ぶか、マージ済みの <code>vonj.zip</code>',
+          romHint: 'お持ちの <code>vonj.zip</code> と親セットの <code>von.zip</code> を一緒に選ぶか、マージ済みの <code>vonj.zip</code>（北米版は <code>von.zip</code> だけ）',
           labels: { up: '左レバー上', down: '左レバー下', left: '左レバー左', right: '左レバー右',
                     rup: '右レバー上', rdown: '右レバー下', rleft: '右レバー左', rright: '右レバー右',
                     b1: '左ショット', b2: '左ダッシュ', rshot: '右ショット', rdash: '右ダッシュ',
@@ -136,8 +145,9 @@ const m2hleGames = (() => {
       /* src/profiles/dynamcop.h: an 8-way stick, B1 punch, B2 kick, B3 jump. */
       labels: { b1: 'Punch', b2: 'Kick', b3: 'Jump', b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'ダイナマイト刑事2',
@@ -158,19 +168,26 @@ const m2hleGames = (() => {
       blurb: 'Armoured street fighters in caged arenas: break the armour, then the walls.',
       profiles: [
         { id: 'fvipers', name: 'Rev D', about: 'Revision D' },
+        /* The same set and profile booted as the Japanese game on any page
+         * (src/profiles/fvipers.h's COUNTRY hooks, Pinboard #1350); the
+         * Japanese page boots fvipers as that already. */
+        { id: 'fvipers_japan', runs: 'fvipers', region: 'japan', name: 'Rev D Japan',
+          about: 'Revision D, the Japanese game' },
         { id: 'fvipersb', name: 'Rev B', about: 'Revision B', soon: true },
       ],
       romHint: 'Your <code>fvipers.zip</code> (Fighting Vipers, Revision D)',
       /* src/profiles/fvipers.h: MAME's INPUT_PORTS(vf2), B1 punch, B2 kick, B3 guard. */
       labels: { b1: 'Punch', b2: 'Kick', b3: 'Guard', b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'ファイティングバイパーズ',
           blurb: 'アーマーをまとった喧嘩屋たちが金網の中で激突。アーマーを砕き、壁をぶち破れ。',
           profiles: { fvipers: { name: 'リビジョン D', about: 'リビジョン D' },
+                      fvipers_japan: { name: 'リビジョン D 日本', about: 'リビジョン D（日本版）' },
                       fvipersb: { name: 'リビジョン B', about: 'リビジョン B' } },
           romHint: 'お持ちの <code>fvipers.zip</code>（ファイティングバイパーズ、リビジョン D）',
           labels: { b1: 'パンチ', b2: 'キック', b3: 'ガード', b4: '未使用' },
@@ -181,25 +198,31 @@ const m2hleGames = (() => {
       title: 'The House of the Dead',
       year: 1996, board: 'Model 2C-CRX', colors: ['#8c1010', '#1c0606'],
       blurb: 'Dr. Curien\'s mansion is overrun. Two agents, two guns, and the dead between them and the truth.',
-      /* src/profiles/hotd.h: Revision A or the first release (MAME's hotdo), one profile. */
+      /* src/profiles/hotd.h: Revision A or the first release (MAME's hotdo), and
+       * since #1286 the first release and the prototype as sets of their own. */
       profiles: [
         { id: 'hotd', name: 'Rev A', about: 'Revision A, or the first release' },
+        { id: 'hotdo', name: 'First', about: 'The first release' },
+        { id: 'hotdp', name: 'Prototype', about: 'The prototype, in Japanese only' },
       ],
-      romHint: 'Your <code>hotd.zip</code> (The House of the Dead)',
+      romHint: 'Your <code>hotd.zip</code> (The House of the Dead), or <code>hotdo.zip</code> or <code>hotdp.zip</code> and its parent <code>hotd.zip</code>, picked together',
       /* A light gun on the mouse or a finger (main_web.c, web_gun_event); the
        * pad's directions walk it, B1 fires, B2 reloads (board/lightgun.h). */
       labels: { b1: 'Trigger', b2: 'Reload', b3: 'Unused', b4: 'Unused' },
       /* The Controls panel offers the flash on each shot (m2hle-pad.js, lightgun_host.h). */
       gun: true,
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'ザ・ハウス・オブ・ザ・デッド',
           blurb: 'キュリアン博士の館は死者であふれた。二人のエージェント、二丁の銃、そして真相を阻む死者たち。',
-          profiles: { hotd: { name: 'リビジョン A', about: 'リビジョン A または初期版' } },
-          romHint: 'お持ちの <code>hotd.zip</code>（ザ・ハウス・オブ・ザ・デッド）',
+          profiles: { hotd: { name: 'リビジョン A', about: 'リビジョン A または初期版' },
+                      hotdo: { name: '初期版', about: '最初のリリース' },
+                      hotdp: { name: 'プロトタイプ', about: 'プロトタイプ（日本語のみ）' } },
+          romHint: 'お持ちの <code>hotd.zip</code>（ザ・ハウス・オブ・ザ・デッド）、または <code>hotdo.zip</code>、<code>hotdp.zip</code> と親セットの <code>hotd.zip</code> を一緒に',
           labels: { b1: 'トリガー', b2: 'リロード', b3: '未使用', b4: '未使用' },
         },
       },
@@ -210,25 +233,65 @@ const m2hleGames = (() => {
       blurb: 'Three-Seven Speedway, Dinosaur Canyon, Seaside Street Galaxy. Rolling start!',
       profiles: [
         { id: 'daytona', name: 'Rev A', about: 'Japan, Revision A' },
+        /* The clones of #1286, each a clone of daytona.zip; MAME marks the hacks not working. */
+        { id: 'daytona93', name: 'Original', about: 'The 1993 first release' },
+        { id: 'daytonase', name: 'Special', about: 'Special Edition, Revision A' },
+        { id: 'daytonas', name: 'Saturn ads', about: 'With the Sega Saturn adverts' },
+        { id: 'daytonat', name: 'Turbo 1', about: 'Turbo hack, set 1' },
+        { id: 'daytonata', name: 'Turbo 2', about: 'Turbo hack, set 2' },
+        { id: 'daytonagtx', name: 'GTX 2004', about: 'GTX 2004 Edition (a hack)' },
       ],
       /* The I/O board's program is MAME's model1io device (src/profiles/daytona.h). */
-      romHint: 'Your <code>daytona.zip</code> and the I/O board\'s <code>model1io.zip</code>, picked together',
+      romHint: 'Your <code>daytona.zip</code> and the I/O board\'s <code>model1io.zip</code>, picked together; for another build, its own zip (<code>daytona93.zip</code>, <code>daytonase.zip</code>, ...) with those two',
       /* src/profiles/daytona.h: LEFT/RIGHT the wheel, UP/DOWN the four-speed
        * lever, B1 accelerator, B2 brake, B3/B4 VR1/VR2 (player 2's B3/B4 are
        * VR3/VR4). The wheel's force is the pad's rumble (m2hle-pad.js). */
       labels: { up: 'Shift up', down: 'Shift down', left: 'Steer left', right: 'Steer right',
                 b1: 'Accelerator', b2: 'Brake', b3: 'View 1', b4: 'View 2' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'デイトナUSA',
           blurb: 'スリーセブン・スピードウェイ、ダイナソー・キャニオン、シーサイド・ストリート・ギャラクシー。ローリングスタート！',
-          profiles: { daytona: { name: 'リビジョン A', about: '日本、リビジョン A' } },
-          romHint: 'お持ちの <code>daytona.zip</code> と I/O ボードの <code>model1io.zip</code> を一緒に',
+          profiles: { daytona: { name: 'リビジョン A', about: '日本、リビジョン A' },
+                      daytona93: { name: '初期版', about: '1993 年の最初のリリース' },
+                      daytonase: { name: 'スペシャル', about: 'スペシャルエディション、リビジョン A' },
+                      daytonas: { name: 'サターン広告', about: 'セガサターンの広告入り' },
+                      daytonat: { name: 'ターボ 1', about: 'ターボハック、セット 1' },
+                      daytonata: { name: 'ターボ 2', about: 'ターボハック、セット 2' },
+                      daytonagtx: { name: 'GTX 2004', about: 'GTX 2004 エディション（ハック版）' } },
+          romHint: 'お持ちの <code>daytona.zip</code> と I/O ボードの <code>model1io.zip</code> を一緒に。別のバージョンは、その zip（<code>daytona93.zip</code>、<code>daytonase.zip</code> など）もこの二つと一緒に',
           labels: { up: 'シフトアップ', down: 'シフトダウン', left: 'ハンドル左', right: 'ハンドル右',
                     b1: 'アクセル', b2: 'ブレーキ', b3: '視点 1', b4: '視点 2' },
+        },
+      },
+    },
+    vcop: {
+      title: 'Virtua Cop',
+      year: 1994, board: 'Model 2', colors: ['#d8b01d', '#14204c'],
+      blurb: 'Rage and Smarty of the Virtua City police take on EVL Inc. The sight turns red on whoever is about to shoot.',
+      /* src/profiles/vcop.h: Revision B, one profile. */
+      profiles: [
+        { id: 'vcop', name: 'Rev B', about: 'Revision B' },
+      ],
+      /* The I/O board's program is MAME's model1io2 device (src/profiles/vcop.h). */
+      romHint: 'Your <code>vcop.zip</code> and the I/O board\'s <code>model1io2.zip</code>, picked together',
+      /* The House of the Dead's gun (board/lightgun.h): B1 fires, B2 reloads. */
+      labels: { b1: 'Trigger', b2: 'Reload', b3: 'Unused', b4: 'Unused' },
+      gun: true,
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'バーチャコップ',
+          blurb: 'バーチャシティ警察のレイジとスマーティが EVL 社に立ち向かう。撃とうとする相手の照準が赤く光る。',
+          profiles: { vcop: { name: 'リビジョン B', about: 'リビジョン B' } },
+          romHint: 'お持ちの <code>vcop.zip</code> と I/O ボードの <code>model1io2.zip</code> を一緒に',
+          labels: { b1: 'トリガー', b2: 'リロード', b3: '未使用', b4: '未使用' },
         },
       },
     },
@@ -247,8 +310,9 @@ const m2hleGames = (() => {
       /* src/profiles/vf2.h: MAME's INPUT_PORTS(vf2), B1 punch, B2 kick, B3 guard. */
       labels: { b1: 'Punch', b2: 'Kick', b3: 'Guard', b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'バーチャファイター2',
@@ -278,8 +342,9 @@ const m2hleGames = (() => {
       /* src/profiles/doa.h: MAME's INPUT_PORTS(doa), B1 hold, B2 punch, B3 kick. */
       labels: { b1: 'Hold', b2: 'Punch', b3: 'Kick', b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'デッド オア アライブ',
@@ -307,8 +372,9 @@ const m2hleGames = (() => {
        * (m2hle-pad.js), outside a session. */
       labels: { b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           blurb: 'データイーストのバスケットボール。16都市からチームを選んでティップオフ。テストメニューの PLAYER SELECTION を 4P にすれば、3・4台目のパッドで4人まで遊べる。',
@@ -318,29 +384,75 @@ const m2hleGames = (() => {
         },
       },
     },
+    powsled: {
+      title: 'Power Sled',
+      year: 1996, board: 'Model 2B-CRX', colors: ['#e05a1d', '#4c1a0b'],
+      blurb: 'Snow sleds on a linked ring of cabinets. Press Entry to race alone: the Main unit (the operator\'s) runs beside your sled in this tab. For a race against a friend, open a Room Match: its owner runs the Main and its guest rides.',
+      profiles: [
+        { id: 'powsled', name: 'Slave', about: 'The ride, Revision A (and the Main, in a room)' },
+        { id: 'powsledr', name: 'Relay', about: 'The big screen (Relay unit)', soon: true },
+      ],
+      romHint: 'Your <code>powsled.zip</code> (Power Sled, the Slave unit)',
+      /* src/profiles/powsled.h: the ride steers with its two pedals (LEFT and
+       * RIGHT), B1 is the rider's Entry, B2 Call; B3 cancels the network check,
+       * B4 an error. On the Main (a room's owner, net/comm_role.h) the same
+       * buttons are the operator's panel: P1 B2 opens entry, P2 B2 twice and
+       * P2 B3 start the race (README.md, Power Sled). */
+      labels: { left: 'Left pedal', right: 'Right pedal', up: 'Main: panel button 3', down: 'Unused',
+                b1: 'Entry', b2: 'Call', b3: 'Cancel network check / Main: start race', b4: 'Cancel error' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'パワースレッド',
+          blurb: '筐体をリンクして走るスノースレッド。エントリーを押せば一人でレース：メインユニット（オペレーター側）がこのタブでソリと一緒に動きます。友だちとはルームマッチで：オーナーがメイン、ゲストがソリに乗ります。',
+          profiles: { powsled: { name: 'スレーブ', about: 'ライド、リビジョン A（ルームではメインにも）' },
+                      powsledr: { name: 'リレー', about: '大画面（リレーユニット）' } },
+          romHint: 'お持ちの <code>powsled.zip</code>（パワースレッド、スレーブユニット）',
+          labels: { left: '左ペダル', right: '右ペダル', up: 'メイン：パネルボタン3', down: '未使用',
+                    b1: 'エントリー', b2: 'コール', b3: 'ネットワークチェック取消／メイン：レース開始', b4: 'エラー取消' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
+  /* ?game= names that are another game's set: { game, profile }. */
+  const ALIASES = { von: { id: 'vonj', profile: 'von' } };
 
-  /* { id, profile } for this visit, or null for the front page. */
+  /* A game's default profile on this page: its `first` for the language, or
+   * its first. */
+  function first(id) {
+    const g = GAMES[id];
+    const want = (g.first || {})[m2hleLang.lang];
+    return (g.profiles.find((p) => p.id === want && !p.soon) || g.profiles[0]).id;
+  }
+
+  /* { id, profile, entry, region } for this visit, or null for the front page:
+   * `entry` is the site profile picked, `profile` the emulator's that runs it,
+   * `region` the country it fixes (none: the page's language picks). */
   function pick(loc) {
     const q = new URLSearchParams(loc.search);
     const page = (/\/([a-z0-9_]+)\.html$/.exec(loc.pathname) || [])[1];
     const host = (/^([a-z]+)\./.exec(loc.hostname) || [])[1];
     let id = null;
-    if (q.has('game')) id = GAMES[q.get('game')] ? q.get('game') : null;
+    const alias = ALIASES[q.get('game')] || (!q.has('game') && ALIASES[page]);
+    if (alias) id = alias.id;
+    else if (q.has('game')) id = GAMES[q.get('game')] ? q.get('game') : null;
     else if (GAMES[page]) id = page;
     else if (HOSTS[host]) id = HOSTS[host];
     else if ([...q.keys()].some((k) => k !== 'lang')) id = 'sfight';
     if (!id) return null;
     const profiles = GAMES[id].profiles;
-    const profile = profiles.find((p) => p.id === q.get('profile') && !p.soon) || profiles[0];
-    return { id, profile: profile.id };
+    const want = q.get('profile') || (alias && alias.profile);
+    const p = profiles.find((e) => e.id === want && !e.soon) || profiles.find((e) => e.id === first(id));
+    return { id, profile: p.runs || p.id, entry: p.id, region: p.region || null };
   }
 
   /* The link that plays a game, relative to the site's root, in this page's
    * language. */
   function href(id, profile) {
-    const q = new URLSearchParams({ game: id, profile: profile || GAMES[id].profiles[0].id });
+    const q = new URLSearchParams({ game: id, profile: profile || first(id) });
     return './?' + m2hleLang.keep(q);
   }
 

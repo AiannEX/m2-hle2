@@ -545,6 +545,18 @@ static const char *game_render_fill_vs_glsl =
     "  return (((b >> 23) & 255) - 127) * 256 + LOG2[(b >> 16) & 127];\n" \
     "}\n"
 
+/* The microtexture's coordinates (geo3d.h GEO3D_FACE_MICRO): the board reads
+ * the square at u, v << (1 << minlod) (model2rd.ipp fetch_bilinear_texel,
+ * miplevel -1), so 2, 4, 16 or 256 of its texels to one of the tile's. The
+ * square repeats every 128 texels and mirrors every 256, so uv is taken modulo
+ * 256 / scale first: the same texels, and no float runs out of fraction bits
+ * at a scale of 256. */
+#define GAME_RENDER_MICRO_UV_GLSL \
+    "vec2 micro_uv(int minlod) {\n" \
+    "  float scale = float(2 << ((1 << minlod) - 1));\n" \
+    "  return (uv - floor(uv * (scale / 256.0)) * (256.0 / scale)) * scale;\n" \
+    "}\n"
+
 /* Per-pixel depth (geo3d.h g_geo3d_pixel_depth): the board's sort key, MAME's
  * float_to_zval as geo3d_board_zkey has it, taken of the pixel's own z (ez),
  * never nearer than the face's own key (pkey.z's fraction) nor, inside pbox,
@@ -643,9 +655,8 @@ static const char *game_render_fill_fs_ref_glsl =
     "  if (has(16) && (copy.y & 1) != 0) q.y = size.y - 1 - q.y;\n"
     "  return texelFetch(atlas_smp, (t.xy + q) & 2047, 0).r;\n"
     "}\n"
-    "vec2 sample_level(int L) {\n"
-    "  ivec4 t = level_tile(L);\n"
-    "  vec2 c = uv / pow(2.0, float(L)) - 0.5;\n"
+    "vec2 sample_tile(ivec4 t, vec2 c) {\n"
+    "  c -= 0.5;\n"
     "  ivec2 i0 = ivec2(floor(c));\n"
     "  vec2 f = fract(c);\n"
     "  ivec2 edge = ivec2(uvec2(i0 + t.zw * 8) % uvec2(t.zw));\n"
@@ -672,6 +683,13 @@ static const char *game_render_fill_fs_ref_glsl =
     "  }\n"
     "  return vec2(mix(row0, row1, f.y), a);\n"
     "}\n"
+    "vec2 sample_level(int L) { return sample_tile(level_tile(L), uv / pow(2.0, float(L))); }\n"
+    GAME_RENDER_MICRO_UV_GLSL
+    "vec2 sample_micro() {\n"
+    "  int fl = int(lbpl.z + 0.5);\n"
+    "  ivec4 t = ivec4(((fl >> 14) & 1) * 128, ((fl >> 15) & 3) * 128 + (has(4) ? 0 : 1024), 128, 128);\n"
+    "  return sample_tile(t, micro_uv((fl >> 12) & 3));\n"
+    "}\n"
     "void main() {\n"
     "  float lmax = floor(log2(max(min(tile.z, tile.w), 2.0)) + 0.5) - 1.0;\n"
     "  float lod = clamp(log2(max(length(dFdx(uv)), length(dFdy(uv)))), 0.0, lmax);\n"
@@ -683,13 +701,15 @@ static const char *game_render_fill_fs_ref_glsl =
     "  if (tile.z > 0.0) {\n"
     "    int L0 = int(floor(lod));\n"
     "    float blend = fract(lod);\n"
+    "    int mml = 0;\n"
     "    if (lbpl.w < 100000.0) {\n"
-    "      int mml = fast_log2(ez) - int(lbpl.w);\n"
+    "      mml = fast_log2(ez) - int(lbpl.w);\n"
     "      int maxl = int(lmax);\n"
     "      L0 = clamp(mml >> 7, 0, maxl);\n"
     "      blend = (mml > 0 && L0 < maxl) ? float((mml & 127) * 2) / 256.0 : 0.0;\n"
     "    }\n"
     "    vec2 tx = mix(sample_level(L0), sample_level(L0 + 1), blend);\n"
+    "    if (has(2048) && mml < 0) tx = mix(tx, sample_micro(), float(min(-mml >> ((int(lbpl.z + 0.5) >> 12) & 3), 127)) / 256.0);\n"
     "    if (has(1) && tx.y < 0.5) discard;\n"
     "    float al = tx.x;\n"
     "    if (lbpl.x < 0.0) {\n"
@@ -764,13 +784,10 @@ static const char *game_render_fill_fs_glsl =
     "out vec4 frag_color;\n"
     GAME_RENDER_FAST_LOG2_GLSL
     GAME_RENDER_PIXEL_KEY_GLSL
-    "vec2 sample_level(int L) {\n"
-    "  ivec2 sh = max(tile_log2 - ivec2(L), ivec2(0));\n"   /* log2 of the level's sides */
+    /* base: the tile's corner in the atlas, sh: log2 of its sides */
+    "vec2 sample_at(ivec2 base, ivec2 sh, vec2 c) {\n"
     "  ivec2 m = (ivec2(1) << sh) - 1;\n"
-    "  int sheet = (face.x >> 2) & 1;\n"
-    "  ivec2 base = ivec2((uvec2(ivec2(tile.xy) - ivec2(2048, 1024 + sheet * 1024)) >> uint(L)) & uvec2(2047u, 1023u));\n"
-    "  base.y += ((sheet + L) & 1) * 1024;\n"
-    "  vec2 c = uv * intBitsToFloat((127 - L) << 23) - 0.5;\n"   /* uv / 2^L */
+    "  c -= 0.5;\n"
     "  ivec2 i0 = ivec2(floor(c));\n"
     "  vec2 f = fract(c);\n"
     "  ivec2 i1 = i0 + 1;\n"
@@ -804,6 +821,18 @@ static const char *game_render_fill_fs_glsl =
     "  }\n"
     "  return vec2(mix(row0, row1, f.y), a);\n"
     "}\n"
+    "vec2 sample_level(int L) {\n"
+    "  ivec2 sh = max(tile_log2 - ivec2(L), ivec2(0));\n"   /* log2 of the level's sides */
+    "  int sheet = (face.x >> 2) & 1;\n"
+    "  ivec2 base = ivec2((uvec2(ivec2(tile.xy) - ivec2(2048, 1024 + sheet * 1024)) >> uint(L)) & uvec2(2047u, 1023u));\n"
+    "  base.y += ((sheet + L) & 1) * 1024;\n"
+    "  return sample_at(base, sh, uv * intBitsToFloat((127 - L) << 23));\n"   /* uv / 2^L */
+    "}\n"
+    GAME_RENDER_MICRO_UV_GLSL
+    "vec2 sample_micro() {\n"
+    "  ivec2 base = ivec2(((face.x >> 14) & 1) * 128, ((face.x >> 15) & 3) * 128 + (((face.x >> 2) & 1) ^ 1) * 1024);\n"
+    "  return sample_at(base, ivec2(7), micro_uv((face.x >> 12) & 3));\n"
+    "}\n"
     "vec3 ramp(int li) {\n"
     "  int br = ((face.y<<8)+li)*2, bg = 0x4000+((face.z<<8)+li)*2, bb = 0x8000+((face.w<<8)+li)*2;\n"
     "  float cr = texelFetch(cxlat_smp, ivec2(br & 255, br >> 8), 0).r * 255.0;\n"
@@ -825,14 +854,16 @@ static const char *game_render_fill_fs_glsl =
     "  if (tile.z > 0.0) {\n"
     "    int L0 = int(floor(lod));\n"
     "    float blend = fract(lod);\n"
+    "    int mml = 0;\n"
     "    if (lbpl.w < 100000.0) {\n"
-    "      int mml = fast_log2(ez) - int(lbpl.w);\n"
+    "      mml = fast_log2(ez) - int(lbpl.w);\n"
     "      int maxl = int(lmax);\n"
     "      L0 = clamp(mml >> 7, 0, maxl);\n"
     "      blend = (mml > 0 && L0 < maxl) ? float((mml & 127) * 2) / 256.0 : 0.0;\n"
     "    }\n"
     "    vec2 tx = sample_level(L0);\n"
     "    if (blend != 0.0) tx = mix(tx, sample_level(L0 + 1), blend);\n"
+    "    if ((face.x & 2048) != 0 && mml < 0) tx = mix(tx, sample_micro(), float(min(-mml >> ((face.x >> 12) & 3), 127)) / 256.0);\n"
     "    if ((face.x & 1) != 0 && tx.y < 0.5) discard;\n"
     "    float al = tx.x;\n"
     "    if (lbpl.x < 0.0) {\n"
@@ -931,9 +962,8 @@ static const char *game_render_fill_fs_hlsl =
     "  if (has(fl, 16) && (copy.y & 1) != 0) q.y = size.y - 1 - q.y;\n"
     "  return atlas.Load(int3((t.xy + q) & 2047, 0)).r;\n"
     "}\n"
-    "float2 sample_level(float2 uv, float4 tile, float fl, int L) {\n"
-    "  int4 t = level_tile(tile, fl, L);\n"
-    "  float2 c = uv / pow(2.0, (float)L) - 0.5;\n"
+    "float2 sample_tile(int4 t, float fl, float2 c) {\n"
+    "  c -= 0.5;\n"
     "  int2 i0 = (int2)floor(c);\n"
     "  float2 f = frac(c);\n"
     "  int2 edge = (int2)((uint2)(i0 + t.zw * 8) % (uint2)t.zw);\n"
@@ -959,6 +989,17 @@ static const char *game_render_fill_fs_hlsl =
     "    if (row1 == 1.0) row1 = row0;\n"
     "  }\n"
     "  return float2(lerp(row0, row1, f.y), a);\n"
+    "}\n"
+    "float2 sample_level(float2 uv, float4 tile, float fl, int L) {\n"
+    "  return sample_tile(level_tile(tile, fl, L), fl, uv / pow(2.0, (float)L));\n"
+    "}\n"
+    /* the microtexture's coordinates: GAME_RENDER_MICRO_UV_GLSL */
+    "float2 sample_micro(float2 uv, float fl) {\n"
+    "  int f = (int)(fl + 0.5);\n"
+    "  float scale = (float)(2 << ((1 << ((f >> 12) & 3)) - 1));\n"
+    "  float2 mu = (uv - floor(uv * (scale / 256.0)) * (256.0 / scale)) * scale;\n"
+    "  int4 t = int4(((f >> 14) & 1) * 128, ((f >> 15) & 3) * 128 + (has(fl, 4) ? 0 : 1024), 128, 128);\n"
+    "  return sample_tile(t, fl, mu);\n"
     "}\n"
     "float pixel_depth(float z, float4 pkey, float3 bpix, float4 pbox) {\n"
     "  float key = 0.0;\n"
@@ -987,14 +1028,17 @@ static const char *game_render_fill_fs_hlsl =
     "  if (inp.tile.z > 0.0) {\n"
     "    int L0 = (int)floor(lod);\n"
     "    float blend = frac(lod);\n"
+    "    int mml = 0;\n"
     "    if (inp.lbpl.w < 100000.0) {\n"
-    "      int mml = fast_log2(inp.ez) - (int)inp.lbpl.w;\n"
+    "      mml = fast_log2(inp.ez) - (int)inp.lbpl.w;\n"
     "      int maxl = (int)lmax;\n"
     "      L0 = clamp(mml >> 7, 0, maxl);\n"
     "      blend = (mml > 0 && L0 < maxl) ? (float)((mml & 127) * 2) / 256.0 : 0.0;\n"
     "    }\n"
     "    float2 tx = lerp(sample_level(inp.uv, inp.tile, fl, L0),\n"
     "                     sample_level(inp.uv, inp.tile, fl, L0 + 1), blend);\n"
+    "    if (has(fl, 2048) && mml < 0)\n"
+    "      tx = lerp(tx, sample_micro(inp.uv, fl), (float)min(-mml >> ((((int)(fl + 0.5)) >> 12) & 3), 127) / 256.0);\n"
     "    if (has(fl, 1) && tx.y < 0.5) discard;\n"
     "    float al = tx.x;\n"
     "    if (inp.lbpl.x < 0.0) {\n"
@@ -1889,6 +1933,30 @@ static inline void game_render__ramp_begin(void) {
     g_game_render.ramp_count = 0;
 }
 
+/* The row a shade key holds in the hash slots, made in the first free slot
+ * if new; -1 when it is new but no row can be made, or 64 probes find none. */
+static inline int game_render__shade_find(const game_render_shade_key_t *k) {
+    uint32_t h = (k->lb * 2654435761u) ^ ((uint32_t)k->poly * 40503u) ^ ((uint32_t)k->col * 2246822519u);
+    for (uint32_t probe = 0; probe < 64u; probe++) {
+        uint32_t s = (h + probe) & (GAME_RENDER_SHADE_SLOTS - 1u);
+        uint16_t held = g_shade_slot_row[s];
+        if (held) {
+            const game_render_shade_key_t *e = &g_shade_key[held - 1];
+            if (e->lb == k->lb && e->poly == k->poly && e->col == k->col) return held - 1;
+            continue;
+        }
+        if (g_ramp_uploaded || g_game_render.ramp_count == GAME_RENDER_RAMP_ROWS) return -1;
+        int row = g_game_render.ramp_count++;
+        g_shade_key[row]     = *k;
+        g_shade_is_row[row]  = 1;
+        g_shade_slot_row[s]  = (uint16_t)(row + 1);
+        game_render__shade_fill(row);
+        g_game_render.ramp_dirty = true;
+        return row;
+    }
+    return -1;
+}
+
 /* The shade row for a face's (luma band, poly_luma, colour), made if new; -1
  * when the face keeps the shader's lumaram + ramp lookups. */
 static inline int game_render__shade_row(float lb, float pl, float r, float g, float b) {
@@ -1899,25 +1967,7 @@ static inline int game_render__shade_row(float lb, float pl, float r, float g, f
     float plc = pl < 0.0f ? 0.0f : (pl > 1.0f ? 1.0f : pl);
     game_render_shade_key_t k = { (uint32_t)lb, (uint16_t)(plc * 255.0f + 0.5f),
                                   (uint16_t)((r5 << 10) | (g5 << 5) | b5) };
-    uint32_t h = (k.lb * 2654435761u) ^ ((uint32_t)k.poly * 40503u) ^ ((uint32_t)k.col * 2246822519u);
-    for (uint32_t probe = 0; probe < 64u; probe++) {
-        uint32_t s = (h + probe) & (GAME_RENDER_SHADE_SLOTS - 1u);
-        uint16_t held = g_shade_slot_row[s];
-        if (held) {
-            const game_render_shade_key_t *e = &g_shade_key[held - 1];
-            if (e->lb == k.lb && e->poly == k.poly && e->col == k.col) return held - 1;
-            continue;
-        }
-        if (g_ramp_uploaded || g_game_render.ramp_count == GAME_RENDER_RAMP_ROWS) return -1;
-        int row = g_game_render.ramp_count++;
-        g_shade_key[row]     = k;
-        g_shade_is_row[row]  = 1;
-        g_shade_slot_row[s]  = (uint16_t)(row + 1);
-        game_render__shade_fill(row);
-        g_game_render.ramp_dirty = true;
-        return row;
-    }
-    return -1;
+    return game_render__shade_find(&k);
 }
 
 /* The ramp row for a fill colour (as the shader rounds it to 5 bits a channel),
