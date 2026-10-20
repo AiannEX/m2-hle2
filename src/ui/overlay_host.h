@@ -720,10 +720,15 @@ static inline void overlay_host__rect(overlay_layer_slot_t *L, int x, int y, int
             overlay_host__blend(L->px + (size_t)j * (size_t)L->pitch + (size_t)i * 4u, rgb, a);
 }
 
+/* How a line of text is drawn: the face, its cap height in pixels, the colour. */
+typedef struct { int font; float cap; uint32_t rgb; } overlay_text_style_t;
+
 /* One line of text, its baseline at y, clipped to the layer and to max_x. */
-static inline void overlay_host__text(overlay_layer_slot_t *L, int font, float cap,
-                                      float x, float y, float max_x,
-                                      const char *s, uint32_t rgb) {
+static inline void overlay_host__text(overlay_layer_slot_t *L, overlay_text_style_t st,
+                                      float x, float y, float max_x, const char *s) {
+    int font = st.font;
+    float cap = st.cap;
+    uint32_t rgb = st.rgb;
     const stbtt_fontinfo *fi = overlay_host__font(font);
     float sc = overlay_host__font_scale(font, cap);
     for (const unsigned char *p = (const unsigned char *)s; *p && *p != '\n'; p++) {
@@ -763,8 +768,8 @@ static inline void overlay_host__paint_card(overlay_layer_slot_t *L, const char 
     float y = (float)L->h / 2.0f - pitch * (float)(lines - 1) / 2.0f + cap / 2.0f;
     for (const char *line = text; line; ) {
         float w = overlay_host__text_w(OVERLAY_FONT_TITLE, cap, line);
-        overlay_host__text(L, OVERLAY_FONT_TITLE, cap, ((float)L->w - w) / 2.0f, y,
-                           (float)L->w, line, 0xC3C2B7);
+        overlay_host__text(L, (overlay_text_style_t){ OVERLAY_FONT_TITLE, cap, 0xC3C2B7 },
+                           ((float)L->w - w) / 2.0f, y, (float)L->w, line);
         y += pitch;
         line = strchr(line, '\n');
         if (line) line++;
@@ -800,11 +805,11 @@ static inline void overlay_host__paint_toast(overlay_layer_slot_t *L, const char
     overlay_host__rect(L, 0, 0, (int)lroundf(4 * U), L->h, k->accent, 1.0f);
     float base = (6 + 12) * U + 4.5f * U;              /* middle of the plate body */
     float x = (4 + 14) * U;
-    overlay_host__text(L, OVERLAY_FONT_TITLE, 9.0f * U, x, base, (float)L->w,
-                       title, k->accent);
+    overlay_host__text(L, (overlay_text_style_t){ OVERLAY_FONT_TITLE, 9.0f * U, k->accent },
+                       x, base, (float)L->w, title);
     x += overlay_host__text_w(OVERLAY_FONT_TITLE, 9.0f * U, title) + 10 * U;
-    overlay_host__text(L, OVERLAY_FONT_TEXT, 8.0f * U, x, base, (float)L->w - 10 * U,
-                       note, k->note);
+    overlay_host__text(L, (overlay_text_style_t){ OVERLAY_FONT_TEXT, 8.0f * U, k->note },
+                       x, base, (float)L->w - 10 * U, note);
 }
 
 /* 1.6 units a pixel at 1080 lines: a 48-pixel plate, a little larger than
