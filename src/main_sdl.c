@@ -1556,6 +1556,28 @@ static const sg_pass_action g_pass_action = {
     .depth     = { .load_action = SG_LOADACTION_CLEAR, .clear_value = 1.0f },
 };
 
+/* What the screen pass draws: the game picture (or the lobby's black), the
+ * scripts' layer, the OSD, the lobby and the debug text. */
+static void render_screen(int fb_w, int fb_h, int ox, int oy, int w, int h, float lerp_t) {
+    /* The lobby is drawn on black, to be read; over a match, on the match. */
+    if (opt.netplay) lobby_update(SDL_GetTicksNS());
+    bool show_game = !(opt.netplay && g_lobby.open && !netplay_state_running(g_lobby.st.state));
+    if (show_game && opt.render_scale > 0)
+        game_render_draw_target(g_rt.texture, opt.linear, ox, oy, w, h);
+    else if (show_game)
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){ox, oy, w, h}, lerp_t);
+    if (show_game) {
+        game_rect_t board = game_render_tile_rect((game_rect_t){ ox, oy, w, h }, false);
+        scripts_draw(fb_w, fb_h, board.x, board.y, board.w, board.h);
+    }
+    if (opt.osd) {
+        osd_update(SDL_GetTicksNS());
+        osd_draw(fb_w, fb_h);
+    }
+    if (opt.netplay) lobby_draw(fb_w, fb_h, SDL_GetTicksNS());
+    if (g_sdtx_on) sdtx_draw();
+}
+
 /* Draw the board's latest frame, the OSD and the lobby, and present it. */
 static void render_frame(void) {
     static int shots_done;
@@ -1594,23 +1616,7 @@ static void render_frame(void) {
                        .depth_format = SG_PIXELFORMAT_DEPTH_STENCIL,
                        .gl.framebuffer = 0 },
     });
-    /* The lobby is drawn on black, to be read; over a match, on the match. */
-    if (opt.netplay) lobby_update(SDL_GetTicksNS());
-    bool show_game = !(opt.netplay && g_lobby.open && !netplay_state_running(g_lobby.st.state));
-    if (show_game && opt.render_scale > 0)
-        game_render_draw_target(g_rt.texture, opt.linear, ox, oy, w, h);
-    else if (show_game)
-        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){ox, oy, w, h}, lerp_t);
-    if (show_game) {
-        game_rect_t board = game_render_tile_rect((game_rect_t){ ox, oy, w, h }, false);
-        scripts_draw(fb_w, fb_h, board.x, board.y, board.w, board.h);
-    }
-    if (opt.osd) {
-        osd_update(SDL_GetTicksNS());
-        osd_draw(fb_w, fb_h);
-    }
-    if (opt.netplay) lobby_draw(fb_w, fb_h, SDL_GetTicksNS());
-    if (g_sdtx_on) sdtx_draw();
+    render_screen(fb_w, fb_h, ox, oy, w, h, lerp_t);
     int pzone = hprof_enter(HPROF_PRESENT);   /* host_prof.h */
     sg_end_pass();
     sg_commit();
