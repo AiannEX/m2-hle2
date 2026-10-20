@@ -219,6 +219,13 @@ static struct retro_core_option_v2_definition option_defs[] = {
       NULL, "video",
       { { "board", "Board" }, { "pixel", "Per pixel" }, { NULL, NULL } },
       "board" },
+    { "m2hle_cabinet", "Cabinet colours", NULL,
+      "Daytona USA builds its colour tables for the cabinet its test menu is set to: Deluxe's projector is "
+      "darker in the shadows than Twin's monitor. Switch between them at once; the board and its settings stay "
+      "as they are. Test menu: whatever CABINET is set to, as the board shows it. Other games have one picture.",
+      NULL, "video",
+      { { "board", "Test menu" }, { "twin", "Twin" }, { "deluxe", "Deluxe" }, { NULL, NULL } },
+      "board" },
     { "m2hle_stf_version", "Sonic the Fighters version", NULL,
       "Console: the game as Sega's console release runs it, with Honey, Metal Sonic and Robotnik selectable "
       "(Start on Amy, Sonic or Bean at character select). Arcade: the arcade board as it shipped. Each has its own "
@@ -365,6 +372,7 @@ static void lr_read_live_options(void) {
         g_ps3ui_app.default_delay = opt.net_delay;
     }
     if ((v = lr_var("m2hle_depth")))      g_geo3d_pixel_depth = !strcmp(v, "pixel");
+    if ((v = lr_var("m2hle_cabinet")))    cabinet_picture_choose(strcmp(v, "board") ? v : NULL);
     if ((v = lr_var("m2hle_draw_rate")))  opt.draw_every = strcmp(v, "30") ? 1 : 2;
     if ((v = lr_var("m2hle_sound_thread"))) g_sound_thread_want = strcmp(v, "disabled") != 0;   /* from the next slice */
     if ((v = lr_var("m2hle_heat_guard"))) {
@@ -458,6 +466,7 @@ static void lr_set_options(void) {
         { "m2hle_gems_cop",   "Gems C: coprocessor; disabled|enabled" },
         { "m2hle_sound_thread", "Sound board on its own core; enabled|disabled" },
         { "m2hle_depth",      "Depth; board|pixel" },
+        { "m2hle_cabinet",    "Cabinet colours; board|twin|deluxe" },
         { "m2hle_draw_rate",  "Draw rate; 60|30" },
         { "m2hle_heat_guard", "Heat guard; " LR_DEFAULT_HEAT "|off|80|85|90" },
         { "m2hle_online",     "Online play; retroarch|rpcn|ggpo" },
@@ -2551,6 +2560,7 @@ RETRO_API void retro_run(void) {
     if (g_backup_reload) {
         g_backup_reload = false;
         backup_ram_reload(state.bus.back);
+        if (g_active_profile->backup_fn) g_active_profile->backup_fn(&state.romset, &state.bus);
     }
 
     input_poll_cb();

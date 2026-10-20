@@ -71,6 +71,7 @@
 #include "m2lua_wide.h"    /* and the picture it asks for (Model2_SetWideScreen) */
 #include "lightgun_sgl.h"   /* the mouse and touches as light guns, and their crosshairs */
 #include "ffb.h"            /* the drive board's force feedback, for the page to rumble */
+#include "cabinet_picture.h" /* the Picture tab's cabinet: another cabinet's colours, live */
 #include "wheel_host.h"     /* the page's analog wheel and pedals (Pinboard #1082) */
 
 /* The single TU that defines g_profiles[] / g_active_profile. Under M2HLE_WEB it
@@ -1877,6 +1878,19 @@ EMSCRIPTEN_KEEPALIVE int web_shader_arcade(void) { return post_shader_arcade() ?
 /* Depth per pixel, not the board's one key a polygon (geo3d.h): 0 off, 1 on. */
 EMSCRIPTEN_KEEPALIVE void web_set_pixel_depth(int on) { g_geo3d_pixel_depth = on != 0; }
 EMSCRIPTEN_KEEPALIVE int web_pixel_depth(void) { return g_geo3d_pixel_depth; }
+
+/* The Picture tab's cabinet (core/cabinet_picture.h): the game's cabinets, and
+ * the one to show live ("" = whatever its test menu is set to). */
+EMSCRIPTEN_KEEPALIVE int web_cabinet_count(void) {
+    return g_active_profile && g_active_profile->cabinet_xlat_fn ? g_active_profile->cabinet_count : 0;
+}
+EMSCRIPTEN_KEEPALIVE const char *web_cabinet_id(int i) {
+    return i >= 0 && i < web_cabinet_count() ? g_active_profile->cabinets[i].id : "";
+}
+EMSCRIPTEN_KEEPALIVE const char *web_cabinet_label(int i) {
+    return i >= 0 && i < web_cabinet_count() ? g_active_profile->cabinets[i].label : "";
+}
+EMSCRIPTEN_KEEPALIVE void web_set_cabinet(const char *id) { cabinet_picture_choose(id); }
 
 /* The monitor's pots (crt_pots.h, CRT_POT_*), from the Picture tab. */
 EMSCRIPTEN_KEEPALIVE void  web_crt_pot_set(int id, float v) { crt_pots_set(id, v); }

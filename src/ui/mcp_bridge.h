@@ -48,6 +48,7 @@
  * it is stated so the dependency is visible from the file that has it. */
 #include "net/netplay.h"   /* the lobby, over the bridge — see the netplay section */
 #include "ffb.h"          /* get_status reports the drive board ("drive") */
+#include "cabinet_picture.h" /* set_camera's cabinet: another cabinet's colours */
 #include "m2_texload.h"   /* get_status reports the texture loader in C */
 
 #ifdef _WIN32
@@ -350,6 +351,8 @@ static void mcp_set_camera_depth(const char *req) {
      * the board's flat key (geo3d_flat_depth); the layers are the object viewer's. */
     if (mcp_json_get_str(req,"zflat",   v,sizeof v)) g_geo3d_zflat = (atoi(v) != 0);
     if (mcp_json_get_str(req,"pixdepth",v,sizeof v)) g_geo3d_pixel_depth = (atoi(v) != 0);
+    /* The Picture menu's cabinet (cabinet_picture.h): "twin", "deluxe", "" the board's own. */
+    if (mcp_json_get_str(req,"cabinet", v,sizeof v)) cabinet_picture_choose(v);
     /* 0: polygons the board gives sort key 0 keep their own depth (geo3d.h GEO3D_ZSORT_KEY0). */
     if (mcp_json_get_str(req,"zkey0",   v,sizeof v)) g_geo3d_zsort_key0 = (atoi(v) != 0);
 }

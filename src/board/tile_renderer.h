@@ -524,18 +524,24 @@ static inline void tile_pen_lut(const memory_bus_t *bus, uint8_t lut[0x8000][3])
  * palette change, not 32768 built with a division each, and the CPU
  * compositor's pen colours (tile_compose_cpu) come from the same 96 values.
  * --verify-gpu-tiles holds this to tile_pen_lut. */
-static inline void video_pen_channels(const memory_bus_t *bus, uint8_t chan[3][32]) {
+/* From colour tables in colorxlat's layout: the bus's, or the Picture menu's
+ * cabinet's (core/cabinet_picture.h). */
+static inline void video_pen_channels_xlat(const uint8_t *colorxlat, uint8_t chan[3][32]) {
     int loaded = 0;
     for (int c5 = 0; c5 < 32 && !loaded; c5++)
         for (int ch = 0; ch < 3 && !loaded; ch++)
-            if (bus->colorxlat[((uint32_t)ch * 0x2000u + 0x40u + ((uint32_t)c5 << 8)) * 2u]) loaded = 1;
+            if (colorxlat[((uint32_t)ch * 0x2000u + 0x40u + ((uint32_t)c5 << 8)) * 2u]) loaded = 1;
     for (int ch = 0; ch < 3; ch++)
         for (int c5 = 0; c5 < 32; c5++) {
             if (!loaded) { chan[ch][c5] = (uint8_t)(c5 << 3); continue; }
-            int v = bus->colorxlat[((uint32_t)ch * 0x2000u + 0x40u + ((uint32_t)c5 << 8)) * 2u];
+            int v = colorxlat[((uint32_t)ch * 0x2000u + 0x40u + ((uint32_t)c5 << 8)) * 2u];
             int g = (v - 64) * 255 / 191;
             chan[ch][c5] = (uint8_t)(g < 0 ? 0 : g);
         }
+}
+
+static inline void video_pen_channels(const memory_bus_t *bus, uint8_t chan[3][32]) {
+    video_pen_channels_xlat(bus->colorxlat, chan);
 }
 
 #endif /* TILE_RENDERER_H */
