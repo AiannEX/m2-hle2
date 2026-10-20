@@ -219,8 +219,12 @@
  * 32: a frame is the board's 434,600 i960 cycles (16 MHz over 656 x 424 at
  *    25 MHz), not 60 Hz's 416,667: every game gets MAME's time between
  *    vblanks, and Fighting Vipers' texture loader keeps up (Pinboard #1075).
+ * 35: Sonic the Fighters, Virtual-On and the m2snake homebrew call IN0 0x04
+ *    the test switch and 0x08 the service button, as MAME and m2emulator do;
+ *    their "service" was 0x04 and nothing pressed 0x08 (Pinboard #1347).
+ *    33 and 34 are taken by open branches (#1137, #1331).
  */
-#define NETPLAY_PROTO_REV 32
+#define NETPLAY_PROTO_REV 35
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.

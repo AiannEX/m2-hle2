@@ -100,7 +100,12 @@ static inline void input_reset(void) { input_release_all(); g_input.net_held = 0
  * per action, 0 for none. Host-side only, like the combos below: the board
  * sees the actions, so a remap changes nothing a session or replay sends.
  * The desktop's Controls window edits it and keeps it per profile
- * (ui/controls_window.h); input_keys_default puts these back. */
+ * (ui/controls_window.h); input_keys_default puts these back.
+ *
+ * The defaults are m2emulator 1.1a's, which most players learnt the games on
+ * (docs/m2emulator-controls.md, Pinboard #1347): F1 the service button and F2
+ * the test switch (9 is MAME's service button too), and on a racing cabinet
+ * INPUT_KEYS_DRIVING over the rest. */
 #define INPUT_KEY_SLOTS 2
 #define INPUT_KEYS_DEFAULT {                                                         \
     [GAME_INPUT_P1_UP]    = { SAPP_KEYCODE_UP },     [GAME_INPUT_P1_DOWN]  = { SAPP_KEYCODE_DOWN },      \
@@ -113,13 +118,34 @@ static inline void input_reset(void) { input_release_all(); g_input.net_held = 0
     [GAME_INPUT_P2_B1]    = { SAPP_KEYCODE_DELETE }, [GAME_INPUT_P2_B2]    = { SAPP_KEYCODE_END },       \
     [GAME_INPUT_P2_B3]    = { SAPP_KEYCODE_PAGE_DOWN }, [GAME_INPUT_P2_B4] = { SAPP_KEYCODE_HOME },      \
     [GAME_INPUT_P2_START] = { SAPP_KEYCODE_2 },      [GAME_INPUT_P2_COIN]  = { SAPP_KEYCODE_6 },         \
-    [GAME_INPUT_SERVICE]  = { SAPP_KEYCODE_F2 },     [GAME_INPUT_TEST]     = { SAPP_KEYCODE_F3 },        \
+    [GAME_INPUT_SERVICE]  = { SAPP_KEYCODE_F1, SAPP_KEYCODE_9 }, [GAME_INPUT_TEST] = { SAPP_KEYCODE_F2 }, \
+}
+/* A racing cabinet (quirks.wheel: Daytona USA, Sega Rally) as m2emulator lays
+ * it out: the arrows drive (Up the accelerator, Down the brake, Left / Right
+ * the wheel) and Z X C V are the view buttons VR1-VR4, which the profiles put
+ * on P1 B3 / B4 and P2 B3 / B4. m2emulator has a key per gear (A S D F G);
+ * the lever's shifts, which it does not have, go on Q (down) and W (up). */
+#define INPUT_KEYS_DRIVING {                                                         \
+    [GAME_INPUT_P1_UP]    = { SAPP_KEYCODE_W },      [GAME_INPUT_P1_DOWN]  = { SAPP_KEYCODE_Q },         \
+    [GAME_INPUT_P1_B1]    = { SAPP_KEYCODE_UP },     [GAME_INPUT_P1_B2]    = { SAPP_KEYCODE_DOWN },      \
+    [GAME_INPUT_P1_B3]    = { SAPP_KEYCODE_Z },      [GAME_INPUT_P1_B4]    = { SAPP_KEYCODE_X },         \
+    [GAME_INPUT_P2_B3]    = { SAPP_KEYCODE_C },      [GAME_INPUT_P2_B4]    = { SAPP_KEYCODE_V },         \
 }
 static int g_input_keys[GAME_INPUT_COUNT][INPUT_KEY_SLOTS] = INPUT_KEYS_DEFAULT;
 
-static inline void input_keys_default(void) {
+/* Does profile p play on INPUT_KEYS_DRIVING? */
+static inline bool input_keys_driving(const game_profile_t *p) {
+    return p && p->quirks.wheel.accel && p->quirks.wheel.brake;
+}
+
+/* The default keys for profile p (NULL: the plain layout). */
+static inline void input_keys_default(const game_profile_t *p) {
     static const int def[GAME_INPUT_COUNT][INPUT_KEY_SLOTS] = INPUT_KEYS_DEFAULT;
+    static const int drive[GAME_INPUT_COUNT][INPUT_KEY_SLOTS] = INPUT_KEYS_DRIVING;
     memcpy(g_input_keys, def, sizeof def);
+    if (!input_keys_driving(p)) return;
+    for (int a = 0; a < GAME_INPUT_COUNT; a++)
+        if (drive[a][0]) memcpy(g_input_keys[a], drive[a], sizeof drive[a]);
 }
 
 /* The actions' names in a controls file ("p1_b1", "service"), by GAME_INPUT_*. */
