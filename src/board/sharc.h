@@ -328,15 +328,25 @@ static inline float sharc_fw_sqrt(float x) {
     return x * f4;
 }
 
-/* _L202D1: atan2(y, x) in radians, [-pi, pi]. The coefficients are the ones
- * _L20154 writes to DM 0x30290 at boot. */
+/* _L202D1's coefficients, DM 0x30290..0x3029B. STF's firmware writes them
+ * itself at boot (_L20154); Fighting Vipers' does not, and its i960 writes
+ * them with 0x24804949 instead, each 1 ulp above STF's but SQRT3, EPS and
+ * the 0 (Pinboard #1334). A word nobody wrote (still 0) is STF's. */
+static const uint32_t SHARC_ATAN_STF[12] = {
+    0x3E8930A2u, 0x3FDDB3D7u, 0x39800000u, 0xBF3853ADu, 0xBFB854A7u, 0x4098123Bu,
+    0x408A3F7Du, 0x00000000u, 0x3F060A91u, 0x3FC90FDAu, 0x3F860A91u, 0x40490FDAu,
+};
+static inline float sharc_atan_k(int i) {
+    uint32_t v = g_sharc.dm[0x290 + i];
+    return sharc_bits_to_float(v ? v : SHARC_ATAN_STF[i]);
+}
+
+/* _L202D1: atan2(y, x) in radians, [-pi, pi], with the coefficients in DM. */
 static inline float sharc_fw_atan2(float y, float x) {
-    const float TAN15 = sharc_bits_to_float(0x3E8930A2u), SQRT3 = sharc_bits_to_float(0x3FDDB3D7u),
-                EPS   = sharc_bits_to_float(0x39800000u),
-                P0 = sharc_bits_to_float(0xBF3853ADu), P1 = sharc_bits_to_float(0xBFB854A7u),
-                Q0 = sharc_bits_to_float(0x4098123Bu), Q1 = sharc_bits_to_float(0x408A3F7Du),
-                HALF_PI = sharc_bits_to_float(0x3FC90FDAu), PI = sharc_bits_to_float(0x40490FDAu);
-    const float OCTANT[4] = { 0.0f, sharc_bits_to_float(0x3F060A91u), HALF_PI, sharc_bits_to_float(0x3F860A91u) };
+    const float TAN15 = sharc_atan_k(0), SQRT3 = sharc_atan_k(1), EPS = sharc_atan_k(2),
+                P0 = sharc_atan_k(3), P1 = sharc_atan_k(4), Q0 = sharc_atan_k(5), Q1 = sharc_atan_k(6),
+                HALF_PI = sharc_atan_k(9), PI = sharc_atan_k(11);
+    const float OCTANT[4] = { sharc_atan_k(7), sharc_atan_k(8), HALF_PI, sharc_atan_k(10) };
     uint32_t xb = sharc_float_to_bits(x), yb = sharc_float_to_bits(y);
     float f0 = y, f15;
     if (!(xb & 0x7F800000u)) {                               /* _L2032F: pass treats a denormal as zero */

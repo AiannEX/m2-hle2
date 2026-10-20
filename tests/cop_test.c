@@ -152,6 +152,45 @@ int main(void) {
               "tri_shin takes 3 args and answers exactly 3 words");
     }
 
+    /* ---- atan2's coefficients come from DM 0x30290..0x3029B ----
+     * STF's firmware writes them at boot; Fighting Vipers' does not, and its
+     * i960 writes its own with 0x24804949, 1 ulp above STF's (Pinboard #1334).
+     * The words below are what each game's uploaded firmware answers in
+     * sharc_cpu.h, FV's after its i960's DM writes are replayed. */
+    {
+        static const uint32_t fv_k[12] = {
+            0x3E8930A3u, 0x3FDDB3D7u, 0x39800000u, 0xBF3853AEu, 0xBFB854A8u, 0x4098123Cu,
+            0x408A3F7Eu, 0x00000000u, 0x3F060A92u, 0x3FC90FDBu, 0x3F860A92u, 0x40490FDBu,
+        };
+        static const struct { uint32_t cmd, a[3]; uint32_t stf, fv; } at[] = {
+            { 0x13802727, { 0xC536DE6Cu, 0x38E9CD4Du }, 0x7FFF, 0x8000 },
+            { 0x13802727, { 0x39483F64u, 0x45871DDCu }, 0x3FFF, 0x4000 },
+            { 0x13802727, { 0xC254C850u, 0xC19AFD8Au }, 0x8E3B, 0x8E3A },
+            { 0x14002828, { 0x424062EAu, 0x403B162Cu, 0x4249491Fu }, 0x0193, 0x0192 },
+            { 0x14002828, { 0x43412756u, 0x431F1DF1u, 0x42E2988Cu }, 0x276E, 0x276D },
+            { 0x14002828, { 0x4301A79Bu, 0x4312D519u, 0x4389F79Cu }, 0x02BF, 0x02BE },
+            { 0x14002828, { 0x42B328C2u, 0x430E2A46u, 0x4365309Bu }, 0x07A5, 0x07A4 },
+            { 0x14002828, { 0x7149F2CAu, 0x3F800000u, 0x0DA24260u }, 0x0001, 0x0000 },
+        };
+        for (int fv = 0; fv < 2; fv++) {
+            cop_reset();
+            if (fv) for (uint32_t i = 0; i < 12; i++) { cop_write(0x24804949); cop_write(0x30290u + i); cop_write(fv_k[i]); }
+            for (size_t i = 0; i < sizeof at / sizeof at[0]; i++) {
+                int na = at[i].cmd == 0x14002828 ? 3 : 2;
+                cop_write(at[i].cmd);
+                for (int k = 0; k < na; k++) cop_write(at[i].a[k]);
+                uint32_t o = cop_read();
+                for (int k = 1; k < na; k++) cop_read();
+                uint32_t want = fv ? at[i].fv : at[i].stf;
+                char msg[96];
+                snprintf(msg, sizeof msg, "%s table: %08X(%08X %08X) = %04X", fv ? "FV" : "STF",
+                         at[i].cmd, at[i].a[0], at[i].a[1], want);
+                CHECK(o == want, msg);
+            }
+        }
+        CHECK(cop_fifo_status() == 1, "atan table: no replies left over");
+    }
+
     /* ---- 0x980004: reply FIFO status, bit 0 up while it is empty ---- */
     cop_reset();
     CHECK(cop_fifo_status() == 1, "FIFO status reads 1 with no replies waiting");
