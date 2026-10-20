@@ -244,6 +244,28 @@ static inline mem_region_t *mem_add_region(memory_bus_t *bus,
     return r;
 }
 
+/* mem_add_region, but ahead of every region already there, so it answers where
+ * it overlaps one (daytonagtx's protection window over MAIN_DATA). */
+static inline mem_region_t *mem_add_region_first(memory_bus_t *bus, const char *name,
+                                                 uint32_t base, uint32_t size,
+                                                 uint8_t *data, int readonly) {
+    if (!mem_add_region(bus, name, base, size, data, readonly)) return NULL;
+    mem_region_t r = bus->regions[bus->region_count - 1];
+    memmove(&bus->regions[1], &bus->regions[0], (size_t)(bus->region_count - 1) * sizeof r);
+    bus->regions[0] = r;
+    for (int i = 0; i < bus->region_count; i++) {
+        mem_region_t *e = &bus->regions[i];
+        e->shadowed = 0;
+        for (int k = 0; k < i; k++) {
+            const mem_region_t *o = &bus->regions[k];
+            if ((uint64_t)o->base < (uint64_t)e->base + e->size && (uint64_t)e->base < (uint64_t)o->base + o->size)
+                e->shadowed = 1;
+        }
+    }
+    mem_regions_changed(bus);
+    return &bus->regions[0];
+}
+
 /* ---- COPROGRAM / GEO MMIO callbacks -------------------------------------- */
 
 /* The COPROGRAM region (0x00880000) is the COP's command/arg stream. For HLE
@@ -877,6 +899,7 @@ static inline int mem_init(memory_bus_t *bus, uint8_t *rom_data, size_t rom_size
     memset(bus->io, IO_IDLE_FILL, sizeof(bus->io));
 
     cop_reset();   /* clears g_cop / g_sharc and resets rot[] to identity */
+    g_sharc_area_fv = false;   /* STF's COP program until the profile says otherwise */
     irqt_reset();  /* timers idle (0xFFFFF), no interrupt pending, vblank phase 0 */
     eeprom_power_on();   /* erased, the same on every machine (eeprom_93c46.h) */
 
