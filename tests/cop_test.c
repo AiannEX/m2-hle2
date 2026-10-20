@@ -120,6 +120,38 @@ int main(void) {
           "0x79 writes the axis turn that 0x7E then composes");
     CHECK(g_sharc.unknown_cmds == unk_i3 && cop_fifo_status() == 1, "no unknown commands and no replies");
 
+    /* ---- Fn_tri_shin (0x14002828): three sides in, three words out ----
+     * Reply 1 is 0x4000 - asin(cos B) as an angle word, cos B = (a^2-b^2+c^2)/(2ac);
+     * replies 2 and 3 reuse registers the calls clobbered (cpres1 PM 0x20644), so
+     * the board answers NaN there unless cos B is exactly +-1.  The words below
+     * are what STF's uploaded firmware answers in sharc_cpu.h (Pinboard #1333). */
+    {
+        static const struct { float a, b, c; uint32_t w[3]; } ts[] = {
+            { 3, 4, 5,   { 0x25C9, 0xFFFFFFFFu, 0xFFFFFFFFu } },
+            { 5, 4, 3,   { 0x25C9, 0xFFFFFFFFu, 0xFFFFFFFFu } },
+            { 1, 1, 1,   { 0x2AAB, 0xFFFFFFFFu, 0xFFFFFFFFu } },
+            { 2, 3, 4,   { 0x211E, 0xFFFFFFFFu, 0xFFFFFFFFu } },
+            { 7, 2, 6.5f,{ 0x0BBD, 0xFFFFFFFFu, 0xFFFFFFFFu } },
+            { 1, 2, 4,   { 0x4000, 0xFFFFFFFFu, 0xFFFFFFFFu } },   /* no triangle: cos B < -1 */
+            { 0, 1, 1,   { 0x4000, 0xFFFFFFFFu, 0xFFFFFFFFu } },   /* a = 0: divide by zero */
+            { 1, 1, 2,   { 0x0000, 0x3F800000u, 0xFFFFFFFFu } },   /* cos B = 1: reply 2 = 1.0 */
+            { 2, 1, 1,   { 0x0000, 0xBF000000u, 0xFFFFFFFFu } },   /* cos B = 1: reply 2 = -0.5 */
+        };
+        cop_reset();
+        uint32_t unk_t = g_sharc.unknown_cmds;
+        for (size_t i = 0; i < sizeof ts / sizeof ts[0]; i++) {
+            cop_write(0x14002828);
+            cop_write(f2b(ts[i].a)); cop_write(f2b(ts[i].b)); cop_write(f2b(ts[i].c));
+            uint32_t o0 = cop_read(), o1 = cop_read(), o2 = cop_read();
+            char msg[96];
+            snprintf(msg, sizeof msg, "tri_shin(%g,%g,%g) = %04X %08X %08X", ts[i].a, ts[i].b, ts[i].c,
+                     ts[i].w[0], ts[i].w[1], ts[i].w[2]);
+            CHECK(o0 == ts[i].w[0] && o1 == ts[i].w[1] && o2 == ts[i].w[2], msg);
+        }
+        CHECK(g_sharc.unknown_cmds == unk_t && cop_fifo_status() == 1,
+              "tri_shin takes 3 args and answers exactly 3 words");
+    }
+
     /* ---- 0x980004: reply FIFO status, bit 0 up while it is empty ---- */
     cop_reset();
     CHECK(cop_fifo_status() == 1, "FIFO status reads 1 with no replies waiting");

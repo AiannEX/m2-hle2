@@ -288,16 +288,18 @@ static inline int32_t sharc_logb(float x) {
 }
 
 /* _L205D0 and its inline copies: num / d by RECIPS and three Newton steps with
- * two = 2.0. *last gets the step register's final value, which atan2 goes on
- * to use. */
-static inline float sharc_fw_div_ex(float num, float d, float *last) {
+ * two = 2.0. *last gets the step register's final value (f3), which atan2 goes
+ * on to use, *f12_out what it leaves in f12, which Fn_tri_shin goes on to use. */
+static inline float sharc_fw_div_regs(float num, float d, float *last, float *f12_out) {
     float f3 = sharc_recips(d), f4 = num, f12 = f3 * d;
     f4 = f3 * f4; f3 = 2.0f - f12;
     f12 = f3 * f12; f4 = f3 * f4; f3 = 2.0f - f12;
     f12 = f3 * f12; f4 = f3 * f4; f3 = 2.0f - f12;
     if (last) *last = f3;
+    if (f12_out) *f12_out = f12;
     return f3 * f4;
 }
+static inline float sharc_fw_div_ex(float num, float d, float *last) { return sharc_fw_div_regs(num, d, last, NULL); }
 static inline float sharc_fw_div(float num, float d) { return sharc_fw_div_ex(num, d, NULL); }
 
 /* _L2029B: 1/sqrt(x) by RSQRTS and three Newton steps; 0 for a zero input */

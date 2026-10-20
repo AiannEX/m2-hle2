@@ -20,6 +20,7 @@
  *   0x12002424  sin(i16)*float → float                   verified: 20/20 OK
  *   0x12802525  cos(i16)*float → float                   verified: 20/20 OK
  *   0x13802727  atan2(b,a) → i16 fixed-point angle       verified: 20/20 OK (tol ±1 unit)
+ *   0x14002828  Fn_tri_shin(a,b,c) → angle, 2 floats     firmware: PM 0x20644 (FV 0x20609), sharc_cpu
  *   0x14802929  model→world: R*(x,y,z)+T → 3 floats      verified: 20/20 OK
  *   0x15802B2B  dist2D(x1,x2,z1,z2) → float             verified: 20/20 OK
  *   0x16002C2C  dist3D(x1,x2,y1,y2,z1,z2) → float       verified: 20/20 OK
@@ -103,6 +104,7 @@ static inline int sharc_args_for_cmd(uint32_t cmd) {
         case 0x0B001616: return 2;
         case 0x16802D2D: return 2;
         case 0x13802727: return 2;
+        case 0x14002828: return 3;  /* Fn_tri_shin: three sides, three replies */
         case 0x1B803737: return 2;
         case 0x1B003636: return 2;
         /* smooth_int: reset bone slot to identity + 9 ang ops (Z,Y,X,X,Y,Z,Y,Z,X) */
@@ -1542,6 +1544,32 @@ static inline void sharc_exec(uint32_t cmd, const uint32_t *args, int n) {
         case 0x13002626:
             if (n >= 1)
                 sharc_push_u(sharc_fw_asin_word(sharc_bits_to_float(args[0])));   /* _L20332 */
+            return;
+
+        /* 0x14002828 Fn_tri_shin (PM 0x20644; Fighting Vipers' build 0x20609):
+         * sides a, b, c. The first reply is the angle at B by the law of
+         * cosines, 0x4000 - asin(cos B) through _L20332, as a 32-bit word (a
+         * negative asin gives more than 0xFFFF). The other two are meant to be
+         * the angle at A's cosine and a height, but they reuse registers the
+         * calls before them leave changed: f12 is _L205D0's last Newton term, not
+         * b*b, and the second divide gets the f2 _L202D1 leaves, 0 (its `pass`
+         * of the square root is never less than zero), unless _L20332 answered
+         * cos B = +-1 outright and left 2ac there. So the board answers NaN for
+         * both nearly always, and 1.0 for the second when cos B is +-1; this
+         * gives the same words (tests/cop_test.c, against the firmware run in
+         * sharc_cpu.h). */
+        case 0x14002828:
+            if (n >= 3) {
+                float a = sharc_bits_to_float(args[0]), b = sharc_bits_to_float(args[1]),
+                      c = sharc_bits_to_float(args[2]);
+                float a2 = a * a, b2 = b * b, c2 = c * c, d = (a * c) * 2.0f, f12;
+                float cb = sharc_fw_div_regs((a2 - b2) + c2, d, NULL, &f12);   /* _L205D0 */
+                bool held = cb == 1.0f || cb == -1.0f;
+                sharc_push_u(0x4000u - sharc_fw_asin_word(cb));                 /* _L20332 */
+                float f11 = f12 + c2;
+                sharc_push_f(sharc_fw_div(f11 - a2, held ? d : 0.0f));         /* _L205D0 */
+                sharc_push_f(sharc_fw_sqrt(c2 - f11 * f11));                   /* _L202AE */
+            }
             return;
 
         case 0x1F803F3F:
