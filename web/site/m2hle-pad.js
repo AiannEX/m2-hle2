@@ -630,12 +630,26 @@ const m2hlePad = (() => {
     });
   }
 
+  /* The panel's tabs: Keyboard, Controller, Touch. Until one is picked it opens
+   * on Keyboard, or on Touch on a phone (the touch buttons are what it is for there). */
+  const TABS = { keys: 'key-section', pad: 'pad-section', touch: 'touch-section' };
+  let tabPicked = null;
+
+  function showTab(tab) {
+    if (tab !== 'pad') stopListening();
+    for (const t in TABS) {
+      $('ctl-tab-' + t).setAttribute('aria-selected', String(t === tab));
+      $(TABS[t]).hidden = t !== tab;
+    }
+  }
+
   function toggle(open) {
     const panel = $('controls');
     if (open === undefined) open = panel.hidden;
     if (!open) stopListening();
     /* Play online opens in the same place: one at a time. */
     if (open && !$('online').hidden) $('np-close').click();
+    if (open) showTab(tabPicked || (matchMedia('(pointer: coarse)').matches || !$('touch').hidden ? 'touch' : 'keys'));
     panel.hidden = !open;
     $('btn-controls').setAttribute('aria-expanded', String(open));
     shownHeld = -1;
@@ -647,6 +661,7 @@ const m2hlePad = (() => {
     load();
     $('btn-controls').addEventListener('click', () => toggle());
     $('pad-close').addEventListener('click', () => toggle(false));
+    for (const t in TABS) $('ctl-tab-' + t).addEventListener('click', () => { tabPicked = t; showTab(t); });
     $('btn-online').addEventListener('click', () => toggle(false));
     $('pad-reset').addEventListener('click', () => { sets = defaultSets(); secondIsP2 = true; save(); stopListening(); });
     $('pad-p2').addEventListener('change', (e) => { secondIsP2 = e.target.checked; save(); render(); });
