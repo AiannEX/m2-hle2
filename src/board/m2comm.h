@@ -54,6 +54,16 @@
  *   - No VSYNC frames (0xFC): MAME sends them only for its frame-sync option.
  *   - FG reads take nothing (MAME's read_fg): frames come only at the pass.
  *   - Two nodes, no relay.
+ *   - MAME ships the whole frame size, and Power Sled reads all of it
+ *     (m2comm_set_whole_frame): its ROM keeps a ring of 0x180-byte node slots,
+ *     the frame received landing one slot up from the sender's, so slot k
+ *     holds the node k hops back. It counts the Rides from slots 1..count
+ *     (FUN_14F50; the Main is ID 0x200), and with only the window an empty
+ *     slot 2 reads as a second Ride: rider 1 gets no slot and its objects NaN
+ *     positions (black 3D). The whole frame does not pack into a datagram
+ *     once the race fills it, so the window still goes over, and the receiver
+ *     makes the rest: past its window the sender's frame is what it last took
+ *     from this node, this node's own frame two slots down.
  * The link state is g_m2comm_link, not g_m2comm: what the board reads there
  * is the other cabinet's, outside savestates, rewind and det_digest, and
  * nothing in it is board state a savestate could bring back.
@@ -89,12 +99,14 @@ typedef struct {
  * recv returns the next one's length (at most cap bytes) or 0 if none has
  * come. pending (may be NULL) is how many are waiting: the host's link clock
  * reads it (core/link_pace.h). The link session owns it; it outlives the
- * board's resets. */
+ * board's resets. twin: the other cabinet is a board this process runs too
+ * (core/emu_twin.h, a GGPO match of a linked game). */
 typedef struct {
     void     *ctx;
     void     (*send)(void *ctx, const uint8_t *msg, uint32_t len);
     uint32_t (*recv)(void *ctx, uint8_t *msg, uint32_t cap);
     uint32_t (*pending)(void *ctx);
+    bool      twin;
 } m2comm_peer_t;
 
 enum { M2COMM_LINK_DOWN = 0, M2COMM_LINK_UP = 1 };
@@ -106,6 +118,7 @@ typedef struct {
     uint32_t timer;                 /* the master's countdown to the token */
     uint32_t quiet;                 /* passes the master has gone unanswered */
     uint32_t sent, taken;           /* data frames out and in, for diagnostics */
+    bool     whole_frame;           /* MAME's whole frame from the window (m2comm_set_whole_frame) */
     uint8_t  msg[M2COMM_MSG_MAX];
 } m2comm_link_t;
 
@@ -121,6 +134,16 @@ static inline bool m2comm__is_master(const m2comm_state_t *s) {
 static inline uint32_t m2comm__window(const m2comm_state_t *s) {
     uint32_t n = (uint32_t)s->shared[0x14] | (uint32_t)s->shared[0x15] << 8;
     return n < M2COMM_WINDOW_MAX ? n : M2COMM_WINDOW_MAX;
+}
+
+/* The peer's window n taken: MAME's whole frame from it, the rest of the
+ * sender's frame being this node's own two slots down (two nodes). */
+static inline void m2comm__take_whole(m2comm_state_t *s, uint32_t n) {
+    uint32_t size = (uint32_t)s->shared[0x12] | (uint32_t)s->shared[0x13] << 8;
+    uint32_t room = M2COMM_RAM_SIZE - M2COMM_FRAME_START - n;
+    if (size > room) size = room;
+    if (size > n)
+        memmove(s->shared + M2COMM_FRAME_START + 2u * n, s->shared + M2COMM_FRAME_START, size - n);
 }
 
 static inline void m2comm__send(m2comm_link_t *l, uint32_t len) {
@@ -195,6 +218,7 @@ static inline void m2comm__pass_up(m2comm_state_t *s, m2comm_link_t *l) {
     uint32_t n = m2comm__window(s), len;
     while ((len = l->peer->recv(l->peer->ctx, l->msg, sizeof l->msg)) > 0) {
         if (l->msg[0] > l->count || len != 1u + n) continue;   /* the ring's own traffic, or torn */
+        if (l->whole_frame) m2comm__take_whole(s, n);
         memcpy(s->shared + M2COMM_FRAME_START + n, l->msg + 1, n);
         s->zfg ^= 1u;
         l->taken++;
@@ -312,9 +336,14 @@ static inline void m2comm_set_peer(const m2comm_peer_t *peer) {
     m2comm__link_reset(&g_m2comm_link);
 }
 
-/* Whether the comm board is linked to another cabinet: its host then paces it
- * by the link's clock (core/link_pace.h). */
-static inline bool m2comm_linked(void) { return g_m2comm_link.peer != NULL; }
+/* After m2comm_install: a data frame taken fills MAME's whole frame size from
+ * 0x2000 + offset (the ROM's ring of node slots), not just the window. */
+static inline void m2comm_set_whole_frame(bool on) { g_m2comm_link.whole_frame = on; }
+
+/* Whether the comm board is linked to another host's cabinet: its host then
+ * paces it by the link's clock (core/link_pace.h). Not a twin's (the other
+ * cabinet runs in this process): GGPO paces the pair. */
+static inline bool m2comm_linked(void) { return g_m2comm_link.peer != NULL && !g_m2comm_link.peer->twin; }
 
 /* The master's messages waiting for a slave's next passes; 0 on the master.
  * The master's clock is the link's: it sends a window every pass, and the
@@ -333,6 +362,7 @@ static inline uint32_t m2comm_backlog(void) {
 static inline void m2comm_install(memory_bus_t *bus, uint32_t frame_offset) {
     memset(&g_m2comm, 0, sizeof g_m2comm);
     m2comm__link_reset(&g_m2comm_link);
+    g_m2comm_link.whole_frame = false;
     g_m2comm.frame_offset = frame_offset;
     irqt_flush();
     g_m2comm.vbl_seen = (uint64_t)g_irqt.vbl_count;

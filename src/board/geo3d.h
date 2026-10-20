@@ -205,7 +205,8 @@ typedef struct {
      * the host camera and projects the board's way instead — gproj holds focal
      * x, focal y and the projection centre in screen pixels (y from the top),
      * vp the window's scissor in screen pixels (x0, y0, x1, y1), window which
-     * window the object belongs to (earlier windows paint over later ones), and
+     * window the object belongs to (later windows cover earlier ones: MAME fills
+     * them last to first, model2_v.cpp), and
      * light the GEO light vector in host eye space. */
     bool     view_space;
     float    gproj[4];
@@ -574,7 +575,18 @@ static inline void geo3d_zsort_step(geo3d_zsort_t *z, uint32_t at, bool is_tri, 
  *                join. MAME clears wrap on a mirrored axis; the mirrored tap is
  *                the edge texel again there, so the flag needs no masking.
  *                Bits 64 and 128 belong to the renderer, hence 256 / 512 (the
- *                explorer's too). */
+ *                explorer's too).
+ *   MICRO        texheader[0] bit 12 on a textured face: a microtexture, a
+ *                128x128 square on the *other* sheet blended into level 0
+ *                where the face is magnified (mml < 0). Its x is th2 bit 13
+ *                x 128, its y th2 bits 14-15 x 128, its minimum LOD th0 bits
+ *                10-11 (MAME model2_v.cpp, model2rd.ipp draw_scanline_tex).
+ *                The fill reads the square at uv << (1 << minlod) and blends
+ *                min(-mml >> minlod, 127) / 256 of it. Not in fflags (the
+ *                explorer's decode, which prepared_test hashes, has no such
+ *                bit at the commit it was taken from): geo3d_texhdr_t.micro
+ *                carries it, and geo3d_texhdr_fill adds it to the face's fill
+ *                flags, with the square at GEO3D_FACE_MICRO_SHIFT. */
 #define GEO3D_FACE_TRANSPARENT 1u
 #define GEO3D_FACE_CHECKER     2u
 #define GEO3D_FACE_SHEET1      4u
@@ -583,6 +595,9 @@ static inline void geo3d_zsort_step(geo3d_zsort_t *z, uint32_t at, bool is_tri, 
 #define GEO3D_FACE_WRAP_X      256u
 #define GEO3D_FACE_WRAP_Y      512u
 #define GEO3D_FACE_CHECKER_ODD 1024u  /* the checker's other phase (set_camera "checker":0) */
+#define GEO3D_FACE_MICRO       2048u  /* microtexture; its square in the bits above */
+#define GEO3D_FACE_MICRO_SHIFT 12     /* minlod (2 bits), x / 128 (1), y / 128 (2) */
+#define GEO3D_FACE_MICRO_MASK  (GEO3D_FACE_MICRO | (31u << GEO3D_FACE_MICRO_SHIFT))
 
 /* 0: every face filters as if it set both wrap bits, the fill from before they
  * were read (set_camera "texclamp", for a before/after). Applied where the
@@ -591,8 +606,11 @@ static int g_geo3d_tex_clamp = 1;
 /* 0: checkers draw the other pixel of each pair, the phase the GL fill had
  * when it took gl_FragCoord's bottom-up rows (set_camera "checker"). */
 static int g_geo3d_checker_phase = 1;
+/* 0: no face blends its microtexture (set_camera "microtex", for a before/after). */
+static int g_geo3d_microtex = 1;
 static inline float geo3d_face_fill_flags(float fl) {
     unsigned f = (unsigned)(fl + 0.5f);
+    if (!g_geo3d_microtex) f &= ~GEO3D_FACE_MICRO_MASK;
     if (!g_geo3d_tex_clamp) f |= GEO3D_FACE_WRAP_X | GEO3D_FACE_WRAP_Y;
     if (!g_geo3d_checker_phase && (f & GEO3D_FACE_CHECKER)) f |= GEO3D_FACE_CHECKER_ODD;
     return (float)f;
@@ -1191,8 +1209,11 @@ typedef struct {
     float   xoff, yoff;
 } geo3d__geol_t;
 
-/* Mode, LOD and z-adjust are the geometrizer's own state and outlive a list. */
-static struct { uint32_t mode; float lod; uint32_t zadj; } g_geol_held;
+/* Mode, LOD and z-adjust are the geometrizer's own state and outlive a list.
+ * The walk starts from the values published with its list (memory.h,
+ * g_geo_held: geo3d_scan_geo_list's caller sets them) and follows the list's
+ * own commands from there. */
+static geo_held_t g_geol_held;
 
 static inline uint32_t geo3d__geol_arg(const uint32_t *words, uint32_t nw, uint32_t p, uint32_t k) {
     return p + 1u + k < nw ? words[p + 1u + k] : 0u;
@@ -1633,6 +1654,7 @@ typedef struct {
     uint32_t lumabase;      /* texheader[1] low byte << 7 (lumaram band) */
     uint32_t matidx;        /* colorbase → palette */
     uint32_t fflags;        /* GEO3D_FACE_* */
+    uint32_t micro;         /* GEO3D_FACE_MICRO and its square, or 0 */
     bool     textured;      /* texheader[0] bit14 */
     bool     untex_trans;   /* untextured + transparent: the board draws nothing */
 } geo3d_texhdr_t;
@@ -1658,7 +1680,15 @@ static inline geo3d_texhdr_t geo3d_texhdr_decode(const uint16_t th[4]) {
     if ((th0 >> 6) & 1)             h.fflags |= GEO3D_FACE_WRAP_X;
     if ((th0 >> 7) & 1)             h.fflags |= GEO3D_FACE_WRAP_Y;
     h.matidx = (th[3] >> 6) & 0x3ff;
+    if (h.textured && (th0 & 0x1000))
+        h.micro = GEO3D_FACE_MICRO | ((((th0 >> 10) & 3u) | (((th2 >> 13) & 1u) << 2) |
+                                       (((th2 >> 14) & 3u) << 3)) << GEO3D_FACE_MICRO_SHIFT);
     return h;
+}
+
+/* The face's flags as the fill reads them: fflags and the microtexture. */
+static inline float geo3d_texhdr_fill(const geo3d_texhdr_t *h) {
+    return (float)(h->fflags | h->micro);
 }
 
 /* The header's four words at word address hw; false (and th untouched past the
@@ -2035,7 +2065,7 @@ static inline geo3d_texhdr_t geo3d_decode_face_header(geo3d_decode_walk_t *w, in
 
     /* Flat-colour override (homebrew display list): keep the caller's colour,
      * force untextured — model 456's ROM material/texture is meaningless here. */
-    if (g_geo_flat_color) { h.textured = false; p->r = w->cr; p->g = w->cg; p->b = w->cb; h.fflags = 0; }
+    if (g_geo_flat_color) { h.textured = false; p->r = w->cr; p->g = w->cg; p->b = w->cb; h.fflags = 0; h.micro = 0; }
     return h;
 }
 
@@ -2146,7 +2176,7 @@ static inline void geo3d_decode_face(geo3d_decode_walk_t *w, int i) {
 
     paint.lb = g_geo_flat_color ? -1.0f : (float)h.lumabase;
     paint.pl = pl;
-    paint.fl = (float)h.fflags;
+    paint.fl = geo3d_texhdr_fill(&h);
     paint.u = uvu; paint.v = uvv;
     if (!s.is_tri) {
         uint32_t kA = ia->svk[ai], kB = ia->svk[bi], kC = ia->svk[ci], kD = ia->svk[di];
@@ -2215,7 +2245,7 @@ typedef struct {
     int       records;            /* vertex-pair records walked, the end one included */
     int       faces, textured;    /* faces with corners A and B, and of those the textured */
     int       palette_max;        /* highest colour index of any header read; -1: none */
-    uint32_t *reads;              /* textures-ROM byte indices, the first reads_cap of n_reads */
+    uint32_t *reads;              /* textures-ROM byte indices (not texture RAM's), the first reads_cap */
     int       n_reads, reads_cap;
     uint32_t *tri_face;           /* each triangle's face (faces so far), the first tris_cap */
     geo3d_reads_tri_t *tri;       /* each triangle, the first tris_cap; may be NULL */
@@ -2224,7 +2254,9 @@ typedef struct {
     int       n_hdrs, hdrs_cap;
 } geo3d_mesh_reads_t;
 
+/* Texture-RAM words (bit 23 of the word address) are no textures-ROM bytes. */
 static inline void geo3d_reads_bytes(geo3d_mesh_reads_t *r, uint32_t byte, int n) {
+    if (byte & 0x01000000u) return;
     for (int k = 0; k < n; k++, r->n_reads++)
         if (r->n_reads < r->reads_cap) r->reads[r->n_reads] = byte + (uint32_t)k;
 }
@@ -2435,7 +2467,7 @@ static inline void geo3d_direct_emit(const geo3d_direct_poly_t *d,
     geo3d_texhdr_tile(&h, &paint.tx, &paint.ty, &paint.tw, &paint.th);
     paint.pl = (float)((d->lw >> 15) & 0xFFu) / 255.0f;
     paint.lb = (float)h.lumabase;
-    paint.fl = (float)h.fflags;
+    paint.fl = geo3d_texhdr_fill(&h);
     g_geo3d_emit_texlod = d->dw == 0 ? 0.0f
         : (float)((int)((d->dw >> 8) & 0x7F80u) - 0x3F80 + (int)g_geo_rs->logram[d->dw & 0x7FFFu]);
     g_geo3d_emit_layer = 0.0f;
@@ -3079,7 +3111,7 @@ static inline void geo3d_cface_paint(geo3d_cface_t *f, bool mat_ok, const geo3d_
     f->matidx = h->matidx;
     geo3d_texhdr_tile(h, &f->tx, &f->ty, &f->tw, &f->th);
     f->lb = (float)h->lumabase;
-    f->fl = (float)h->fflags;
+    f->fl = geo3d_texhdr_fill(h);
     memcpy(f->uvu, uvu, 4 * sizeof *uvu);
     memcpy(f->uvv, uvv, 4 * sizeof *uvv);
 }

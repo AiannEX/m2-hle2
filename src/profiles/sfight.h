@@ -169,11 +169,11 @@ static inline uint32_t sfight_read32(const uint8_t *buf, uint32_t off) {
  * keep it. */
 static void (*s_sfight_on_vs_rematch)(void);
 
-static inline void sfight_install(const romset_t *rs, i960_cpu_t *cpu, memory_bus_t *bus) {
+/* The board's side of an STF install, which schamp (schamp.h) shares. */
+static inline void sfight_install_board(const romset_t *rs, i960_cpu_t *cpu, memory_bus_t *bus) {
     if (!rs->loaded) { LOG_ERROR("sfight_install: romset not loaded"); return; }
     s_sfight_on_vs_rematch = NULL;
     m2_texload_forget();   /* a new program: check its texture loader again */
-    sfight_native_install("sfight");
 
     i960_reset(cpu);
     mem_init(bus, rs->maincpu, rs->maincpu_size);
@@ -225,6 +225,12 @@ static inline void sfight_install(const romset_t *rs, i960_cpu_t *cpu, memory_bu
         }
     }
     LOG_INFO("sfight_install: initial IP = 0x%08X", cpu->sfr.ip);
+}
+
+static inline void sfight_install(const romset_t *rs, i960_cpu_t *cpu, memory_bus_t *bus) {
+    if (!rs->loaded) { LOG_ERROR("sfight_install: romset not loaded"); return; }
+    sfight_native_install("sfight");
+    sfight_install_board(rs, cpu, bus);
 }
 
 /* ---- HLE hook functions -------------------------------------------------- */

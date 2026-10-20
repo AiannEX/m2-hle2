@@ -244,6 +244,28 @@ static inline mem_region_t *mem_add_region(memory_bus_t *bus,
     return r;
 }
 
+/* mem_add_region, but ahead of every region already there, so it answers where
+ * it overlaps one (daytonagtx's protection window over MAIN_DATA). */
+static inline mem_region_t *mem_add_region_first(memory_bus_t *bus, const char *name,
+                                                 uint32_t base, uint32_t size,
+                                                 uint8_t *data, int readonly) {
+    if (!mem_add_region(bus, name, base, size, data, readonly)) return NULL;
+    mem_region_t r = bus->regions[bus->region_count - 1];
+    memmove(&bus->regions[1], &bus->regions[0], (size_t)(bus->region_count - 1) * sizeof r);
+    bus->regions[0] = r;
+    for (int i = 0; i < bus->region_count; i++) {
+        mem_region_t *e = &bus->regions[i];
+        e->shadowed = 0;
+        for (int k = 0; k < i; k++) {
+            const mem_region_t *o = &bus->regions[k];
+            if ((uint64_t)o->base < (uint64_t)e->base + e->size && (uint64_t)e->base < (uint64_t)o->base + o->size)
+                e->shadowed = 1;
+        }
+    }
+    mem_regions_changed(bus);
+    return &bus->regions[0];
+}
+
 /* ---- COPROGRAM / GEO MMIO callbacks -------------------------------------- */
 
 /* The COPROGRAM region (0x00880000) is the COP's command/arg stream. For HLE
@@ -393,6 +415,25 @@ static struct {
     bool     slots;                                /* texparam and coef */
 } g_geo_dirty[2];
 
+/* Mode, LOD and z-adjust (commands 07/17, 16, 08/18): the geometrizer keeps
+ * them from one list to the next, and a game may send them once, at boot
+ * (hotd sends its mode 2 and LOD 4 in the first lists and never again). The
+ * renderer only walks the lists it draws, so it cannot keep them itself: they
+ * are followed here as each list is applied, and each published list carries
+ * the values it starts with. Savestates and rollback hold all three copies.
+ * *Symptom that surfaced this in hotd:* a state loaded before the board had
+ * sent them drew mode 0, LOD 0: black doors, white zombies. */
+typedef struct { uint32_t mode; float lod; uint32_t zadj; } geo_held_t;
+static struct {
+    geo_held_t live;                               /* after the lists applied so far */
+    geo_held_t pub[2];                             /* at the start of each published list */
+} g_geo_held;
+
+/* The values the list in snap starts with. */
+static inline const geo_held_t *geodl_held_for(const uint32_t *snap) {
+    return &g_geo_held.pub[snap == g_geodl_snaps[0] ? 0 : 1];
+}
+
 static inline void geo_dirty_mark(size_t field, size_t byte_off) {
     size_t b = byte_off / GEO_RS_BLOCK;
     uint64_t bit = 1ull << (b & 63);
@@ -532,7 +573,11 @@ static inline void geodl_apply_state(const uint32_t *L, uint32_t nw, uint32_t rs
                 }
                 break;
             }
-            case 0x07: case 0x17: case 0x08: case 0x18: case 0x10: case 0x16: case 0x1E: len = 1; break;
+            case 0x07: case 0x17: g_geo_held.live.mode = LA(0); len = 1; break;
+            case 0x16: { uint32_t a = LA(0); memcpy(&g_geo_held.live.lod, &a, 4); len = 1; break; }
+            /* the raster keeps (word >> 8) << 8 (model2_v.cpp geo_zsort_mode) */
+            case 0x08: case 0x18: g_geo_held.live.zadj = LA(0) & 0xFFFFFF00u; len = 1; break;
+            case 0x10: case 0x1E: len = 1; break;
             case 0x09: case 0x19: case 0x0D: len = 2; break;
             case 0x0A: case 0x1A: case 0x0C: case 0x1C: len = 3; break;
             case 0x0B: case 0x1B: len = 12; break;
@@ -562,6 +607,7 @@ static inline void geodl_publish(uint32_t rstart) {
     if (!g_geo.buff) return;
     uint32_t *back = (g_geodl_snap == g_geodl_snaps[0]) ? g_geodl_snaps[1] : g_geodl_snaps[0];
     const uint32_t *live = (const uint32_t *)(const void *)g_geo.buff;
+    g_geo_held.pub[back == g_geodl_snaps[0] ? 0 : 1] = g_geo_held.live;
     if (g_geodl_full_snap) {
         /* geo3d_scan_displaylist walks its own format: give it all of bufferram */
         memcpy(back, live, sizeof g_geodl_snaps[0]);
@@ -585,6 +631,7 @@ static inline void geodl_snaps_clear(void) {
     memset(g_geodl_snaps, 0, sizeof g_geodl_snaps);
     memcpy(&g_geo_pub[0], &g_geo_live, sizeof g_geo_live);
     memcpy(&g_geo_pub[1], &g_geo_live, sizeof g_geo_live);
+    memset(&g_geo_held, 0, sizeof g_geo_held);   /* the game sends them again as it boots */
     g_geodl_snap        = g_geodl_snaps[0];
     g_geo_rs            = &g_geo_pub[0];
     g_geodl_snap_rstart = 0;

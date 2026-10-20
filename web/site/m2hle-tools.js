@@ -333,6 +333,7 @@ const m2hleTools = (() => {
       'GPU        ' + (g.renderer || 'unknown') + (g.software ? '   (SOFTWARE RENDERER)' : ''),
       'Canvas     ' + c.width + 'x' + c.height + ' at devicePixelRatio ' + window.devicePixelRatio,
       'Cores      ' + (navigator.hardwareConcurrency || '?') + (navigator.deviceMemory ? ', ~' + navigator.deviceMemory + ' GB memory' : ''),
+      ...(typeof m2hleShader !== 'undefined' ? ['Picture    ' + m2hleShader.summary()] : []),
     ];
   }
 

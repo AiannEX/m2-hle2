@@ -102,11 +102,13 @@ $('canvas').addEventListener('webglcontextlost', (e) => {
 function explainMissing(missing) {
   const names = missing.split(' ').filter(Boolean);
   const parent = Module.UTF8ToString(Module._web_rom_parent());
-  if (m2hleGame.id !== 'sfight' && names.length > 0 && parent && held.length > 0) {
+  /* Sonic Championship is schamp.zip's own set, not sfight's split clone. */
+  const sonic = m2hleGame.id === 'sfight' && m2hleGame.profile !== 'schamp';
+  if (!sonic && names.length > 0 && parent && held.length > 0) {
     return m2hleLang.t(held.length > 1 ? 'rom.missing.more' : 'rom.missing.parent',
                        { file: names[0], parent: parent });
   }
-  if (m2hleGame.id !== 'sfight') {
+  if (!sonic) {
     return names.length === 0
       ? m2hleLang.t('page.zip.bad', { id: m2hleGame.id })
       : m2hleLang.t('page.zip.missing', { file: names[0], title: m2hleGame.title });
@@ -446,6 +448,10 @@ var Module = {
     m2hleNetplay.onReady(Module);
     m2hleGgpo.onReady(Module);
     m2hlePad.onReady();
+    /* A light-gun game reloads on the right button (main_web.c, web_gun_event):
+     * no context menu over the canvas then. */
+    const canvas = document.getElementById('canvas');
+    if (canvas) canvas.addEventListener('contextmenu', (e) => { if (Module._web_lightgun_on()) e.preventDefault(); });
     debugStart();
     /* Development only: ?rom=<path> loads a zip from THIS site, so a headless
      * browser can boot the game with no file dialog; a split set gives one per

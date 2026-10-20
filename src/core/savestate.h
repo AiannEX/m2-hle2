@@ -467,6 +467,7 @@ static inline bool savestate__add_board(mz_zip_archive *zp, mz_uint level, memor
         && savestate__add(zp, level, "GEO",      &geo, sizeof geo)
         && savestate__add(zp, level, "GEOLIST",  g_geodl_snaps, sizeof g_geodl_snaps)
         && savestate__add(zp, level, "GEOSTATE", &g_geo_live, sizeof g_geo_live)
+        && savestate__add(zp, level, "GEOHELD",  &g_geo_held, sizeof g_geo_held)
         && savestate__add(zp, level, "IRQT",     &g_irqt, sizeof g_irqt)
         && savestate__add(zp, level, "EEPROM",   &g_eeprom, sizeof g_eeprom);
 }
@@ -648,6 +649,8 @@ typedef struct {
     savestate_geo_t    geo;
     void              *snaps;
     geo_raster_state_t *glive;
+    uint8_t            held[sizeof g_geo_held];
+    bool               have_held;          /* GEOHELD: a state from before it has none */
     uint8_t           *bufs[SAVESTATE_NBUFS];
     m68k_cpu_t         m68k;
     uint8_t           *sram;
@@ -706,6 +709,8 @@ static inline bool savestate__scratch_read(mz_zip_archive *zp, savestate_scratch
         ok = savestate__get(zp, e[i].name, e[i].dst, e[i].size);
     for (size_t i = 0; ok && i < SAVESTATE_NBUFS; i++)
         ok = savestate__get(zp, SAVESTATE_BUFS[i].name, n->bufs[i], SAVESTATE_BUFS[i].size);
+    n->have_held = ok && mz_zip_reader_locate_file(zp, "GEOHELD", NULL, 0) >= 0
+                && savestate__get(zp, "GEOHELD", n->held, sizeof n->held);
     for (int i = 0; ok && i < g_savestate_extra_n; i++) {
         if (!savestate_extra_mine(i)) continue;
         char name[64];
@@ -738,6 +743,7 @@ static inline void savestate__scratch_commit(const savestate_scratch_t *n, i960_
     memcpy(g_geodl_snaps, n->snaps, sizeof g_geodl_snaps);
     memcpy(&g_geo_live, n->glive, sizeof g_geo_live);
     savestate_geo_put(&n->geo);
+    if (n->have_held) memcpy(&g_geo_held, n->held, sizeof g_geo_held);
     savestate_bus_changed(bus);
 
     /* the sound board: the 68000's registers, its RAM, the chip with its

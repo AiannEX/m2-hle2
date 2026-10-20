@@ -86,6 +86,9 @@
 /* registry.h is the single TU that defines g_profiles[] / g_active_profile. */
 #include "registry.h"
 #include "m2lua.h"         /* M2emulator's game scripts, their options as RetroArch cheats */
+#include "lightgun_host.h" /* a port's light gun (The House of the Dead) */
+#include "ffb.h"           /* the drive board's force feedback as rumble (Daytona USA, Sega Rally) */
+#include "wheel_host.h"    /* the left stick and the analog triggers as the wheel and pedals */
 
 /* The largest picture the frontend's framebuffer is made for: it allocates this
  * much once, colour and depth. Full screen draws at the output's size, up to it. */
@@ -308,6 +311,19 @@ static struct retro_core_option_v2_definition option_defs[] = {
       { { "10", "10 (full lock in 9 frames)" }, { "4", NULL }, { "6", NULL }, { "8", NULL }, { "14", NULL },
         { "20", NULL }, { "255", "Instant" }, { NULL, NULL } },
       "10" },
+    { "m2hle_gun_flash", "Light gun: flash on each shot", NULL,
+      "The House of the Dead: the picture goes white for a frame or more when a trigger is pulled, for a light gun "
+      "that reads the screen (a Sinden, say). Only the picture you see flashes: the board never sees it.",
+      NULL, NULL,
+      { { "off", NULL }, { "1", "1 frame" }, { "2", "2 frames" }, { "3", "3 frames" }, { "4", "4 frames" },
+        { NULL, NULL } },
+      "off" },
+    { "m2hle_ffb", "Force feedback", NULL,
+      "The drive board, as the pad's rumble: Daytona USA's kicks and shakes, Sega Rally's hard turns of the "
+      "wheel (a slide, a crash). A pad has no spring or friction, so the weight the wheel has is not in it.",
+      NULL, NULL,
+      { { "100", "100%" }, { "75", "75%" }, { "50", "50%" }, { "25", "25%" }, { "0", "Off" }, { NULL, NULL } },
+      "100" },
     { NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
 };
 
@@ -331,6 +347,8 @@ static void lr_read_wheel_options(void) {
     const char *v;
     if ((v = lr_var("m2hle_wheel_range"))) io5649_wheel_option("--wheel-range", v);
     if ((v = lr_var("m2hle_wheel_speed"))) io5649_wheel_option("--wheel-speed", v);
+    if ((v = lr_var("m2hle_gun_flash")))   lightgun_host_option("--gun-flash", v);
+    if ((v = lr_var("m2hle_ffb")))         ffb_option("--ffb-gain", v);
 }
 
 /* The options that take effect as they change. */
@@ -380,6 +398,38 @@ static bool lr_option_offered(const char *key) {
     return GEMS_AVAILABLE || strncmp(key, "m2hle_gems_", 11) != 0;
 }
 
+static bool g_game_loaded;
+
+/* A row that is one game's (its program, its I/O board) is hidden while
+ * another game is loaded (Pinboard #1058): Daytona showed STF's sound driver
+ * and Gems rows. With no game loaded every row shows. */
+static bool lr_option_applies(const char *key) {
+    const game_profile_t *p = g_game_loaded ? g_active_profile : NULL;
+    if (!p) return true;
+    if (!strcmp(key, "m2hle_stf_version") || !strcmp(key, "m2hle_sound_driver") || !strncmp(key, "m2hle_gems_", 11))
+        return !strcmp(profile_rom_set(p), "sfight");
+    if (!strncmp(key, "m2hle_wheel_", 12)) return p->quirks.io_5649;
+    if (!strcmp(key, "m2hle_ffb"))         return p->quirks.model1_io || p->quirks.io_5649;
+    return true;
+}
+
+/* The frontend asks before it draws the list; the core also calls it at load
+ * and unload, for a frontend that never asks. True when a row changed. */
+static bool RETRO_CALLCONV lr_update_display(void) {
+    static bool shown[sizeof option_defs / sizeof option_defs[0]];
+    static bool sent;
+    bool changed = false;
+    for (size_t i = 0; option_defs[i].key; i++) {
+        bool on = lr_option_applies(option_defs[i].key);
+        struct retro_core_option_display d = { option_defs[i].key, on };
+        env_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d);
+        changed |= !sent || shown[i] != on;
+        shown[i] = on;
+    }
+    sent = true;
+    return changed;
+}
+
 static void lr_set_options(void) {
     static bool pruned;
     if (!pruned) {
@@ -394,6 +444,8 @@ static void lr_set_options(void) {
         /* Its answer says whether the frontend groups options into categories,
          * NOT whether it took them (libretro.h). */
         env_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options_v2);
+        static struct retro_core_options_update_display_callback display = { lr_update_display };
+        env_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &display);
         return;
     }
     /* An old frontend: the v0 table, first value is the default. */
@@ -413,6 +465,8 @@ static void lr_set_options(void) {
         { "m2hle_scripts",    "Game scripts; enabled|disabled" },
         { "m2hle_wheel_range", "Wheel: full lock; 0x58|0x30|0x40|0x4C|0x68|0x7F" },
         { "m2hle_wheel_speed", "Wheel: turn speed; 10|4|6|8|14|20|255" },
+        { "m2hle_gun_flash",  "Light gun: flash on each shot; off|1|2|3|4" },
+        { "m2hle_ffb",        "Force feedback; 100|75|50|25|0" },
         { NULL, NULL },
     };
     size_t o = 0;
@@ -425,13 +479,13 @@ static void lr_set_options(void) {
 /* ---- The board ---------------------------------------------------------------- */
 
 static bool g_sound_on;
-static bool g_game_loaded;
 static bool g_halt_reported;
 static size_t g_lr_state_size;  /* retro_serialize_size, once a load */
 static savestate_rom_t g_lr_state_rom;  /* the loaded ROM's id, with g_lr_state_size */
 static bool g_lr_redraw;   /* a state was loaded: draw it even if the board did not run */
 
 static void lr_attach_sound(void) {
+    sound_select_board(g_active_profile->quirks.model1_sound);
     sound_reset();
     sound_attach(&state.bus);
     sound_load_rom(state.romset.audiocpu, (uint32_t)state.romset.audiocpu_size);
@@ -551,11 +605,13 @@ static const lr_bind_t lr_binds[] = {
 static void lr_set_input_descriptors(void) {
     static const char *names[] = { "Up", "Down", "Left", "Right", "Button 1", "Button 2", "Button 3",
                                    "Button 4", "Start", "Coin", "Test", "Service" };
-    struct retro_input_descriptor desc[2 * LR_BIND_COUNT + 3];
+    struct retro_input_descriptor desc[4 * LR_BIND_COUNT + 3];
     int n = 0;
-    for (unsigned port = 0; port < 2; port++)
+    /* Ports 3 and 4 are players 3 and 4 of a four-player cabinet (Air Walkers). */
+    unsigned ports = input_four_players() ? 4 : 2;
+    for (unsigned port = 0; port < ports; port++)
         for (int i = 0; i < LR_BIND_COUNT; i++) {
-            if (port == 1 && lr_binds[i].p2 < 0) continue;
+            if (port > 0 && lr_binds[i].p2 < 0) continue;
             desc[n++] = (struct retro_input_descriptor){ port, RETRO_DEVICE_JOYPAD, 0, lr_binds[i].id, names[i] };
         }
     if (opt.online != LR_ONLINE_RETROARCH) {
@@ -570,7 +626,45 @@ static bool lr_btn(unsigned port, unsigned id) {
     return input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, id) != 0;
 }
 
-/* One port's pad as the board's held mask, the d-pad and left stick both steering. */
+/* What each port is: the RetroPad, or RetroArch's light gun (the mouse, or a
+ * real gun) for a profile with quirks.lightgun (retro_set_controller_port_device). */
+static unsigned g_lr_port_device[2] = { RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD };
+static bool lr_in_session(void);
+
+/* A port's light gun (lightgun_host.h): it aims that player's gun, its trigger
+ * is B1 and its reload B2; start and select are the player's. RetroArch gives
+ * the position from -0x7FFF to 0x7FFF across the core's picture, which is the
+ * whole frame here. In a session the pointer stays out (each board must aim
+ * from the words on the wire), and the gun's buttons still count. */
+static uint32_t lr_port_gun(unsigned port) {
+    if (port > 1 || g_lr_port_device[port] != RETRO_DEVICE_LIGHTGUN || !lightgun_host_on()) return 0;
+    const game_input_map_t *in = &g_active_profile->input;
+    int p = (int)port;
+    if (lr_in_session()) {
+        lightgun_host_release_aim(p);
+    } else {
+        int x = input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X);
+        int y = input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y);
+        bool off = input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN) != 0
+                || x <= -0x8000 || y <= -0x8000;
+        if (off) lightgun_host_aim_away(p);
+        else     lightgun_host_aim(p, (float)x, (float)y, -32767.0f, -32767.0f, 65534.0f, 65534.0f);
+    }
+    static const struct { unsigned id; int act[2]; } binds[] = {
+        { RETRO_DEVICE_ID_LIGHTGUN_TRIGGER, { GAME_INPUT_P1_B1,    GAME_INPUT_P2_B1    } },
+        { RETRO_DEVICE_ID_LIGHTGUN_RELOAD,  { GAME_INPUT_P1_B2,    GAME_INPUT_P2_B2    } },
+        { RETRO_DEVICE_ID_LIGHTGUN_START,   { GAME_INPUT_P1_START, GAME_INPUT_P2_START } },
+        { RETRO_DEVICE_ID_LIGHTGUN_SELECT,  { GAME_INPUT_P1_COIN,  GAME_INPUT_P2_COIN  } },
+    };
+    uint32_t held = 0;
+    for (size_t i = 0; i < sizeof binds / sizeof binds[0]; i++)
+        if (input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, binds[i].id)) held |= in->bits[binds[i].act[p]];
+    return held;
+}
+
+/* One port's pad as the board's held mask, the d-pad and left stick both
+ * steering. Ports 3 and 4 (players 3 and 4, g_input.far_held) take player 1's
+ * and player 2's bits, as input_far_down does. */
 static uint32_t lr_port_held(unsigned port) {
     const game_input_map_t *in = &g_active_profile->input;
     const int dead = 16000;
@@ -578,8 +672,8 @@ static uint32_t lr_port_held(unsigned port) {
     int ay = input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
     uint32_t held = 0;
     for (int i = 0; i < LR_BIND_COUNT; i++) {
-        int act = port == 0 ? lr_binds[i].p1 : lr_binds[i].p2;
-        if (act < 0) continue;
+        int act = (port & 1) == 0 ? lr_binds[i].p1 : lr_binds[i].p2;
+        if (act < 0 || (port > 1 && lr_binds[i].p2 < 0)) continue;   /* test and service: port 1's */
         bool on = lr_btn(port, lr_binds[i].id);
         if (lr_binds[i].id == RETRO_DEVICE_ID_JOYPAD_UP)    on |= ay < -dead;
         if (lr_binds[i].id == RETRO_DEVICE_ID_JOYPAD_DOWN)  on |= ay >  dead;
@@ -587,7 +681,25 @@ static uint32_t lr_port_held(unsigned port) {
         if (lr_binds[i].id == RETRO_DEVICE_ID_JOYPAD_RIGHT) on |= ax >  dead;
         if (on) held |= in->bits[act];
     }
-    return held;
+    return held | lr_port_gun(port);
+}
+
+/* A driving game's wheel and pedals (wheel_host.h, Pinboard #1082): port 1's
+ * left stick turns the wheel as far as it is pushed, R2 and L2 press the
+ * accelerator and the brake as far as they are pulled (RetroArch's analog
+ * triggers; a pad without them presses all the way). Sessions and replays
+ * read the buttons, so the triggers also hold Button 1 / Button 2 past half:
+ * the held bits it adds. */
+static uint32_t lr_wheel(void) {
+    if (!wheel_host_on() || g_shell_on) { wheel_host_set(false, 0, 0, 0); return 0; }
+    int ax = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
+    int ac = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_BUTTON, RETRO_DEVICE_ID_JOYPAD_R2);
+    int br = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_BUTTON, RETRO_DEVICE_ID_JOYPAD_L2);
+    if (!ac && lr_btn(0, RETRO_DEVICE_ID_JOYPAD_R2)) ac = IO5649_AXIS_MAX;
+    if (!br && lr_btn(0, RETRO_DEVICE_ID_JOYPAD_L2)) br = IO5649_AXIS_MAX;
+    wheel_host_set(true, wheel_host_steer(ax, WHEEL_HOST_STICK_DEAD), ac, br);
+    const game_input_map_t *in = &g_active_profile->input;
+    return (ac > 16000 ? in->bits[GAME_INPUT_P1_B1] : 0) | (br > 16000 ? in->bits[GAME_INPUT_P1_B2] : 0);
 }
 
 /* A held mask as netplay.h's canonical word (NP_BIT_*): either side's bits count
@@ -1050,7 +1162,9 @@ static void lr_shell_reset(void *u) {
     if (state.emu.run_state != EMU_RUNNING) emu_run(&state.emu);
 }
 
-static bool lr_shell_von(void) { return g_active_profile && !strcmp(g_active_profile->id, "vonj"); }
+static bool lr_shell_von(void) {
+    return g_active_profile && (!strcmp(g_active_profile->id, "vonj") || !strcmp(g_active_profile->id, "von"));
+}
 
 static void lr_shell_apply(void *u, const uint8_t v[8], int versus) {
     (void)u;
@@ -1111,8 +1225,8 @@ static uint32_t lr_port_held_shell(unsigned port) {
 /* The shell's frame; true when the game gets the pad. *board_paused: the
  * shell holds the board still (its offline menus). */
 static bool lr_shell_input(bool *board_paused) {
-    bool session = pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_wanted();
-    if (emu_ggpo_wanted() && g_ps3ui_shell.scr != PS3UI_SH_GAME) ps3ui_shell_go(&g_ps3ui_shell, PS3UI_SH_GAME);
+    bool session = pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_match();
+    if (emu_ggpo_match() && g_ps3ui_shell.scr != PS3UI_SH_GAME) ps3ui_shell_go(&g_ps3ui_shell, PS3UI_SH_GAME);
     ps3ui_shell_frame(&g_ps3ui_shell, lr_lobby_pad(), lr_lobby_pad_port(1), session);
     /* Online Battle in RetroArch's own netplay mode: say where it lives */
     if (g_ps3ui_shell.scr == PS3UI_SH_ONLINE && opt.online != LR_ONLINE_RPCN) {
@@ -1617,6 +1731,21 @@ static bool lr_lua_draw(ps3ui_canvas_t *cv, int w, int h) {
     return drew;
 }
 
+/* The light guns' crosshairs (lightgun_host.h) over the w x h frame, recorded
+ * on the canvas. True when it drew. */
+static bool lr_gun_draw(ps3ui_canvas_t *cv, int w, int h) {
+    lightgun_host_bar_t bars[LIGHTGUN_HOST_BARS];
+    int n = lightgun_host_crosshairs(0.0f, 0.0f, (float)w, (float)h, bars);
+    for (int i = 0; i < n; i++) {
+        float c[3];
+        ps3ui_rgb_hex(bars[i].rgb, c);
+        int x0 = (int)bars[i].x0, y0 = (int)bars[i].y0, x1 = (int)bars[i].x1, y1 = (int)bars[i].y1;
+        ps3ui_fill_px(cv, x0 < 0 ? 0 : x0, y0 < 0 ? 0 : y0, x1 > w ? w : x1, y1 > h ? h : y1, c, bars[i].a,
+                      PS3UI_BLEND_NORMAL);
+    }
+    return n > 0;
+}
+
 /* A new frame size goes to the frontend before the frame does. */
 static void lr_draw_geometry(int w, int h, bool lobby) {
     if (w == g_geom_w && h == g_geom_h) return;
@@ -1670,6 +1799,7 @@ static void lr_draw(bool ran) {
     static ps3ui_canvas_t lobby_cv;
     ps3ui_gpu_record(&lobby_cv, w, h);
     bool text = !lobby && lr_lua_draw(&lobby_cv, w, h);
+    if (!lobby && lr_gun_draw(&lobby_cv, w, h)) text = true;
     if (lobby || overlay) lr_draw_record_lobby(&lobby_cv);
 
     lr_draw_pass(w, h, lobby, overlay || text, &lobby_cv);
@@ -1756,16 +1886,32 @@ static emu_slice_result_t lr_slice(void) {
 }
 
 /* RetroArch session: run the frame lockstep allows, waiting briefly for it. */
+/* RetroArch's lockstep from its barrier on: no SOLO under it (emu_ggpo.h). */
+static bool lr_pkt_busy(void) { return g_pkt.state != PKT_OFF && g_pkt.state != PKT_ENDED; }
+
+/* A frame with nobody else: a linked game's SOLO twin (emu_ggpo.h, Pinboard
+ * #1110) when it has one, else one slice. */
+static void lr_alone_slice(uint32_t held) {
+    if (emu_ggpo_wanted() && !emu_ggpo_match()) {
+        g_input.held = held;
+        if (state.emu.run_state != EMU_RUNNING) emu_run(&state.emu);
+        emu_ggpo_tick(&state.emu);
+        return;
+    }
+    lr_slice();
+}
+
 static bool lr_run_pkt(uint32_t local_held) {
     int64_t give_up = emu_now_us() + LR_NET_WAIT_US;
     for (;;) {
         uint32_t w0 = 0, w1 = 0;
         pkt_step_t step = pkt_lockstep_begin_frame(&g_pkt, lr_held_to_word(local_held), lr_now_ms(), &w0, &w1);
+        if (step != PKT_STEP_OFF && emu_ggpo_solo()) emu_ggpo_shutdown(&state.emu);
         switch (step) {
             case PKT_STEP_OFF:
                 netplay_release_inputs();
                 g_input.held = local_held;
-                lr_slice();
+                lr_alone_slice(local_held);
                 return true;
             case PKT_STEP_RESET:
                 lr_pkt_reset();
@@ -1811,6 +1957,7 @@ static bool lr_run_rpcn(uint32_t local_held) {
     int64_t give_up = emu_now_us() + LR_NET_WAIT_US;
     for (;;) {
         netplay_step_t step = emu_netplay_pump(&state.emu);
+        if (emu_ggpo_solo() && !emu_ggpo_solo_wanted()) emu_ggpo_shutdown(&state.emu);   /* a room has the board */
         if (step == NETPLAY_STEP_RESET) continue;   /* done inside the pump; ask again */
         if (step == NETPLAY_STEP_WAIT) {
             if (emu_now_us() >= give_up) return false;
@@ -1819,7 +1966,8 @@ static bool lr_run_rpcn(uint32_t local_held) {
         }
         if (step == NETPLAY_STEP_OFF && m2comm_linked()) return lr_run_linked();
         link_pace_stop(&state.emu.link_pace);
-        lr_slice();
+        if (step == NETPLAY_STEP_OFF) lr_alone_slice(local_held);
+        else lr_slice();
         /* A watcher behind the fighters runs a few extra slices a frame until it
          * has caught up (netplay_catching_up): one retro_run is one slice, and
          * nothing else would ever close the gap. */
@@ -2143,11 +2291,14 @@ RETRO_API void retro_set_environment(retro_environment_t cb) {
     struct retro_log_callback logging;
     if (cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &logging)) log_cb = logging.log;
     lr_set_options();
+    /* The light gun aims a gun in The House of the Dead (lr_port_gun); in
+     * any other game it is the RetroPad. */
     static const struct retro_controller_description pads[] = {
         { "RetroPad", RETRO_DEVICE_JOYPAD },
+        { "Light gun", RETRO_DEVICE_LIGHTGUN },
     };
     static const struct retro_controller_info ports[] = {
-        { pads, 1 }, { pads, 1 }, { NULL, 0 },
+        { pads, 2 }, { pads, 2 }, { pads, 1 }, { pads, 1 }, { NULL, 0 },
     };
     cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void *)ports);
 }
@@ -2157,7 +2308,13 @@ RETRO_API void retro_set_audio_sample(retro_audio_sample_t cb)             { (vo
 RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_cb = cb; }
 RETRO_API void retro_set_input_poll(retro_input_poll_t cb)                 { input_poll_cb = cb; }
 RETRO_API void retro_set_input_state(retro_input_state_t cb)               { input_state_cb = cb; }
-RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device) { (void)port; (void)device; }
+RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device) {
+    if (port > 1) return;
+    g_lr_port_device[port] = device == RETRO_DEVICE_LIGHTGUN ? RETRO_DEVICE_LIGHTGUN : RETRO_DEVICE_JOYPAD;
+    if (g_lr_port_device[port] != RETRO_DEVICE_LIGHTGUN) {
+        lightgun_host_release_aim((int)port);
+    }
+}
 
 RETRO_API void retro_get_system_info(struct retro_system_info *info) {
     memset(info, 0, sizeof *info);
@@ -2188,6 +2345,7 @@ RETRO_API void retro_init(void) {
     log_init();
     g_log.file_open_attempted = 1;
     mem_init(&state.bus, NULL, 0);
+    g_ggpo_solo_veto = lr_pkt_busy;
     i960_reset(&state.cpu);
     bp_init();
     wp_init();
@@ -2238,6 +2396,20 @@ static void lr_check_info_cache(void) {
     }
 }
 
+/* The drive board's force on port 1's pad, as rumble (ffb.h): set when it
+ * changes, which RetroArch holds until the next. */
+static struct retro_rumble_interface g_rumble;
+static uint16_t g_rumble_now[2];
+
+static void lr_ffb_tick(void) {
+    if (!g_rumble.set_rumble_state) return;
+    ffb_out_t o = ffb_poll();
+    if (o.strong != g_rumble_now[0]) g_rumble.set_rumble_state(0, RETRO_RUMBLE_STRONG, o.strong);
+    if (o.weak != g_rumble_now[1])   g_rumble.set_rumble_state(0, RETRO_RUMBLE_WEAK, o.weak);
+    g_rumble_now[0] = o.strong;
+    g_rumble_now[1] = o.weak;
+}
+
 static void lr_info_cache_tick(void) {
     if (!g_info_cache_msg[0] || g_lr_runs < g_info_cache_at) return;
     lr_notify(g_info_cache_msg, 10000);
@@ -2261,10 +2433,13 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game) {
     g_volume = 1.0f;
     lr_set_input_descriptors();
     lr_check_info_cache();
+    if (!env_cb(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE, &g_rumble)) g_rumble.set_rumble_state = NULL;
+    g_rumble_now[0] = g_rumble_now[1] = 0;
 
     if (opt.online == LR_ONLINE_RETROARCH) {
         if (!env_cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, &lr_netpacket))
             lr_log(RETRO_LOG_WARN, "this frontend has no netpacket interface: no RetroArch netplay");
+        netplay_set_reset_hook(lr_netplay_reset_cb, NULL);   /* SOLO's cold boots (emu_ggpo.h) */
     } else if (opt.online == LR_ONLINE_GGPO) {
         lr_ggpo_init();
     } else {
@@ -2275,6 +2450,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game) {
     emu_run(&state.emu);
     lr_lua_load();
     g_game_loaded = true;
+    lr_update_display();   /* the rows of the game just loaded */
     g_lr_state_size = 0;   /* a state's size depends on the profile */
     /* A state is the build's struct layouts: it does not cross to another
      * architecture or byte order (savestate.h's LAYOUT refuses it). */
@@ -2293,6 +2469,11 @@ RETRO_API bool retro_load_game_special(unsigned type, const struct retro_game_in
 
 RETRO_API void retro_unload_game(void) {
     hprof_shutdown();
+    if (g_rumble.set_rumble_state) {   /* no motor left running */
+        g_rumble.set_rumble_state(0, RETRO_RUMBLE_STRONG, 0);
+        g_rumble.set_rumble_state(0, RETRO_RUMBLE_WEAK, 0);
+        g_rumble_now[0] = g_rumble_now[1] = 0;
+    }
     if (opt.online == LR_ONLINE_RPCN) netplay_shutdown();
     if (opt.online == LR_ONLINE_GGPO) lr_ggpo_unload();
     ps3ui_app_close(&g_ps3ui_app);
@@ -2301,11 +2482,14 @@ RETRO_API void retro_unload_game(void) {
     m2lua_unload();   /* End(), and the script's ROM patches off the set going */
     romset_free(&state.romset);
     g_game_loaded = false;
+    lr_update_display();
 }
 
 RETRO_API void retro_reset(void) {
     /* Inside a session a reset on one machine is a desync by definition. */
-    if (pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_wanted()) return;
+    if (pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_match()) return;
+    /* SOLO's other cabinet boots again with this one (emu_ggpo_tick). */
+    if (emu_ggpo_solo()) emu_ggpo_shutdown(&state.emu);
     lr_install_board();
     if (state.emu.run_state != EMU_RUNNING) emu_run(&state.emu);
 }
@@ -2317,7 +2501,7 @@ static void lr_ggpo_paused(void) {
 
 /* A session of any kind: each machine is one player. */
 static bool lr_in_session(void) {
-    return pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_wanted();
+    return pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_match();
 }
 
 /* A retro_run's board with GGPO chosen: a session's frame (or its wait), or,
@@ -2370,14 +2554,18 @@ RETRO_API void retro_run(void) {
     }
 
     input_poll_cb();
-    uint32_t held = g_shell_on ? lr_port_held_shell(0) : lr_port_held(0);
+    uint32_t held = g_shell_on ? lr_port_held_shell(0) : lr_port_held(0) | lr_wheel();
     /* Port 2 is the second player on this machine -- not in a session, where
      * each machine is one player. */
     bool in_session = lr_in_session();
     if (!in_session) held |= g_shell_on ? lr_port_held_shell(1) : lr_port_held(1);
+    /* Ports 3 and 4: players 3 and 4 of a four-player cabinet, only on this
+     * machine too (the board reads them only outside a session). */
+    uint32_t far_bits = !in_session && input_four_players() ? lr_port_held(2) | lr_port_held(3) : 0;
     bool board_paused = false;
-    if (g_shell_on && !lr_shell_input(&board_paused)) held = 0;
+    if (g_shell_on && !lr_shell_input(&board_paused)) held = far_bits = 0;
     if (!in_session) held = lr_script_held(held);
+    g_input.far_held = far_bits;
 
     if (opt.online == LR_ONLINE_RPCN) lr_rpcn_toasts();
 
@@ -2390,6 +2578,7 @@ RETRO_API void retro_run(void) {
     lr_info_cache_tick();
     lr_heat_tick();
     lr_ff_poll();
+    lr_ffb_tick();
     hprof_phase(1);
     hprof_phase_set(6, g_emu_times.sound_wait_us - snd_wait0);
     lr_push_audio();

@@ -47,6 +47,7 @@
  * to precede it. main.c already includes this first, so here it is a no-op --
  * it is stated so the dependency is visible from the file that has it. */
 #include "net/netplay.h"   /* the lobby, over the bridge — see the netplay section */
+#include "ffb.h"          /* get_status reports the drive board ("drive") */
 #include "m2_texload.h"   /* get_status reports the texture loader in C */
 
 #ifdef _WIN32
@@ -218,17 +219,23 @@ static void mcp_cmd_get_status(char *resp, int cap, bool restart_max) {
     mcp_link_pace_json(b->emu, lp, (int)sizeof lp);
     char game[384];
     mcp_status_game_json(b, game, (int)sizeof game);
+    /* The drive board's force, as the hosts play it (ffb.h). */
+    ffb_out_t fo = ffb_poll();
+    char dv[160];
+    snprintf(dv, sizeof dv,
+             "{\"cmd\":%u,\"kind\":%u,\"level\":%u,\"dir\":%d,\"strong\":%u,\"weak\":%u,\"push\":%d}",
+             fo.effect.cmd, fo.effect.kind, fo.effect.level, fo.effect.dir, fo.strong, fo.weak, fo.push);
 
     snprintf(resp, (size_t)cap,
              "{\"ok\":true,\"running\":%s,\"halted\":%s,"
              "\"ip\":\"0x%08X\",\"steps_per_second\":%u,\"steps\":%llu,\"profile\":\"%s\","
              "%s,"
-             "\"av\":%s,\"overlay\":%s,\"render\":%s,\"emu\":%s,\"link_pace\":%s,\"version\":\"%s\",\"build\":\"%s\"}",
+             "\"av\":%s,\"overlay\":%s,\"render\":%s,\"emu\":%s,\"link_pace\":%s,\"drive\":%s,\"version\":\"%s\",\"build\":\"%s\"}",
              running ? "true" : "false",
              halted  ? "true" : "false",
              ip, sps, (unsigned long long)steps, profile_id,
              game,
-             av, ov, rt, et, lp, M2HLE_VERSION, M2HLE_BUILD_FLAVOR);
+             av, ov, rt, et, lp, dv, M2HLE_VERSION, M2HLE_BUILD_FLAVOR);
 }
 
 /* {"cmd":"prof","on":1} arms the i960 address profiler (clearing it),
@@ -282,12 +289,36 @@ static void mcp_cmd_match_replay(char *resp, int cap) {
 
 /* Drive game input: set the active-high held mask (0x500700 layout, same bits the
  * profile's input.bits use). The I/O read callback serves these to the game's
- * read_sw. e.g. {"cmd":"set_input","held":"0x1000"} holds P1 DOWN. */
+ * read_sw. e.g. {"cmd":"set_input","held":"0x1000"} holds P1 DOWN. "far" sets
+ * players 3 and 4 on a four-player cabinet the same way (g_input.far_held:
+ * player 3 on player 1's bits, player 4 on player 2's); left out, they stay. */
 static void mcp_cmd_set_input(const char *req, char *resp, int cap) {
-    uint32_t held = 0;
+    uint32_t held = 0, far_bits = 0;
     mcp_json_get_u32(req, "held", &held);
     g_input.held = held;
-    snprintf(resp, (size_t)cap, "{\"ok\":true,\"held\":\"0x%08X\"}", held);
+    if (mcp_json_get_u32(req, "far", &far_bits)) g_input.far_held = far_bits;
+    snprintf(resp, (size_t)cap, "{\"ok\":true,\"held\":\"0x%08X\",\"far\":\"0x%08X\"}", held, (uint32_t)g_input.far_held);
+}
+
+/* Point a light gun as a host's mouse would (lightgun.h): {"cmd":"set_gun",
+ * "player":0,"x":0.5,"y":0.5} aims P1 at the picture's centre (0..1 across
+ * and down), "offscreen":1 points it off the picture, "on":0 hands the gun
+ * back to the pad. Replies with where the board's gun points. */
+static void mcp_cmd_set_gun(const char *req, char *resp, int cap) {
+    int player = 0, on = 1, off = 0;
+    float x = 0.5f, y = 0.5f;
+    json_get_int(req, "player", &player);
+    json_get_int(req, "on", &on);
+    json_get_int(req, "offscreen", &off);
+    json_get_f32(req, "x", &x);
+    json_get_f32(req, "y", &y);
+    if (player < 0 || player >= LIGHTGUN_PLAYERS) {
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"player is 0 or 1\"}");
+        return;
+    }
+    lightgun_point(player, on != 0, off != 0, x, y);
+    snprintf(resp, (size_t)cap, "{\"ok\":true,\"player\":%d,\"ad_x\":%d,\"ad_y\":%d}",
+             player, (int)g_lightgun.x[player], (int)g_lightgun.y[player]);
 }
 
 /* set_camera's view fields: where the debug camera stands and looks, and the
@@ -323,12 +354,14 @@ static void mcp_set_camera_depth(const char *req) {
     if (mcp_json_get_str(req,"zkey0",   v,sizeof v)) g_geo3d_zsort_key0 = (atoi(v) != 0);
 }
 
-/* set_camera's fill fields: texture wrap, checker phase and corner normals. */
+/* set_camera's fill fields: texture wrap, checker phase, microtextures and corner normals. */
 static void mcp_set_camera_fill(const char *req) {
     char v[32];
     /* 0: the texture filter wraps at every tile edge, ignoring the faces' wrap bits. */
     if (mcp_json_get_str(req,"texclamp",v,sizeof v)) g_geo3d_tex_clamp = (atoi(v) != 0);
     if (mcp_json_get_str(req,"checker",v,sizeof v)) g_geo3d_checker_phase = (atoi(v) != 0);
+    /* 0: no face blends its microtexture square (GEO3D_FACE_MICRO). */
+    if (mcp_json_get_str(req,"microtex",v,sizeof v)) g_geo3d_microtex = (atoi(v) != 0);
     /* 0: a list in mode 2 or 3 is lit and culled with the ROM normals (geo3d_board_normal). */
     if (mcp_json_get_str(req,"nnormals",v,sizeof v)) g_geo3d_nn_normals = (atoi(v) != 0);
 }
@@ -2581,10 +2614,10 @@ static void mcp_cmd_ggpo_lobby(const char *req, char *resp, int cap) {
     if (len && resp[len - 1] == '}')
         snprintf(resp + len - 1, (size_t)cap - (len - 1),
                  ",\"vs_mode\":%s,\"results\":%u,\"winner\":%d,"
-                 "\"session\":{\"on\":%s,\"running\":%s,\"frames\":%u}}",
+                 "\"session\":{\"on\":%s,\"running\":%s,\"frames\":%u},\"solo\":%s}",
                  g_vs_mode ? "true" : "false", (unsigned)n, winner,
-                 g_ggpo.on ? "true" : "false", g_ggpo.on && g_ggpo.running ? "true" : "false",
-                 g_ggpo.on ? (unsigned)g_ggpo.frames : 0u);
+                 emu_ggpo_active() ? "true" : "false", emu_ggpo_active() && g_ggpo.running ? "true" : "false",
+                 emu_ggpo_active() ? (unsigned)g_ggpo.frames : 0u, emu_ggpo_solo() ? "true" : "false");
 #else
     (void)req;
     snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"this build has no GGPO\"}");
@@ -2956,6 +2989,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
 
     if      (strcmp(cmd, "get_status")       == 0) mcp_cmd_get_status(resp, cap, true);
     else if (strcmp(cmd, "set_input")        == 0) mcp_cmd_set_input(req, resp, cap);
+    else if (strcmp(cmd, "set_gun")          == 0) mcp_cmd_set_gun(req, resp, cap);
     else if (strcmp(cmd, "prof")             == 0) mcp_cmd_prof(req, resp, cap);
     else if (strcmp(cmd, "prof_dump")        == 0) mcp_cmd_prof_dump(req, resp, cap);
     else if (strcmp(cmd, "set_camera")       == 0) mcp_cmd_set_camera(req, resp, cap);

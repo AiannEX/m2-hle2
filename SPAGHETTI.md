@@ -13,6 +13,8 @@ A measurement of master at `f22755f` (2026-10-17), which since stack #398 merged
 | over 30 | 0 | 0 | 0 | 15.7% |
 | over 50 | 0 | 0 | 0 | 6.7% |
 
+**Merged with master at `f32dae8` (2026-10-20).** The stack went to master as one PR (#1338). Since `f22755f` master had gained Daytona's Z80 and Model 1 sound board, gamepads, wheels and force feedback on SDL3 (`ui/sdl_pads.h`), the Controls window, light guns on SDL3 and the web, and GGPO's solo mode, and that code came in over the line. Merged, 4,779 functions (60,341 lines) have 21 over 15 paths (1,099 lines, 1.8%), 10 over 20 (741 lines, 1.2%, the headline) and 4 over 30; the worst is `pad_refresh` (`ui/sdl_pads.h`, 49), then `z80_step` (43) and `controls_tab_wheel` (38). 14 of the 21 are new on master. The other 7 were under 15 on the stack and grew past it there: `pad_refresh`, which moved into `sdl_pads.h` and took the wheels, `input_attach`, `sound_map_pages`, `zip_extract_from_set`, `emu_ggpo_cli_arg`, `emu_ggpo_start` and `ggl__from_server`. The table above and the [Progress](#progress) columns are the stack's before the merge. `python3 tools/spaghetti.py` lists the 21.
+
 The code has grown by more than two fifths since then (38,873 lines in functions to 56,012: savestates, rewind, GGPO, replays, the one-way follow, Gems, Sega Rally's TGP, Virtual-On's comm link, the game scripts, Dynamite Cop's TGPx4, Fighting Vipers), and the new code came in small. Agent sessions run `lizard -w -C 15 -L 80` on the files they change before they build, and split a function as soon as it warns. That is why so little grew back: what was over 20 at the end was written before that check, or grew a case at a time since.
 
 ## How it was measured

@@ -131,6 +131,8 @@ typedef struct {
     uint32_t mesh_ptr_add;          /* 0 = board default 0x10 */
     uint32_t model_table_offset;    /* byte offset of model table within main_data */
     uint32_t model_table_count;     /* number of entries in the model table */
+    uint32_t model_table_past_from; /* entries from here on read at model_table_past_offset (0: none) */
+    uint32_t model_table_past_offset;
     model_layout_t model_layout;    /* the entry's shape (model_table.h); zero = 1995's */
     uint32_t camera_struct_addr;    /* RAM address of camera eye (x,y,z f32; 0 = no game camera) */
     /* Absolute RAM address of the camera angle word (low16 = pitch, high16 = yaw).
@@ -138,6 +140,7 @@ typedef struct {
      * FV keeps it separate at 0x515584. 0 = default to camera_struct_addr + 0xC. */
     uint32_t camera_angle_addr;
     bool     enable_68k_sound;      /* false = skip M68K/SCSP init (use when sound driver not yet ported) */
+    bool     model1_sound;          /* the sound board is a Model 1 one: MultiPCMs, not the SCSP (model1_sound.h) */
 
     /* Real interrupt delivery (board IRQ controller in irq_timer.h).
      * irq_handler[pin] = i960 address of the dispatch handler for IRQ pin 0..3
@@ -204,6 +207,42 @@ typedef struct {
      * the held bits named in `wheel`. */
     bool     io_5649;
     struct { uint32_t left, right, accel, brake, shift_up, shift_down; } wheel;
+
+    /* The I/O board is a Model 1 one behind a dual-port RAM (model1io.h: its
+     * Z80 runs the program in the set's iocpu region). The wheel, pedals and
+     * lever are io_5649.h's model of them, named in `wheel`; `vr4` is the held
+     * bit of the button IN1 bit 0 reads. */
+    bool     model1_io;
+    uint32_t model1_io_vr4;
+    /* The Advanced Model 1 I/O board (model1io.h, model1io_install_advanced;
+     * Virtua Cop): its own Z80 map and an FPGA that reads `lightgun`'s guns.
+     * Not model1_io, which is Daytona's wheel board. */
+    bool     model1_io2;
+
+    /* A four-player cabinet on the 315-5649 (MAME model2a_airwlkrs_state):
+     * port F bit 7 picks the side IN1 / IN2 and IN0's start bits answer for,
+     * players 1 and 2 or 3 and 4 (input.h, input_attach_sides). */
+    bool     four_player_sides;
+
+    /* Two light guns on the 315-5649's second serial channel (lightgun.h):
+     * input_attach serves their positions, off-screen bits and triggers. Each
+     * gun's held bits (its pad walks it; reload is the shot off the screen)
+     * and its A/D range, MAME's PORT_MINMAX and default. */
+    bool     lightgun;
+
+    /* Power Sled's 315-5649 (input.h input_attach_sled): each rider's two
+     * pedals on A/D channels 1 and 3 (P1 right, left) and 5 and 7 (P2), and
+     * port E's Cancel Network Check switch (bit 1). The held bits that press
+     * them, and what a right and a left pedal read up and down. */
+    bool     sled;
+    struct {
+        uint32_t p1_left, p1_right, p2_left, p2_right, cancel_net;
+        uint8_t  right_up, right_down, left_up, left_down;
+    } pedal;
+    struct {
+        uint32_t up, down, left, right, trigger, reload;
+        int      x_min, x_max, x_rest, y_min, y_max, y_rest;
+    } gun[2];
 
     /* Charge the i960 what the board's caches and wait states cost on top of
      * MAME's per-opcode table (i960_timing.h). The timers and the vblank count
@@ -330,9 +369,23 @@ typedef struct game_profile {
      * has no link. */
     game_link_role_fn   link_role;
 
+    /* A GGPO match plays the link: both cabinets on each machine, one player
+     * on each (core/emu_twin.h). A role outside backup RAM (Power Sled's unit,
+     * the program's bytes) must be a savestate extra, as it swaps with the
+     * board. */
+    bool                link_twin;
+
+    /* A linked game one board cannot play (Power Sled's ride needs a Main):
+     * with nothing else on the board it runs both cabinets, the player's live
+     * and this working the other's controls (emu_ggpo.h, SOLO). Returns the
+     * other cabinet's held mask from its RAM and the player's held keys.
+     * Needs link_twin. NULL: the board runs alone. */
+    uint32_t          (*link_solo)(struct memory_bus *bus, uint32_t held);
+
     /* A prepared profile (registry.h, g_prepared_profiles): the set's ROMs and
      * what is known of its data, with no board to run it yet. Says what the
-     * board lacks; NULL for a runnable profile. */
+     * board lacks; NULL for a runnable profile, or what a runnable one still
+     * lacks (Daytona's sound board). */
     const char         *preliminary;
 } game_profile_t;
 
@@ -362,7 +415,8 @@ static inline bool profile_runs_set(const game_profile_t *p, const char *set) {
 /* The quirks' model table as the board reads it (model_table.h). No quirks:
  * an empty table. */
 static inline model_table_t profile_model_table(const game_quirks_t *q) {
-    return q ? model_table_make(q->model_table_offset, q->model_table_count, q->model_layout)
+    return q ? model_table_past(model_table_make(q->model_table_offset, q->model_table_count, q->model_layout),
+                                q->model_table_past_from, q->model_table_past_offset)
              : model_table_make(0, 0, (model_layout_t)MODEL_LAYOUT_1995);
 }
 

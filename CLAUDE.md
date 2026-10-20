@@ -22,6 +22,7 @@ The load-bearing invariants (reverse-engineered, in no datasheet, do not re-deri
 | Memory bus | [memory-bus.md](docs/invariants/memory-bus.md) | `memory.h`, `irq_timer.h` |
 | Tile renderer | [tile-renderer.md](docs/invariants/tile-renderer.md) | `tile_renderer.h` |
 | Sound board (68000, SCSP, UART) | [sound-board.md](docs/invariants/sound-board.md) | `sound*.h`, `scsp.h`, `m68k*.h` |
+| Model 1 I/O + sound boards (Daytona, Virtua Cop) | [model1-boards.md](docs/invariants/model1-boards.md) | `model1io.h`, `model1_sound.h`, `z80.h` |
 | HLE hooks, STF profiles | [hle-hooks.md](docs/invariants/hle-hooks.md) | `profiles/`, `hle_hooks.h` |
 | Homebrew on a game's board | [homebrew.md](docs/invariants/homebrew.md) | `sfight_homebrew.h` |
 | Prepared profiles, model tables | [prepared-profiles.md](docs/invariants/prepared-profiles.md) | `registry.h`, `model_table.h` |
@@ -53,7 +54,7 @@ Building, the tests, the graders and the STF disassembly: [docs/build.md](docs/b
 - An unknown COP command whose "opcodes" look like floats means an argument count is missing, not a new op. Log unknown COP commands and unhandled MMIO at WARN.
 - ROMs: use `$ROMS_DIR` in place, never copy a zip, never run from the ROM folder. Scripted runs use `--headless --mcp --rom <zip> --run`.
 - Netplay tests only on the container's RPCN (127.0.0.1:31313) or a local ggpo-server. A scripted session never writes memory or halts the board.
-- No Sega asset goes in the repo (PS3 menu art, decoded dumps), and no Gems C: it lives in the `vendor/gems-c` submodule.
+- No Sega asset goes in the repo (PS3 menu art, decoded dumps), and no Gems or Ages C: it lives in the `vendor/gems-c` and `vendor/ages-c` submodules.
 
 ## Conventions
 

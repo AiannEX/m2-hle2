@@ -65,6 +65,12 @@
 #include "shader_window.h"   /* ...and the Video menu that picks one */
 #include "m2lua_ui.h"        /* M2emulator's game scripts: their drawing, keys and menu */
 #include "m2lua_mcp.h"       /* ...and the bridge's script_* commands */
+#include "lightgun_ui.h"      /* the mouse as a light gun, and its crosshairs */
+#include "net/comm_local.h"   /* --comm-master / --comm-slave: two boards linked on 127.0.0.1 */
+#if M2HLE_PADS
+#include "sdl_pads.h"         /* gamepads, racing wheels and force feedback through SDL3 (#1082) */
+#endif
+#include "controls_window.h"  /* the Controls window: devices and keys, per profile (#1147) */
 #if defined(__linux__)
 #include <unistd.h>          /* readlink: scripts/ beside the executable */
 #endif
@@ -102,6 +108,7 @@ static int  g_headless   = 0;      /* --headless: no window, GPU or audio device
 static int  g_net_window = 0;      /* --netplay: open the netplay window at startup */
 static int  g_kiosk_on   = 0;      /* --kiosk: capture mode from startup */
 static int  g_no_tray    = 0;      /* --no-tray: --headless without its icon */
+static int  g_no_pads    = 0;      /* --no-pads: no gamepads or wheels (and no SDL) */
 /* --no-sound-board (or M2HLE_NO_SOUND_BOARD=1): boot with the 68000 and SCSP
  * detached, for training runs that want frames, not sound. The sound board is
  * a third to a half of the emu thread. It is board state, not only audio: its
@@ -124,6 +131,12 @@ static int  g_av_port    = 0;      /* --av-port N: raw A/V server, 0 = off */
 static int  g_av_w       = AV_DEFAULT_WIDTH;
 static int  g_av_h       = AV_DEFAULT_HEIGHT;
 static int  g_av_mute    = 0;      /* --av-mute: stream the sound, do not play it */
+/* --comm-master / --comm-slave PORT:TOKEN: this board's comm board linked to
+ * another m2hle's over 127.0.0.1 (net/comm_local.h), as SDL3's --versus. */
+static int      g_comm_master = 0;
+static uint16_t g_comm_port   = 0;
+static uint32_t g_comm_token  = 0;
+static bool comm_link_arg(void);
 
 /*
  * Headless netplay (--net-*). The GUI is the normal way in, but a session that
@@ -159,6 +172,7 @@ static struct {
     bool             show_m68k_mem;
     bool             show_debug;
     bool             show_netplay;
+    bool             show_controls;   /* the Controls window (controls_window.h) */
     bool             always_show_menu;  /* Debug -> Always show menu bar */
     m68k_state_t     m68k_snapshot;   /* prev-frame 68K state for change highlights */
 } state;
@@ -250,6 +264,7 @@ static void open_backup_ram(bool homebrew) {
  * this must run after it.) */
 static void load_sound_board(void) {
     if (!g_active_profile->quirks.enable_68k_sound) return;
+    sound_select_board(g_active_profile->quirks.model1_sound);
     sound_reset();
     sound_attach(&state.bus);
     if (state.romset.audiocpu && state.romset.audiocpu_size > 0)
@@ -453,6 +468,7 @@ static void netplay_reset_board_cb(void *ctx) {
     irqt_reset();
 
     if (g_active_profile->quirks.enable_68k_sound) {
+        sound_select_board(g_active_profile->quirks.model1_sound);
         sound_reset();
         sound_attach(&state.bus);
         if (state.romset.audiocpu && state.romset.audiocpu_size > 0)
@@ -729,6 +745,8 @@ static void menu_profile(void) {
         if (igMenuItemBoolPtr(g_profiles[i]->display_name, NULL, &sel, true))
             g_active_profile = g_profiles[i];
     }
+    igSeparator();
+    igMenuItemBoolPtr("Controls...", NULL, &state.show_controls, true);
     /* The CPU opponent's AI table, taken as each fight starts (sfight.h
      * sfight_hook_enemy_rank_table); a netplay session plays the cabinet's. */
     if (g_active_profile && g_active_profile->quirks.enemy_ranks) {
@@ -949,6 +967,50 @@ static void init_take_focus(void) {
 #endif
 }
 
+#if M2HLE_PADS
+/* Gamepads and racing wheels (Pinboard #1082): SDL3 for its joysticks and
+ * haptics only, sokol keeps the window. They play while the window has the
+ * focus (a second m2hle on the same desktop, a netplay test, keeps its own);
+ * capture mode and --no-pads take none. */
+static bool g_pads_on, g_pads_focused = true;
+
+static void pads_init(void) {
+    if (g_no_pads || g_kiosk_on) return;
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    /* SDL would turn SIGINT/SIGTERM into a quit event that only it sees: the
+     * window then outlives Ctrl+C and `timeout`. */
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+    if (!SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_HAPTIC)) {
+        LOG_WARN("pads: SDL_Init: %s; no gamepads or wheels", SDL_GetError());
+        return;
+    }
+    g_pads_on = true;
+}
+
+static void pads_frame(void) {
+    if (!g_pads_on) return;
+    SDL_Event ev;
+    bool changed = false;
+    while (SDL_PollEvent(&ev)) sdl_pads_event(&ev, &changed);
+    if (!g_pads_focused) return;
+    if (changed) pad_refresh();
+    ffb_update();
+}
+
+static bool pads_running(void) { return g_pads_on; }
+
+static void pads_focus(bool focused) {
+    if (!g_pads_on || focused == g_pads_focused) return;
+    g_pads_focused = focused;
+    if (focused) pad_refresh();
+    else { lobby_pad_release(); ffb_stop_all(); }
+}
+#endif
+
+#if !M2HLE_PADS
+static bool pads_running(void) { return false; }
+#endif
+
 static void init(void) {
     log_init();
     crash_trace_install();
@@ -979,6 +1041,9 @@ static void init(void) {
 
     init_renderer();
     init_audio_av();
+#if M2HLE_PADS
+    pads_init();     /* #1082 made it and never called it: no pad ever opened */
+#endif
 
     /* The overlay plugin, if one was asked for. After game_render_init because
      * its layers are GPU images, and before the emu thread because a plugin
@@ -999,6 +1064,7 @@ static void init(void) {
         load_active_profile(g_rom_path);
         if (state.romset.loaded) load_state_arg();   /* a failure is logged; the board boots fresh */
         if (state.romset.loaded) replay_open_arg();
+        if (state.romset.loaded) comm_link_arg();     /* a failure is logged; the board runs unlinked */
         if (g_autorun && state.romset.loaded) emu_run(&state.emu);
     }
 
@@ -1394,6 +1460,24 @@ static void headless_loop(bool av_on) {
  * into the capture target, so a machine with no desktop session can stream.
  * The A/V tap sits at the sound producer, so the samples come through with or
  * without an audio device. */
+/* --comm-master / --comm-slave: the link, before the board runs. False if
+ * there is no socket. */
+static bool comm_link_arg(void) {
+    if (!g_comm_master && !g_comm_port) return true;
+    uint16_t epoch = (uint16_t)(rand() | 1);
+    bool ok = g_comm_master ? comm_local_listen(&g_comm_local, (uint32_t)rand() ^ (uint32_t)time(NULL), epoch)
+                            : comm_local_connect(&g_comm_local, g_comm_port, g_comm_token, epoch);
+    if (!ok) { LOG_ERROR("--comm-%s: no UDP socket on 127.0.0.1", g_comm_master ? "master" : "slave"); return false; }
+    emu_mutex_lock(&state.emu.mutex);
+    comm_local_begin(&g_comm_local);
+    emu_mutex_unlock(&state.emu.mutex);
+    LOG_INFO("comm link: this board is the %s, link on 127.0.0.1:%u (--comm-slave %u:%u)",
+             comm_role_name(g_comm_local.role), g_comm_local.port, g_comm_local.port, g_comm_local.token);
+    printf("comm-link %u:%u\n", g_comm_local.port, g_comm_local.token);
+    fflush(stdout);
+    return true;
+}
+
 static int headless_main(void) {
     log_init();
     crash_trace_install();
@@ -1415,6 +1499,7 @@ static int headless_main(void) {
     if (!state.romset.loaded) { LOG_ERROR("--headless: ROM set did not load"); return 1; }
     if (!load_state_arg()) return 1;
     replay_open_arg();
+    if (!comm_link_arg()) return 1;
     if (g_autorun) emu_run(&state.emu);
 
     if (!g_no_tray) headless_tray_start();
@@ -1460,6 +1545,7 @@ static void draw_windows(void) {
     if (state.show_m68k_mem)    m68k_memview_draw(&state.show_m68k_mem);
     if (state.show_debug)       debug_window_draw(&state.show_debug);
     if (state.show_netplay)     netplay_window_draw(&state.show_netplay);
+    controls_window_draw(&state.show_controls, pads_running());
     netplay_empty_room_overlay();
     netplay_vs_again_overlay();
     if (state.show_demo)        igShowDemoWindow(&state.show_demo);
@@ -1581,6 +1667,8 @@ static void window_draw_game(int ox, int oy, int w, int h, bool post, bool win_o
     /* What the game's script drew (PostDraw), over the game and under the
      * debug windows. Not on the A/V stream: that is the board's picture. */
     if (!win_overlay) m2lua_ui_draw(ox, oy, w, h);
+    lightgun_ui_set_rect(ox, oy, w, h);
+    lightgun_ui_draw(ox, oy, w, h);
 
     extract_model_tick();
 }
@@ -1589,6 +1677,10 @@ static void frame(void) {
     /* `quit` over the bridge. Capture mode would otherwise swallow the close,
      * which is the point of capture mode -- so say we mean it. */
     if (mcp_quit_requested()) { kiosk_allow_quit(); sapp_request_quit(); }
+    controls_frame(pads_running());   /* the profile's controls, when it changes */
+#if M2HLE_PADS
+    pads_frame();
+#endif
 
     simgui_new_frame(&(simgui_frame_desc_t){
         .width       = sapp_width(),
@@ -1690,6 +1782,9 @@ static void frame(void) {
 
 static void cleanup(void) {
     kiosk_shutdown();      /* take the tray icon down before the window goes */
+#if M2HLE_PADS
+    if (g_pads_on) { lobby_pad_release(); ffb_stop_all(); SDL_Quit(); g_pads_on = false; }
+#endif
     /* First: the writer thread is still sending out of slots the renderer owns
      * and the target below is about to go. It keeps both rings — the audio tap
      * runs on the emu thread, which is still going at this point, and that is
@@ -1757,12 +1852,20 @@ static void event(const sapp_event* ev) {
         return;
     }
 
+    /* A key the Controls window is binding goes to it, not the game. */
+    if (controls_key_event(ev)) return;
+
     /* Game input flows through the emulated I/O ports (read by the game's vblank
      * interrupt) — set/clear the host held mask here. Routed regardless of ImGui
      * focus so arcade muscle-memory isn't eaten by a debug window. */
     if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && !ev->key_repeat) input_key_down((int)ev->key_code);
     if (ev->type == SAPP_EVENTTYPE_KEY_UP)                      input_key_up((int)ev->key_code);
     m2lua_ui_event(ev);
+    lightgun_ui_event(ev);
+#if M2HLE_PADS
+    if (ev->type == SAPP_EVENTTYPE_FOCUSED)   pads_focus(true);
+    if (ev->type == SAPP_EVENTTYPE_UNFOCUSED) pads_focus(false);
+#endif
 
     if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) return;
     event_hotkey(ev);
@@ -1833,6 +1936,26 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             else LOG_WARN("--enemy-rank %s: expected cabinet, easy, normal, hard, hardest, extra1 or extra2", d);
         } else if (i + 1 < argc && io5649_wheel_option(argv[i], argv[i + 1])) {
             i++;                      /* a 315-5649 wheel's pot: centre, range, speed (io_5649.h) */
+        } else if (strcmp(argv[i], "--comm-master") == 0) {
+            g_comm_master = 1;
+        } else if (strcmp(argv[i], "--comm-slave") == 0 && i + 1 < argc) {
+            unsigned port = 0, token = 0;
+            if (sscanf(argv[++i], "%u:%u", &port, &token) == 2 && port && port <= 65535u) {
+                g_comm_port  = (uint16_t)port;
+                g_comm_token = token;
+            } else LOG_WARN("--comm-slave %s: expected PORT:TOKEN", argv[i]);
+        } else if (i + 1 < argc && lightgun_host_option(argv[i], argv[i + 1])) {
+            i++;                      /* a light gun's flash on the trigger (lightgun_host.h) */
+        } else if (strcmp(argv[i], "--no-pads") == 0) {
+            g_no_pads = 1;            /* no gamepads or wheels */
+#if M2HLE_PADS
+        } else if (i + 1 < argc && sdl_pads_option(argv[i], argv[i + 1])) {
+            /* --pad-map, --pad N, --wheel-axes, --wheel-buttons, --ffb-gain (sdl_pads.h) */
+            if (sdl_pads_option(argv[i], argv[i + 1]) < 0) LOG_WARN("%s %s: not understood", argv[i], argv[i + 1]);
+            else if (!strcmp(argv[i], "--pad-map") || !strncmp(argv[i], "--wheel-", 8))
+                controls_cli_note(argv[i], argv[i + 1]);   /* over each profile's controls file */
+            i++;
+#endif
         } else if (strcmp(argv[i], "--run") == 0) {
             g_autorun = 1;
         } else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc) {
@@ -2066,7 +2189,9 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             netplay_set_config_path(argv[++i]);
         } else if (strcmp(argv[i], "--macro") == 0 && i + 1 < argc) {
             /* One key that presses several buttons at once: --macro a=b1+b2,
-             * --macro kp1=p2:b1+b2+b3. Repeatable; see input_combo_parse. */
+             * --macro kp1=p2:b1+b2+b3. Repeatable; see input_combo_parse.
+             * Players 3 and 4 of a four-player cabinet have keys only this
+             * way: --macro t=p3:up, --macro kp8=p4:up. */
             char spec[64];
             snprintf(spec, sizeof spec, "%s", argv[++i]);
             char *eq = strchr(spec, '=');

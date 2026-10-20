@@ -218,7 +218,7 @@ are **silently wrong** rather than loudly wrong when you get them half right.
   and nothing runs it faster (fast-forward, unthrottled, a watcher's catch-up). Only the SLAVE
   trims (one frame early after 30 frame edges with 2+ of the master's messages waiting): a
   master that trimmed on the slave's answers would chase the slave's backlog. The board's
-  frame stays 416,667 cycles; a linked board refuses a state load and rewind.
+  frame stays 434,600 cycles; a linked board refuses a state load and rewind.
 - **A linked game's room match opens the link, not a lockstep session** (`netplay_member_start_link`,
   Pinboard #983). For a profile with a `link_role`, each fighter takes the match's side and
   generation (the datagram header) and calls `netplay_comm_open`; the room stays in its lobby

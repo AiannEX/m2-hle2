@@ -340,8 +340,10 @@ static void m2comm_phantom_report(void) {
                     g_m2comm_link.alive == M2COMM_LINK_UP ? "up" : "down",
                     g_m2comm_link.id, g_m2comm_link.count, g_m2comm_link.taken, g_m2comm_link.sent);
         if (!strncmp(g_active_profile->id, "von", 3))
-            fprintf(stderr, "vonj: role byte %u, link_ID %u, 503A08 %u, net_flag %u, packets in (cRecn+4) %u\n",
-                    mem_read8(&bus, 0x01D00028u), mem_read8(&bus, 0x005770B1u), mem_read32(&bus, 0x00503A08u),
+            /* vonj's 0x503A08 is von's 0x503A04 (profiles/vonj.h). */
+            fprintf(stderr, "%s: role byte %u, link_ID %u, 503A08 %u, net_flag %u, packets in (cRecn+4) %u\n",
+                    g_active_profile->id, mem_read8(&bus, 0x01D00028u), mem_read8(&bus, 0x005770B1u),
+                    mem_read32(&bus, strcmp(g_active_profile->id, "von") ? 0x00503A08u : 0x00503A04u),
                     mem_read8(&bus, 0x005770B0u), mem_read32(&bus, 0x005024F4u));
     }
 #ifndef __EMSCRIPTEN__
@@ -451,6 +453,7 @@ static void install_board(void *ctx) {
     if (g_gems_i960 || g_gems_cop || g_gems_verify) gems_apply(profile_rom_set(g_active_profile));
     irqt_reset();
     if (g_active_profile->quirks.enable_68k_sound) {
+        sound_select_board(g_active_profile->quirks.model1_sound);
         sound_reset();
         sound_attach(&bus);
         if (romset.audiocpu && romset.audiocpu_size > 0) sound_load_rom(romset.audiocpu, (uint32_t)romset.audiocpu_size);

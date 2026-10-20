@@ -177,6 +177,7 @@ static inline uint32_t tgx_ea(uint32_t mode, uint32_t rx, uint32_t ry, uint32_t 
     case 0x09: return ar[rx] + (bbus ? (ar[ry] >> 7) : (ar[ry] & 0x7Fu));
     case 0x0A: return ar[rx] + disp;
     case 0x0B: return ar[rx] + ar[ry] + disp;
+    case 0x0C: return disp;                                  /* absolute: no AR */
     case 0x0D: res = ar[ry] & (0x1FFu >> (7u - bits)); tgx_ar_step(ry, 1u);          return ar[rx] + res;
     case 0x0E: res = ar[ry] & (0x1FFu >> (7u - bits)); tgx_ar_step(ry, 0xFFFFFFFFu); return ar[rx] + res;
     case 0x0F: res = ar[ry] & (0x1FFu >> (7u - bits)); tgx_ar_step(ry, disp);        return ar[rx] + res;

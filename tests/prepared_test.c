@@ -1,11 +1,13 @@
 /*
  * prepared_test.c — the prepared profiles (registry.h, g_prepared_profiles;
- * Pinboard #660): Virtua Cop, Daytona USA and The House of the Dead, which no
- * board here can run yet.
+ * Pinboard #660). None is left: Virtua Cop, The House of the Dead and Daytona
+ * USA run since Pinboard #1286, #1034 and #1035 and keep their noclip checks
+ * here.
  *
  * Without ROMs (the canary): every recipe part lands inside a region the
- * recipe gives a size, every profile says what its board lacks and has no
- * installer, and the lookup finds them by set name.
+ * recipe gives a size, every prepared profile says what its board lacks and
+ * has no installer, and the lookup finds them by set name; a runnable one has
+ * an installer and no such message.
  *
  * With a set in $ROMDIR / $ROMS_DIR: it loads, the PRCB and the start IP are
  * inside the program, ROM_COPY mirrors match their source, and the model table
@@ -29,12 +31,15 @@
 #include "vcop.h"
 #include "daytona.h"
 #include "hotd.h"
+#include "schamp.h"
 #include "geo3d.h"
 
 #include "test_rom_dir.h"
 
-const game_profile_t *const g_prepared_profiles[] = { &vcop_profile, &daytona_profile, &hotd_profile };
-const size_t g_prepared_count = sizeof g_prepared_profiles / sizeof g_prepared_profiles[0];
+/* registry.h's: empty since Virtua Cop runs (#1286). */
+const game_profile_t *const g_prepared_profiles[] = { NULL };
+const size_t g_prepared_count = 0;
+const game_profile_t *g_active_profile = NULL;   /* sfight.h's hooks read it (registry.h) */
 
 static int g_fail = 0;
 #define CHECK(cond, ...) do { \
@@ -101,22 +106,34 @@ typedef struct {
     uint32_t      cull_diff, light_dir, light_zero, light_len;
 } noclip_reads_t;
 
+/* Texture RAM as the game fills it before it draws the models whose headers
+ * are there (noclip's modelTable.textureRam): words from texture RAM word
+ * `from` on, copied from main_data byte `at`. */
+typedef struct {
+    uint32_t from, at, words;
+} texram_run_t;
+
 /* What the test reads a profile with: its recipe, the layout its quirks must
- * name (model_table.h), and noclip's reads. */
+ * name (model_table.h), noclip's reads, and the texture RAM they assume. */
 typedef struct {
     const game_profile_t *p;
     const rom_recipe_t   *recipe;
     model_layout_t        layout;
     noclip_reads_t        noclip;
+    texram_run_t          texram;
 } prepared_case_t;
 
 static const prepared_case_t k_cases[] = {
+    /* Models 0x4D2-0x4E2 from the second table, their headers in texture RAM
+     * from 0x4000, 0x800 words the game copies from data 0x81D3DE at game
+     * start: noclip master 9ca98e3 (15fc0db), the rest unchanged since aefb324. */
     { &vcop_profile, &vcop_recipe, MODEL_LAYOUT_VCOP,
-      { 1234, 0x2298d18du, 1234, 0, { 0, 1, 1233 },
-        { { 0x50000, 0x0, 0x800004 }, { 0x50760, 0x3cc, 0x8009f1 }, { 0xc292a, 0x39240, 0x89c275 } },
-        1234, 0, 0xab8c6c68u, { { 0, 0x10, 0x1841701 }, { 1, 0x27c4, 0x1841b01 }, { 1233, 0x2709d4, 0x9c1502 } },
-        1234, 0, 61375, 57495, 57002, 0xae157b11u, 60141, 59615, 0x4add73cbu,
-        100826, 0x4a1dafe1u, 0, 13594, 0xb34338bbu, 0, 0, 0, 0 } },
+      { 1251, 0x54d65fb9u, 1251, 0, { 0, 1, 1250 },
+        { { 0x50000, 0x0, 0x800004 }, { 0x50760, 0x3cc, 0x8009f1 }, { 0x624f6, 0x804078, 0x819566 } },
+        1251, 0, 0x73d0f0a7u, { { 0, 0x10, 0x1841701 }, { 1, 0x27c4, 0x1841b01 }, { 1250, 0x65598, 0x13e1a01 } },
+        1251, 0, 61429, 57530, 57037, 0x777591fbu, 60178, 59652, 0x08667b45u,
+        100885, 0xa4e8a47au, 0, 13606, 0xad422024u, 0, 0, 0, 0 },
+      { 0x4000, 0x81d3de, 0x800 } },
     { &daytona_profile, &daytona_recipe, MODEL_LAYOUT_DAYTONA,
       { 3190, 0xa7bff01du, 3190, 27, { 0, 1, 3189 },
         { { 0x17ecd0, 0x117080, 0x880004 }, { 0x17f13e, 0x11728c, 0x8805af }, { 0x85abc, 0x18510, 0x84881b } },
@@ -151,12 +168,17 @@ static void check_recipe(const rom_recipe_t *rc) {
 
 static void check_profile(const prepared_case_t *c) {
     const game_profile_t *p = c->p;
-    CHECK(p->load_fn && !p->install_fn, "%s: loads, and has no installer", p->id);
-    CHECK(p->preliminary && p->preliminary[0], "%s: says what the board lacks", p->id);
-    CHECK(profile_prepared_for_rom_set(p->id) == p, "%s: found by its set name", p->id);
-    char msg[256];
-    CHECK(profile_prepared_message(p->id, msg, sizeof msg) && strstr(msg, p->display_name),
-          "%s: the front ends' message names it", p->id);
+    if (p->install_fn) {
+        CHECK(p->load_fn && !p->preliminary, "%s: loads, installs, and lacks nothing", p->id);
+        CHECK(!profile_prepared_for_rom_set(p->id), "%s: not among the prepared", p->id);
+    } else {
+        CHECK(p->load_fn, "%s: loads, and has no installer", p->id);
+        CHECK(p->preliminary && p->preliminary[0], "%s: says what the board lacks", p->id);
+        CHECK(profile_prepared_for_rom_set(p->id) == p, "%s: found by its set name", p->id);
+        char msg[256];
+        CHECK(profile_prepared_message(p->id, msg, sizeof msg) && strstr(msg, p->display_name),
+              "%s: the front ends' message names it", p->id);
+    }
     check_recipe(c->recipe);
     const model_table_t t = profile_model_table(&p->quirks);
     CHECK(!memcmp(&t.layout, &c->layout, sizeof t.layout),
@@ -391,7 +413,7 @@ static void decode_mix(decode_totals_t *d, uint32_t i, uint32_t off, const geo3d
 static void check_decode_totals(const char *id, const decode_totals_t *dt, const noclip_reads_t *n);
 
 static void check_noclip_decode(const char *id, const model_table_t *t, const game_quirks_t *q,
-                                const romset_t *rs, const noclip_reads_t *n) {
+                                const romset_t *rs, const noclip_reads_t *n, const texram_run_t *tr) {
     enum { FACES = GEO3D_IA_MAX_IDX / 4, READS = FACES * 24, TRIS = FACES * 2 };
     static uint32_t reads[READS], tris[TRIS];
     static geo3d_reads_tri_t tri[TRIS];
@@ -407,6 +429,12 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
     decode_totals_t d = { .fnv = 0x811c9dc5u, .hdr_fnv = 0x811c9dc5u, .tri_fnv = 0x811c9dc5u,
                           .lit_fnv = 0x811c9dc5u };
     g_geo3d_mode = n->plane ? 2u : 0u;
+    static geo_raster_state_t ram;
+    memset(ram.texram, 0, sizeof ram.texram);
+    for (uint32_t k = 0; k < tr->words && tr->from + k < 0x10000u && tr->at + k * 2u + 2u <= rs->main_data_size; k++)
+        ram.texram[tr->from + k] = (uint16_t)(rs->main_data[tr->at + k * 2u] | rs->main_data[tr->at + k * 2u + 1u] << 8);
+    const geo_raster_state_t *was = g_geo_rs;
+    g_geo_rs = &ram;
     int over = 0;
     model_entry_t e;
     uint32_t off;
@@ -422,6 +450,7 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
         decode_mix_lit(&d, i, &r, n->plane);
     }
     g_geo3d_mode = 0;
+    g_geo_rs = was;
     CHECK(over == 0, "%s: every decode's reads fit the test's buffers", id);
     check_decode_totals(id, &d, n);
 }
@@ -479,7 +508,7 @@ static void check_model_table(const prepared_case_t *c, const romset_t *rs) {
           c->p->id, c->noclip.meshes, c->noclip.ram);
     check_noclip_reads(c->p->id, &t, rs, &c->noclip);
     check_noclip_meshes(c->p->id, &t, q, rs, &c->noclip);
-    check_noclip_decode(c->p->id, &t, q, rs, &c->noclip);
+    check_noclip_decode(c->p->id, &t, q, rs, &c->noclip, &c->texram);
 }
 
 static void check_set(const prepared_case_t *c) {
@@ -490,7 +519,9 @@ static void check_set(const prepared_case_t *c) {
     if (!f) { printf("skip: %s not found\n", path); return; }
     fclose(f);
     static romset_t rs;
-    int rc = c->p->load_fn(&rs, path, NULL);
+    char parent[1100] = "";
+    if (c->p->parent_zip_name) snprintf(parent, sizeof parent, "%s", test_rom(c->p->parent_zip_name));
+    int rc = c->p->load_fn(&rs, path, parent[0] ? parent : NULL);
     CHECK(rc == 0 && rs.loaded, "%s: the set loads", id);
     if (rc != 0) return;
     for (int r = 0; r < ROM_REGION_COUNT; r++) {
@@ -504,12 +535,92 @@ static void check_set(const prepared_case_t *c) {
     romset_free(&rs);
 }
 
+/* The clones of Pinboard #1286: each recipe in its regions, and with the
+ * set's zip here, its load, its program and its mirrors. `zip` is where the
+ * set is looked for (hotdo's chips come in hotd.zip). */
+typedef struct {
+    const game_profile_t *p;
+    const rom_recipe_t   *recipe;
+    const char           *zip;
+} clone_case_t;
+
+static const clone_case_t k_clones[] = {
+    { &schamp_profile,     &schamp_recipe,     "schamp"     },
+    { &hotdo_profile,      &hotdo_recipe,      "hotd"       },
+    { &hotdp_profile,      &hotdp_recipe,      "hotdp"      },
+    { &daytona93_profile,  &daytona93_recipe,  "daytona93"  },
+    { &daytonase_profile,  &daytonase_recipe,  "daytonase"  },
+    { &daytonas_profile,   &daytonas_recipe,   "daytonas"   },
+    { &daytonat_profile,   &daytonat_recipe,   "daytonat"   },
+    { &daytonata_profile,  &daytonata_recipe,  "daytonata"  },
+    { &daytonagtx_profile, &daytonagtx_recipe, "daytonagtx" },
+};
+
+static void check_clone(const clone_case_t *c) {
+    const char *id = c->p->id;
+    bool own = !strcmp(id, "schamp");   /* MAME's parent of sfight: no parent zip */
+    CHECK(c->p->load_fn && c->p->install_fn && (own || c->p->parent_zip_name),
+          own ? "%s: loads and installs" : "%s: loads, installs, and names its parent", id);
+    check_recipe(c->recipe);
+    char path[1100];
+    snprintf(path, sizeof path, "%s.zip", test_rom(c->zip));
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("skip: %s not found\n", path); return; }
+    fclose(f);
+    static romset_t rs;
+    const char *parent = c->p->parent_zip_name ? test_rom(c->p->parent_zip_name) : NULL;
+    int rc = c->p->load_fn(&rs, path, parent);
+    CHECK(rc == 0 && rs.loaded, "%s: the set loads", id);
+    if (rc != 0) return;
+    for (int r = 0; r < ROM_REGION_COUNT; r++) {
+        size_t *sz;
+        rom_recipe_region(&rs, (rom_region_id_t)r, &sz);
+        if (*sz != c->recipe->size[r]) CHECK(0, "%s: region %d is 0x%zX, not 0x%X", id, r, *sz, c->recipe->size[r]);
+    }
+    check_program(id, &rs);
+    check_mirrors(id, c->recipe, &rs);
+    romset_free(&rs);
+}
+
+/* schamp's hooks are sfight's, moved: the 16 bytes at each must be the same. */
+static void check_schamp_hooks(void) {
+    static const uint32_t sfight_at[SCHAMP_HOOK_COUNT] = {
+        0x11A04, 0x77F8, 0xDC3C, 0x62688, 0x6974, 0x62674, 0x624F8, 0x11610,
+    };
+    char a[1100], b[1100];
+    snprintf(a, sizeof a, "%s.zip", test_rom("sfight"));
+    snprintf(b, sizeof b, "%s.zip", test_rom("schamp"));
+    FILE *fa = fopen(a, "rb"), *fb = fopen(b, "rb");
+    if (fa) fclose(fa);
+    if (fb) fclose(fb);
+    if (!fa || !fb) { printf("skip: sfight.zip or schamp.zip not found\n"); return; }
+    static romset_t sf, sc;
+    if (sfight_load(&sf, a, b) != 0 || schamp_load(&sc, b, NULL) != 0) {
+        CHECK(0, "schamp: sfight and schamp load");
+        romset_free(&sf); romset_free(&sc);
+        return;
+    }
+    int bad = 0;
+    for (int i = 0; i < SCHAMP_HOOK_COUNT; i++) {
+        uint32_t at = schamp_profile.hooks[i].addr;
+        if (memcmp(sf.maincpu + sfight_at[i], sc.maincpu + at, 16)) {
+            printf("      %s: 0x%X in sfight, 0x%X here\n", schamp_profile.hooks[i].name, sfight_at[i], at);
+            bad++;
+        }
+    }
+    CHECK(bad == 0, "schamp: its %d hooks are on sfight's instructions", SCHAMP_HOOK_COUNT);
+    romset_free(&sf);
+    romset_free(&sc);
+}
+
 int main(void) {
     for (size_t i = 0; i < sizeof k_cases / sizeof k_cases[0]; i++) check_profile(&k_cases[i]);
     char msg[64];
     CHECK(!profile_prepared_for_rom_set("sfight") && !profile_prepared_message("sfight", msg, sizeof msg),
           "a runnable set is not a prepared one");
     for (size_t i = 0; i < sizeof k_cases / sizeof k_cases[0]; i++) check_set(&k_cases[i]);
+    for (size_t i = 0; i < sizeof k_clones / sizeof k_clones[0]; i++) check_clone(&k_clones[i]);
+    check_schamp_hooks();
     printf(g_fail ? "\nFAILED (%d)\n" : "\nPASSED\n", g_fail);
     return g_fail ? 1 : 0;
 }
