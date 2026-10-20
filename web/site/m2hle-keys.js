@@ -328,9 +328,12 @@ const m2hleKeys = (() => {
     }
     $('key-reset').addEventListener('click', () => { binds = clone(DEFAULTS); save(); release(); stopListening(); });
     /* The panel's Close button, the Controls button and Escape all go through
-     * m2hlePad.toggle; this hears about it by watching the panel. */
-    new MutationObserver(() => { if ($('controls').hidden) listening = null; render(); })
-      .observe($('controls'), { attributes: true, attributeFilter: ['hidden'] });
+     * m2hlePad.toggle, and its tabs hide this section; this hears about both by watching. */
+    const hiddenWatch = new MutationObserver(() => {
+      if ($('controls').hidden || $('key-section').hidden) listening = null;
+      render();
+    });
+    for (const id of ['controls', 'key-section']) hiddenWatch.observe($(id), { attributes: true, attributeFilter: ['hidden'] });
     if (navigator.keyboard && navigator.keyboard.getLayoutMap) {
       navigator.keyboard.getLayoutMap().then((m) => { layout = m; render(); }).catch(() => {});
     }
