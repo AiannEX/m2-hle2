@@ -1058,6 +1058,39 @@ static void netplay_start(void) {
     if (lobby_can_sign_in()) lobby_sign_in();
 }
 
+/* lobby_event's pad button press: Guide or L1+R1 toggle the lobby; while it is
+ * open, the d-pad moves and A or B is held for its release. */
+static void lobby_pad_down(const SDL_Event *ev, bool *toggle, bool *used) {
+    SDL_Gamepad *pad = SDL_GetGamepadFromID(ev->gbutton.which);
+    int b = ev->gbutton.button;
+    if (b == SDL_GAMEPAD_BUTTON_GUIDE) *toggle = true;
+    else if (pad && ((b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER
+                      && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER))
+                  || (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER
+                      && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER))))
+        *toggle = true;
+    else if (g_lobby.open) {
+        *used = true;
+        if (b == SDL_GAMEPAD_BUTTON_DPAD_UP)   lobby_move(-1);
+        if (b == SDL_GAMEPAD_BUTTON_DPAD_DOWN) lobby_move(+1);
+        if (b == SDL_GAMEPAD_BUTTON_SOUTH || b == SDL_GAMEPAD_BUTTON_EAST)
+            g_lobby.pressed = b;
+    }
+}
+
+/* lobby_event's key press: F1 toggles the lobby; while it is open, every key
+ * but Escape is the lobby's, the arrows moving, Return picking, Backspace closing. */
+static void lobby_key_down(const SDL_Event *ev, bool *toggle, bool *used) {
+    if (ev->key.scancode == SDL_SCANCODE_F1) *toggle = true;
+    else if (g_lobby.open && ev->key.scancode != SDL_SCANCODE_ESCAPE) {
+        *used = true;
+        if (ev->key.scancode == SDL_SCANCODE_UP)        lobby_move(-1);
+        if (ev->key.scancode == SDL_SCANCODE_DOWN)      lobby_move(+1);
+        if (ev->key.scancode == SDL_SCANCODE_RETURN)    lobby_activate();
+        if (ev->key.scancode == SDL_SCANCODE_BACKSPACE) lobby_show(false);
+    }
+}
+
 /* The netplay lobby takes the pad and the keyboard while it is open: L1+R1,
  * Guide or F1 toggle it; the d-pad moves, A picks and B closes, both on
  * release, so the button is up again before the game resumes. True if the
@@ -1065,21 +1098,7 @@ static void netplay_start(void) {
 static bool lobby_event(const SDL_Event *ev, bool *pad_changed) {
     bool toggle = false, used = false;
     if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
-        SDL_Gamepad *pad = SDL_GetGamepadFromID(ev->gbutton.which);
-        int b = ev->gbutton.button;
-        if (b == SDL_GAMEPAD_BUTTON_GUIDE) toggle = true;
-        else if (pad && ((b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER
-                          && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER))
-                      || (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER
-                          && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER))))
-            toggle = true;
-        else if (g_lobby.open) {
-            used = true;
-            if (b == SDL_GAMEPAD_BUTTON_DPAD_UP)   lobby_move(-1);
-            if (b == SDL_GAMEPAD_BUTTON_DPAD_DOWN) lobby_move(+1);
-            if (b == SDL_GAMEPAD_BUTTON_SOUTH || b == SDL_GAMEPAD_BUTTON_EAST)
-                g_lobby.pressed = b;
-        }
+        lobby_pad_down(ev, &toggle, &used);
     } else if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_UP && g_lobby.open) {
         used = true;
         if (ev->gbutton.button == g_lobby.pressed) {
@@ -1088,14 +1107,7 @@ static bool lobby_event(const SDL_Event *ev, bool *pad_changed) {
             else lobby_show(false);
         }
     } else if (ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat) {
-        if (ev->key.scancode == SDL_SCANCODE_F1) toggle = true;
-        else if (g_lobby.open && ev->key.scancode != SDL_SCANCODE_ESCAPE) {
-            used = true;
-            if (ev->key.scancode == SDL_SCANCODE_UP)        lobby_move(-1);
-            if (ev->key.scancode == SDL_SCANCODE_DOWN)      lobby_move(+1);
-            if (ev->key.scancode == SDL_SCANCODE_RETURN)    lobby_activate();
-            if (ev->key.scancode == SDL_SCANCODE_BACKSPACE) lobby_show(false);
-        }
+        lobby_key_down(ev, &toggle, &used);
     } else if (ev->type == SDL_EVENT_GAMEPAD_AXIS_MOTION && g_lobby.open) {
         used = true;
     }
