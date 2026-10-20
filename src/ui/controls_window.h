@@ -82,8 +82,9 @@ static inline bool controls_path(const game_profile_t *p, char *out, size_t cap)
     return true;
 }
 
-static inline void controls_defaults(void) {
-    input_keys_default();
+/* Profile p's built-in map: its default keys (input.h), the pads' binds. */
+static inline void controls_defaults(const game_profile_t *p) {
+    input_keys_default(p);
 #if M2HLE_PADS
     sdl_pads_default();
 #endif
@@ -148,7 +149,7 @@ static inline void controls_apply_line(char *line) {
 /* Profile p's controls in: the built-in map, its file over that, the command
  * line over both. */
 static inline void controls_load(const game_profile_t *p) {
-    controls_defaults();
+    controls_defaults(p);
     g_ctl.loaded = p;
     char path[640], line[320];
     FILE *f = controls_path(p, path, sizeof path) ? fopen(path, "r") : NULL;

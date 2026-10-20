@@ -145,11 +145,41 @@ int main(void) {
         input_key_up(SAPP_KEYCODE_SPACE);
         CHECK(g_input.held == 0 && input_keycode_to_action(SAPP_KEYCODE_SPACE) == GAME_INPUT_P1_B1,
               "and lets both go");
-        input_keys_default();
+        input_keys_default(g_active_profile);
         input_key_down(SAPP_KEYCODE_Z);
         CHECK(g_input.held == bits[GAME_INPUT_P1_B1] && input_keycode_to_action(SAPP_KEYCODE_SPACE) == -1,
               "input_keys_default puts Z back on B1");
         input_reset();
+
+        /* m2emulator's layout (docs/m2emulator-controls.md, Pinboard #1347) */
+        CHECK(input_keycode_to_action(SAPP_KEYCODE_F1) == GAME_INPUT_SERVICE &&
+              input_keycode_to_action(SAPP_KEYCODE_9) == GAME_INPUT_SERVICE &&
+              input_keycode_to_action(SAPP_KEYCODE_F2) == GAME_INPUT_TEST &&
+              input_keycode_to_action(SAPP_KEYCODE_F3) == -1,
+              "F1 (and MAME's 9) is the service button, F2 the test switch");
+        CHECK(bits[GAME_INPUT_TEST] == 0x04 && bits[GAME_INPUT_SERVICE] == 0x08,
+              "STF's IN0: 0x04 the test switch, 0x08 the service button, as MAME's");
+        static game_profile_t drive;
+        drive.input = g_active_profile->input;
+        drive.quirks.wheel.accel = bits[GAME_INPUT_P1_B1];
+        drive.quirks.wheel.brake = bits[GAME_INPUT_P1_B2];
+        input_keys_default(&drive);
+        CHECK(!input_keys_driving(g_active_profile) && input_keys_driving(&drive) &&
+              input_keycode_to_action(SAPP_KEYCODE_UP) == GAME_INPUT_P1_B1 &&
+              input_keycode_to_action(SAPP_KEYCODE_DOWN) == GAME_INPUT_P1_B2 &&
+              input_keycode_to_action(SAPP_KEYCODE_LEFT) == GAME_INPUT_P1_LEFT &&
+              input_keycode_to_action(SAPP_KEYCODE_Z) == GAME_INPUT_P1_B3 &&
+              input_keycode_to_action(SAPP_KEYCODE_X) == GAME_INPUT_P1_B4 &&
+              input_keycode_to_action(SAPP_KEYCODE_C) == GAME_INPUT_P2_B3 &&
+              input_keycode_to_action(SAPP_KEYCODE_V) == GAME_INPUT_P2_B4 &&
+              input_keycode_to_action(SAPP_KEYCODE_W) == GAME_INPUT_P1_UP &&
+              input_keycode_to_action(SAPP_KEYCODE_Q) == GAME_INPUT_P1_DOWN &&
+              input_keycode_to_action(SAPP_KEYCODE_A) == GAME_INPUT_GEAR_1 &&
+              input_keycode_to_action(SAPP_KEYCODE_F) == GAME_INPUT_GEAR_4 &&
+              input_keycode_to_action(SAPP_KEYCODE_G) == GAME_INPUT_GEAR_N &&
+              input_keycode_to_action(SAPP_KEYCODE_PAGE_DOWN) == -1,
+              "a racing cabinet: Up accelerates, Down brakes, Z X C V the views, Q / W shift, A S D F G the gears");
+        input_keys_default(g_active_profile);
     }
 
     /* ---- (A2) a light gun's flash: off by default, N drawn frames a pull ---- */

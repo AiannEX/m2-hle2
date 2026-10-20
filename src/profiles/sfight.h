@@ -888,7 +888,10 @@ _Static_assert(sizeof((hle_hook_entry_t[]){ SFIGHT_BASE_HOOKS }) ==
         [GAME_INPUT_P2_B2]    = 0x00020000,                                     \
         [GAME_INPUT_P2_B3]    = 0x00040000,                                     \
         [GAME_INPUT_P2_START] = 0x00000020,                                     \
-        [GAME_INPUT_SERVICE]  = 0x00000004,                                     \
+        /* IN0 0x04 is the cabinet's test switch, 0x08 its service button     \
+         * (MAME's model2 ports, m2emulator's F2 and F1: Pinboard #1347). */  \
+        [GAME_INPUT_TEST]     = 0x00000004,                                     \
+        [GAME_INPUT_SERVICE]  = 0x00000008,                                     \
         /* Coins map to IN0 (held byte0) COIN1/COIN2 — active-low at IO+0x02. \
          * The game's read_sw edge-detects these and updates credits. */        \
         [GAME_INPUT_P1_COIN]  = 0x00000001,                                     \

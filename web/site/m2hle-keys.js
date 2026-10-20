@@ -12,7 +12,8 @@
  * through the browser's layout map where it has one, so that key reads "W" on
  * AZERTY.
  *
- * Kept in this origin's localStorage under 'm2hle.keys'.
+ * Kept in this origin's localStorage under 'm2hle.keys', or 'm2hle.keys.<game>'
+ * for a game with a layout of its own (m2hleGame.keys: the racing games).
  *
  * This script loads BEFORE m2hle-tools.js, so its window capture listener runs
  * first. It has to: the tools listener stops every key aimed at a panel (so
@@ -70,7 +71,7 @@ m2hleLang.add({
 
 const m2hleKeys = (() => {
   const $ = (id) => document.getElementById(id);
-  const STORE = 'm2hle.keys';
+  const STORE = m2hleGame.keys ? 'm2hle.keys.' + m2hleGame.id : 'm2hle.keys';
   const MAX_BINDS = 3;
 
   /* The rows of the panel; `act` is the player-1 GAME_INPUT_* index (`acts` for a
@@ -109,17 +110,19 @@ const m2hleKeys = (() => {
   for (const a of ACTIONS) a.label = m2hleGame.labels[a.id] || a.label || m2hleLang.t('keys.act.' + a.id);
   const P2_OFFSET = 10;
 
-  /* The desktop build's keys (src/board/input.h), which are MAME's. */
+  /* The desktop build's keys (src/board/input.h), which are MAME's and
+   * m2emulator's, and a game's own over them (m2hleGame.keys). */
   const DEFAULTS = {
     p1: { up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
           b1: ['KeyZ'], b2: ['KeyX'], b3: ['KeyC'], b4: ['KeyV'], start: ['Digit1'], coin: ['Digit5'],
-          pk: [], pb: [], kb: [], pkb: [], service: ['F2'], test: ['F3'],
+          pk: [], pb: [], kb: [], pkb: [], service: ['F1', 'Digit9'], test: ['F2'],
           gearn: [], gear1: [], gear2: [], gear3: [], gear4: [], pause: ['KeyP', 'Pause'] },
     p2: { up: ['KeyI'], down: ['KeyK'], left: ['KeyJ'], right: ['KeyL'],
           b1: ['Delete'], b2: ['End'], b3: ['PageDown'], b4: ['Home'], start: ['Digit2'], coin: ['Digit6'],
           pk: [], pb: [], kb: [], pkb: [], service: [], test: [],
           gearn: [], gear1: [], gear2: [], gear3: [], gear4: [], pause: [] },
   };
+  for (const p of ['p1', 'p2']) Object.assign(DEFAULTS[p], (m2hleGame.keys || {})[p]);
 
   const clone = (o) => JSON.parse(JSON.stringify(o));
   let binds = clone(DEFAULTS);

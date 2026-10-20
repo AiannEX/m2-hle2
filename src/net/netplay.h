@@ -224,11 +224,15 @@
  * 34: Fighting Vipers' COP ops 0x79, 0x7C, 0x7D and 0x7E (its inner 3x3
  *    tables), which went down as commands; a broken cage's pieces land
  *    (Pinboard #1331). 33 is #1137's (PR #479).
+ * 35: Sonic the Fighters, Virtual-On and the m2snake homebrew call IN0 0x04
+ *    the test switch and 0x08 the service button, as MAME and m2emulator do;
+ *    their "service" was 0x04 and nothing pressed 0x08 (Pinboard #1347).
  * 36: Fighting Vipers' COP 0x3A bins balls at 1/16 unit and leaves a radius-0
  *    P1 ball's mask alone, as its own program does, where it ran STF's 1/8
  *    (Pinboard #1353). 35 is #1347's (PR #505).
+ * 37: 35's test/service swap, landing after 36: a 36 build has it the old way.
  */
-#define NETPLAY_PROTO_REV 36
+#define NETPLAY_PROTO_REV 37
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.

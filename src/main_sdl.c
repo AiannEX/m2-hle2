@@ -210,8 +210,28 @@ static struct {
 static bool g_sdtx_on;              /* sokol's debug text is set up: --osd, the lobby or a script's text */
 static bool g_sound_on;             /* the sound board is attached (sound_start succeeded) */
 
-/* Keyboard, for desktop runs: the debugger's layout (input.h). */
+/* Keyboard, for desktop runs: the debugger's layout (input.h), which is
+ * m2emulator's (Pinboard #1347), and its INPUT_KEYS_DRIVING on a racing
+ * cabinet. F1 is the lobby here, so the service button is MAME's 9 alone. */
 static int key_to_action(SDL_Scancode sc) {
+    if (input_keys_driving(g_active_profile)) {
+        switch (sc) {
+            case SDL_SCANCODE_UP:   return GAME_INPUT_P1_B1;    /* accelerator */
+            case SDL_SCANCODE_DOWN: return GAME_INPUT_P1_B2;    /* brake */
+            case SDL_SCANCODE_Z:    return GAME_INPUT_P1_B3;    /* VR1 .. VR4 */
+            case SDL_SCANCODE_X:    return GAME_INPUT_P1_B4;
+            case SDL_SCANCODE_C:    return GAME_INPUT_P2_B3;
+            case SDL_SCANCODE_V:    return GAME_INPUT_P2_B4;
+            case SDL_SCANCODE_W:    return GAME_INPUT_P1_UP;    /* shift up */
+            case SDL_SCANCODE_Q:    return GAME_INPUT_P1_DOWN;  /* shift down */
+            case SDL_SCANCODE_A:    return GAME_INPUT_GEAR_1;   /* a gear's button */
+            case SDL_SCANCODE_S:    return GAME_INPUT_GEAR_2;
+            case SDL_SCANCODE_D:    return GAME_INPUT_GEAR_3;
+            case SDL_SCANCODE_F:    return GAME_INPUT_GEAR_4;
+            case SDL_SCANCODE_G:    return GAME_INPUT_GEAR_N;
+            default:                break;
+        }
+    }
     switch (sc) {
         case SDL_SCANCODE_UP:    return GAME_INPUT_P1_UP;
         case SDL_SCANCODE_DOWN:  return GAME_INPUT_P1_DOWN;
@@ -223,8 +243,8 @@ static int key_to_action(SDL_Scancode sc) {
         case SDL_SCANCODE_V:     return GAME_INPUT_P1_B4;
         case SDL_SCANCODE_1:     return GAME_INPUT_P1_START;
         case SDL_SCANCODE_5:     return GAME_INPUT_P1_COIN;
-        case SDL_SCANCODE_F2:    return GAME_INPUT_SERVICE;
-        case SDL_SCANCODE_F3:    return GAME_INPUT_TEST;
+        case SDL_SCANCODE_9:     return GAME_INPUT_SERVICE;
+        case SDL_SCANCODE_F2:    return GAME_INPUT_TEST;
         default:                 return -1;
     }
 }

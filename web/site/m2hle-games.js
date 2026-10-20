@@ -28,6 +28,17 @@
 'use strict';
 
 const m2hleGames = (() => {
+  /* A racing cabinet's keys over m2hle-keys.js's defaults, m2emulator's layout
+   * as on the desktop (src/board/input.h INPUT_KEYS_DRIVING, Pinboard #1347):
+   * the arrows drive (Up the accelerator, Down the brake), Z X C V the view
+   * buttons (player 2's B3 / B4 are Daytona's VR3 / VR4), Q / W the shifts,
+   * A S D F the gears 1-4 and G neutral. */
+  const DRIVING_KEYS = {
+    p1: { up: ['KeyW'], down: ['KeyQ'], b1: ['ArrowUp'], b2: ['ArrowDown'], b3: ['KeyZ'], b4: ['KeyX'],
+          gear1: ['KeyA'], gear2: ['KeyS'], gear3: ['KeyD'], gear4: ['KeyF'], gearn: ['KeyG'] },
+    p2: { b3: ['KeyC'], b4: ['KeyV'] },
+  };
+
   const GAMES = {
     sfight: {
       title: 'Sonic the Fighters',
@@ -67,6 +78,7 @@ const m2hleGames = (() => {
        * UP/DOWN a gear, B3 VIEW CHANGE. */
       labels: { up: 'Shift up', down: 'Shift down', left: 'Steer left', right: 'Steer right',
                 b1: 'Accelerator', b2: 'Brake', b3: 'View change', b4: 'Unused' },
+      keys: DRIVING_KEYS,
       gears: true,                         /* a button per gate as well (io_5649.h) */
       /* No replay format of its own: a replay is always the buttons from the
        * game's start (src/core/replay.h, replay__saves_inputs). */
@@ -249,6 +261,7 @@ const m2hleGames = (() => {
        * VR3/VR4). The wheel's force is the pad's rumble (m2hle-pad.js). */
       labels: { up: 'Shift up', down: 'Shift down', left: 'Steer left', right: 'Steer right',
                 b1: 'Accelerator', b2: 'Brake', b3: 'View 1', b4: 'View 2' },
+      keys: DRIVING_KEYS,
       /* A button per gate of the lever as well as Shift up / down (io_5649.h). */
       gears: true,
       ownReplay: false,

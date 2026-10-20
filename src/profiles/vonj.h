@@ -235,7 +235,7 @@ static inline bool vonj_link_role(memory_bus_t *bus, game_link_role_t role) {
     return any;
 }
 
-/* IN0 is the cabinet's: COIN1 0x01, COIN2 0x02, SERVICE 0x04, START 0x10
+/* IN0 is the cabinet's: COIN1 0x01, COIN2 0x02, TEST 0x04, SERVICE 0x08, START 0x10
  * (MAME INPUT_PORTS_START(model2crx)). IN1 (byte 1) the left lever, IN2
  * (byte 2) the right: shot 0x01, dash 0x02, down 0x10, up 0x20, right 0x40,
  * left 0x80 (INPUT_PORTS_START(von)). */
@@ -301,7 +301,8 @@ static inline void vonj_match_info(memory_bus_t *bus, game_match_info_t *out) {
         .bits = { \
             [GAME_INPUT_P1_COIN]  = 0x00000001, \
             [GAME_INPUT_P2_COIN]  = 0x00000002, \
-            [GAME_INPUT_SERVICE]  = 0x00000004, \
+            [GAME_INPUT_TEST]     = 0x00000004, \
+            [GAME_INPUT_SERVICE]  = 0x00000008, \
             [GAME_INPUT_P1_START] = 0x00000010, \
             [GAME_INPUT_P1_DOWN]  = 0x00001000, \
             [GAME_INPUT_P1_UP]    = 0x00002000, \
