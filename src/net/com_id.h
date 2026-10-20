@@ -144,6 +144,10 @@ static const comid_entry_t g_comid_registry[] = {
     { "AIRWLKRS",           "ARWLKR", NULL },
     { "AIRWALKERS",         "ARWLKR", NULL },
 
+    /* Sega's linked sled racer on the 2B (Pinboard #1089). */
+    { "POWSLED",            "PWRSLD", NULL },
+    { "POWERSLED",          "PWRSLD", NULL },
+
     /* The homebrew that runs on this board layer. */
     { "M2SNAKE",            "M2SNAK", NULL },
 };

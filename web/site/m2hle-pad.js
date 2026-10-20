@@ -333,6 +333,7 @@ const m2hlePad = (() => {
     if (pause && !pauseHeld) window.dispatchEvent(new Event('m2hle-pause'));
     pauseHeld = pause;
     if (list.length === 0) showHeld(0);
+    if (ready && Module._web_wheel) mask |= wheel(list);
     padMask = mask;
     if (ready && Module._web_pad_far_set && !listening) Module._web_pad_far_set(far >>> 0);
     /* Every frame, not only on a change: the emulator forgets what the pad held
@@ -342,13 +343,67 @@ const m2hlePad = (() => {
     if (ready && Module._web_ffb) rumble(list);
   }
 
+  /* ---- Analog wheel and pedals -------------------------------------------------
+   *
+   * Sega Rally and Daytona USA read where the wheel is turned and how far a
+   * pedal is down (main_web.c, web_wheel; Pinboard #1082). Player 1's pads
+   * give them: the axis bound to Left / Right turns the wheel (a "standard"
+   * pad's stick past a small dead zone, any other pad's axis, a racing wheel's,
+   * all of it), and the analog value of what is bound to Button 1 (the
+   * accelerator) and Button 2 (the brake) presses the pedals; a standard
+   * pad's right and left triggers are those pedals too. A pedal on an axis is
+   * read from where it rested when first seen. Sessions and replays read the
+   * buttons, so the triggers press Button 1 / 2 past half as well. */
+  const STICK_DEAD = 2500 / 32767, PEDAL_HALF = 0.5;
+  const wheelRest = new Map();   /* pad index -> the axes as first seen */
+
+  function axisPedal(pad, x) {
+    let rest = wheelRest.get(pad.index);
+    if (!rest) { rest = pad.axes.slice(); wheelRest.set(pad.index, rest); }
+    const r = rest[x.a] || 0, v = pad.axes[x.a] || 0;
+    const span = x.d > 0 ? 1 - r : r + 1;
+    return span > 0.25 ? Math.min(1, Math.max(0, (v - r) * x.d / span)) : 0;
+  }
+
+  function wheel(list) {
+    if (!Module._web_wheel_on || !Module._web_wheel_on()) { Module._web_wheel(0, 0, 0, 0); return 0; }
+    let on = false, steer = 0, accel = 0, brake = 0, mask = 0;
+    list.forEach((pad, i) => {
+      if (i === 1 && secondIsP2 && !TWIN) return;
+      const binds = sets[layoutOf(pad)], std = pad.mapping === 'standard';
+      let st = 0;
+      for (const x of binds.left || []) if (x.a !== undefined) { const v = -(pad.axes[x.a] || 0) * x.d; if (Math.abs(v) > Math.abs(st)) st = v; }
+      for (const x of binds.right || []) if (x.a !== undefined) { const v = (pad.axes[x.a] || 0) * x.d; if (Math.abs(v) > Math.abs(st)) st = v; }
+      if (std) st = Math.abs(st) <= STICK_DEAD ? 0 : Math.sign(st) * (Math.abs(st) - STICK_DEAD) / (1 - STICK_DEAD);
+      const pedal = (row, trigger) => {
+        let p = std && pad.buttons[trigger] ? pad.buttons[trigger].value : 0;
+        for (const x of binds[row] || []) {
+          const v = x.b !== undefined ? (pad.buttons[x.b] ? pad.buttons[x.b].value : 0) : axisPedal(pad, x);
+          if (v > p) p = v;
+        }
+        return p;
+      };
+      const ac = pedal('b1', 7), br = pedal('b2', 6);
+      if (Math.abs(st) > Math.abs(steer)) steer = st;
+      accel = Math.max(accel, ac);
+      brake = Math.max(brake, br);
+      if (std && pad.buttons[7] && pad.buttons[7].value > PEDAL_HALF) mask |= 1 << 4;   /* GAME_INPUT_P1_B1 */
+      if (std && pad.buttons[6] && pad.buttons[6].value > PEDAL_HALF) mask |= 1 << 5;   /* GAME_INPUT_P1_B2 */
+      on = true;
+    });
+    const q = (v) => Math.round(Math.max(-1, Math.min(1, v)) * 32767);
+    Module._web_wheel(on ? 1 : 0, q(steer), q(accel), q(brake));
+    return mask;
+  }
+
   /* ---- Force feedback ----------------------------------------------------------
    *
-   * Daytona USA's drive board (main_web.c, web_ffb): its kicks and shakes on
-   * player 1's pad, the two motors of a 'dual-rumble' effect (Chrome, Edge,
-   * Safari) or a pulse (Firefox), renewed while they last. With no pad, a phone
-   * buzzes once for each kick or shake the board starts. A pad has no spring or
-   * friction, so the wheel's weight at speed is not in it. */
+   * The drive board (main_web.c, web_ffb): Daytona USA's kicks and shakes and
+   * Sega Rally's hard turns of the wheel (a slide, a crash) on player 1's pad,
+   * the two motors of a 'dual-rumble' effect (Chrome, Edge, Safari) or a pulse
+   * (Firefox), renewed while they last. With no pad, a phone buzzes for each
+   * kick the board starts, at most once a RUMBLE_MS. A pad has no spring or
+   * friction, so the wheel's weight is not in it. */
   const RUMBLE_MS = 200, RUMBLE_RENEW_MS = 120;
   let rumbleOn = false, rumbleAt = 0, rumbleCmd = 0;
 
@@ -373,8 +428,9 @@ const m2hlePad = (() => {
         padRumble(list[0], strong, weak);
         rumbleAt = now;
       } else if (!on && rumbleOn) padRumble(list[0], 0, 0);
-    } else if (on && cmd !== rumbleCmd && touchMask && navigator.vibrate) {
+    } else if (on && cmd !== rumbleCmd && now - rumbleAt >= RUMBLE_MS && touchMask && navigator.vibrate) {
       navigator.vibrate(Math.round(40 + 80 * Math.max(strong, weak)));
+      rumbleAt = now;
     }
     rumbleOn = on;
     rumbleCmd = cmd;

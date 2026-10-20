@@ -82,6 +82,14 @@
  *            plays the second. Closing either ends the Versus. Windowed
  *            (640x480 unless --window). Not with --netplay.
  * --pad N    only the Nth gamepad (0 the first) plays here; default all.
+ * --wheel-axes S,A,B  a racing wheel SDL sees only as a joystick: its wheel,
+ *            accelerator and brake axes (default 0,1,2; Sega Rally, Daytona).
+ *            Given, any joystick that is not a gamepad counts as a wheel.
+ *            A gamepad steers with its left stick and pedals with its
+ *            triggers (R2, L2); the wheel's force goes to whichever has it
+ *            (--ffb-gain N, 0-100).
+ * --wheel-buttons N=action,...  that wheel's buttons, e.g. "4=up,5=down" (the
+ *            gear lever), actions as --pad-map's.
  * --window-at X,Y  put the window there.
  * --versus-slave PORT:TOKEN  the SLAVE that --versus starts (not for players).
  * --scripts DIR  the game scripts' folder (M2emulator's Lua, core/m2lua.h):
@@ -145,7 +153,7 @@
  * g_active_profile and pulls in every per-game profile header. */
 #include "registry.h"
 #include "lightgun_sgl.h"   /* the mouse and touches as light guns (Pinboard #1040) */
-#include "ffb.h"           /* the drive board's force feedback (Pinboard #1047) */
+#include "sdl_pads.h"      /* gamepads, wheels, force feedback (Pinboard #1047, #1082) */
 
 #define MAX_SHOTS 16
 #define MAX_SCRIPT_OPTS 16
@@ -200,241 +208,6 @@ static struct {
 
 static bool g_sdtx_on;              /* sokol's debug text is set up: --osd, the lobby or a script's text */
 static bool g_sound_on;             /* the sound board is attached (sound_start succeeded) */
-
-/* ---- Gamepad ------------------------------------------------------------- */
-
-/* Button → action. Directions always come from the d-pad and the left stick. */
-typedef struct { const char *name; SDL_GamepadButton button; uint32_t acts; } pad_bind_t;
-
-/* acts is one bit per GAME_INPUT_* action; more than one is a combo. */
-#define ACT(a) (1u << (a))
-static pad_bind_t g_pad_binds[] = {
-    { "south", SDL_GAMEPAD_BUTTON_SOUTH,          ACT(GAME_INPUT_P1_B1)    },
-    { "east",  SDL_GAMEPAD_BUTTON_EAST,           ACT(GAME_INPUT_P1_B2)    },
-    { "west",  SDL_GAMEPAD_BUTTON_WEST,           ACT(GAME_INPUT_P1_B3)    },
-    { "north", SDL_GAMEPAD_BUTTON_NORTH,          ACT(GAME_INPUT_P1_B4)    },
-    { "start", SDL_GAMEPAD_BUTTON_START,          ACT(GAME_INPUT_P1_START) },
-    { "back",  SDL_GAMEPAD_BUTTON_BACK,           ACT(GAME_INPUT_P1_COIN)  },
-    { "l1",    SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,  0 },
-    { "r1",    SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, 0 },
-    { "l3",    SDL_GAMEPAD_BUTTON_LEFT_STICK,     0 },
-    { "r3",    SDL_GAMEPAD_BUTTON_RIGHT_STICK,    0 },
-    { "guide", SDL_GAMEPAD_BUTTON_GUIDE,          0 },
-};
-#define PAD_BIND_COUNT (int)(sizeof g_pad_binds / sizeof g_pad_binds[0])
-
-/* An action, or a combo of player-1 actions ("b1+b2"); false if neither. */
-static bool actions_by_name(const char *s, uint32_t *acts) {
-    if (!strcmp(s, "none"))    { *acts = 0; return true; }
-    if (!strcmp(s, "service")) { *acts = ACT(GAME_INPUT_SERVICE); return true; }
-    if (!strcmp(s, "test"))    { *acts = ACT(GAME_INPUT_TEST); return true; }
-    *acts = input_combo_parse(s);
-    return *acts && !(*acts >> GAME_INPUT_P2_UP);   /* the pad plays player 1 */
-}
-
-static bool apply_pad_map(const char *list) {
-    char buf[512];
-    snprintf(buf, sizeof buf, "%s", list);
-    for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
-        char *eq = strchr(tok, '=');
-        if (!eq) { fprintf(stderr, "--pad-map: '%s' is not button=action\n", tok); return false; }
-        *eq = '\0';
-        uint32_t acts;
-        bool ok = actions_by_name(eq + 1, &acts);
-        int b;
-        for (b = 0; b < PAD_BIND_COUNT && strcmp(g_pad_binds[b].name, tok); b++) {}
-        if (b == PAD_BIND_COUNT || !ok) {
-            fprintf(stderr, "--pad-map: unknown button or action in '%s=%s'\n", tok, eq + 1);
-            return false;
-        }
-        g_pad_binds[b].acts = acts;
-    }
-    return true;
-}
-
-/* The pad's contribution to each action, recomputed whole on every gamepad
- * event so the d-pad and stick cannot release each other's direction. */
-static bool g_pad_held[GAME_INPUT_COUNT];
-/* Players 3 and 4's (input_far_down), on a four-player cabinet (Air Walkers):
- * the third pad that plays here is player 3 on player 1's actions, the fourth
- * player 4 on player 2's. */
-static bool g_pad_far_held[GAME_INPUT_COUNT];
-
-/* --pad: only that gamepad plays this window; the others play another's. */
-static bool pad_plays_here(int i) {
-    return opt.pad < 0 || i == opt.pad;
-}
-
-static void pad_actions(SDL_Gamepad *pad, bool *now);
-
-static void pad_refresh(void) {
-    bool now[GAME_INPUT_COUNT] = {0}, far_now[GAME_INPUT_COUNT] = {0};
-    int count = 0, here = 0;
-    SDL_JoystickID *ids = SDL_GetGamepads(&count);
-    for (int i = 0; ids && i < count; i++) {
-        if (!pad_plays_here(i)) continue;
-        SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
-        if (!pad) continue;
-        int nth = here++;
-        if (nth >= 2 && nth < 4 && input_four_players()) {
-            bool p1[GAME_INPUT_COUNT] = {0};
-            pad_actions(pad, p1);
-            const int to = nth == 2 ? 0 : GAME_INPUT_P2_UP - GAME_INPUT_P1_UP;
-            for (int a = GAME_INPUT_P1_UP; a <= GAME_INPUT_P1_COIN; a++) if (p1[a]) far_now[a + to] = true;
-            continue;
-        }
-        pad_actions(pad, now);
-    }
-    SDL_free(ids);
-    for (int a = 0; a < GAME_INPUT_COUNT; a++) {
-        if (now[a] && !g_pad_held[a]) input_action_down(a);
-        if (!now[a] && g_pad_held[a]) input_action_up(a);
-        g_pad_held[a] = now[a];
-        if (far_now[a] && !g_pad_far_held[a]) input_far_down(a);
-        if (!far_now[a] && g_pad_far_held[a]) input_far_up(a);
-        g_pad_far_held[a] = far_now[a];
-    }
-}
-
-/* One pad's actions into now[]: the d-pad and left stick steer, the binds press. */
-static void pad_actions(SDL_Gamepad *pad, bool *now) {
-    const int dead = 16000;
-    int ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
-    int ay = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
-    now[GAME_INPUT_P1_UP]    |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)    || ay < -dead;
-    now[GAME_INPUT_P1_DOWN]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)  || ay >  dead;
-    now[GAME_INPUT_P1_LEFT]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)  || ax < -dead;
-    now[GAME_INPUT_P1_RIGHT] |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || ax >  dead;
-    for (int b = 0; b < PAD_BIND_COUNT; b++) {
-        if (!g_pad_binds[b].acts || !SDL_GetGamepadButton(pad, g_pad_binds[b].button)) continue;
-        for (int a = 0; a < GAME_INPUT_COUNT; a++)
-            if (g_pad_binds[b].acts & ACT(a)) now[a] = true;
-    }
-}
-
-/* Let go of everything the pad holds, as the game sees it: the netplay lobby
- * takes the pad, and a button held into it must not stay held in the game. */
-static void lobby_pad_release(void) {
-    for (int a = 0; a < GAME_INPUT_COUNT; a++) {
-        if (g_pad_held[a]) input_action_up(a);
-        if (g_pad_far_held[a]) input_far_up(a);
-        g_pad_held[a] = g_pad_far_held[a] = false;
-    }
-}
-
-/* ---- Force feedback (ffb.h, Pinboard #1047) ------------------------------- */
-
-/* The drive board's force on the pads that play here: a wheel SDL can drive
- * gets the push, the spring, the friction and the shake as haptic effects,
- * set when the command changes; every other pad rumbles, renewed each
- * rendered frame while it does. */
-#define FFB_PADS 4
-
-static struct {
-    SDL_JoystickID id;              /* 0: a free slot */
-    SDL_Haptic    *haptic;          /* NULL: rumble only */
-    int            fx[4];           /* constant, spring, friction, sine; -1 if none */
-    bool           on[4];
-} g_ffb_pad[FFB_PADS];
-static int  g_ffb_last = -1;        /* the command last played; -1: play it again */
-static bool g_ffb_rumbling;
-
-static const Uint32 g_ffb_type[4] = { SDL_HAPTIC_CONSTANT, SDL_HAPTIC_SPRING, SDL_HAPTIC_FRICTION, SDL_HAPTIC_SINE };
-
-/* Effect k (g_ffb_type) at strength v, along the wheel. */
-static SDL_HapticEffect ffb_effect(int k, int v) {
-    SDL_HapticEffect e;
-    SDL_zero(e);
-    e.type = (Uint16)g_ffb_type[k];
-    if (k == 0) {
-        e.constant.direction.type = SDL_HAPTIC_STEERING_AXIS;
-        e.constant.length = SDL_HAPTIC_INFINITY;
-        e.constant.level = (Sint16)v;
-    } else if (k == 3) {
-        e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
-        e.periodic.length = SDL_HAPTIC_INFINITY;
-        e.periodic.period = 60;   /* ms */
-        e.periodic.magnitude = (Sint16)v;
-    } else {
-        e.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
-        e.condition.length = SDL_HAPTIC_INFINITY;
-        e.condition.right_sat[0] = e.condition.left_sat[0] = 0xFFFF;
-        e.condition.right_coeff[0] = e.condition.left_coeff[0] = (Sint16)v;
-    }
-    return e;
-}
-
-static void ffb_close_pad(int s) {
-    if (g_ffb_pad[s].haptic) SDL_CloseHaptic(g_ffb_pad[s].haptic);
-    memset(&g_ffb_pad[s], 0, sizeof g_ffb_pad[s]);
-}
-
-/* A wheel's four effects, made once and updated in place. */
-static void ffb_open_haptic(int s, SDL_Gamepad *pad) {
-    SDL_Joystick *joy = SDL_GetGamepadJoystick(pad);
-    if (!joy || !SDL_IsJoystickHaptic(joy)) return;
-    SDL_Haptic *h = SDL_OpenHapticFromJoystick(joy);
-    if (!h) return;
-    Uint32 has = SDL_GetHapticFeatures(h);
-    int made = 0;
-    for (int k = 0; k < 4; k++) {
-        SDL_HapticEffect e = ffb_effect(k, 0);
-        g_ffb_pad[s].fx[k] = (has & g_ffb_type[k]) ? SDL_CreateHapticEffect(h, &e) : -1;
-        if (g_ffb_pad[s].fx[k] >= 0) made++;
-    }
-    if (!made) { SDL_CloseHaptic(h); return; }
-    if (has & SDL_HAPTIC_AUTOCENTER) SDL_SetHapticAutocenter(h, 0);   /* the game's spring centres it */
-    g_ffb_pad[s].haptic = h;
-    printf("m2hle: force feedback on %s\n", SDL_GetGamepadName(pad));
-}
-
-static void ffb_haptic_play(int s, const ffb_out_t *o) {
-    SDL_Haptic *h = g_ffb_pad[s].haptic;
-    const int v[4] = { o->push, o->spring, o->friction, o->shake };
-    for (int k = 0; k < 4; k++) {
-        int id = g_ffb_pad[s].fx[k];
-        if (id < 0) continue;
-        if (!v[k]) {
-            if (g_ffb_pad[s].on[k]) SDL_StopHapticEffect(h, id);
-            g_ffb_pad[s].on[k] = false;
-            continue;
-        }
-        SDL_HapticEffect e = ffb_effect(k, v[k]);
-        SDL_UpdateHapticEffect(h, id, &e);
-        if (!g_ffb_pad[s].on[k]) SDL_RunHapticEffect(h, id, 1);
-        g_ffb_pad[s].on[k] = true;
-    }
-}
-
-static void ffb_update(void) {
-    ffb_out_t o = ffb_poll();
-    bool rumble = o.strong || o.weak, changed = o.effect.cmd != g_ffb_last;
-    if (!changed && !rumble && !g_ffb_rumbling) return;
-    int count = 0;
-    SDL_JoystickID *ids = SDL_GetGamepads(&count);
-    for (int s = 0; s < FFB_PADS; s++) {   /* forget the pads that went */
-        bool here = false;
-        for (int i = 0; ids && i < count && !here; i++) here = ids[i] == g_ffb_pad[s].id;
-        if (g_ffb_pad[s].id && !here) ffb_close_pad(s);
-    }
-    for (int i = 0; ids && i < count; i++) {
-        SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
-        if (!pad || !pad_plays_here(i)) continue;
-        int s = 0;
-        while (s < FFB_PADS && g_ffb_pad[s].id != ids[i]) s++;
-        if (s == FFB_PADS) {
-            for (s = 0; s < FFB_PADS && g_ffb_pad[s].id; s++) {}
-            if (s == FFB_PADS) continue;
-            g_ffb_pad[s].id = ids[i];
-            ffb_open_haptic(s, pad);
-        }
-        if (g_ffb_pad[s].haptic) { if (changed) ffb_haptic_play(s, &o); }
-        else SDL_RumbleGamepad(pad, o.strong, o.weak, rumble ? 100 : 0);
-    }
-    SDL_free(ids);
-    g_ffb_last = o.effect.cmd;
-    g_ffb_rumbling = rumble;
-}
 
 /* Keyboard, for desktop runs: the debugger's layout (input.h). */
 static int key_to_action(SDL_Scancode sc) {
@@ -646,6 +419,7 @@ static void scripts_image_drop(int i) {
 
 /* Upload what the script loaded since the last frame, free what it released. */
 static void scripts_images_sync(void) {
+    m2lua_init_once();
     emu_mutex_lock(&g_m2lua.draw_mutex);
     for (int i = 0; i < M2LUA_SURFACE_MAX; i++) {
         m2lua_surface_t *s = &g_m2lua.surfaces[i];
@@ -993,6 +767,8 @@ static bool parse_args(int argc, char **argv) {
         else if (more && io5649_wheel_option(a, argv[i + 1])) i++;
         else if (more && lightgun_host_option(a, argv[i + 1])) i++;   /* --gun-flash N */
         else if (more && ffb_option(a, argv[i + 1]))          i++;
+        else if (!strcmp(a, "--wheel-axes") && more)    { if (!wheel_axes_option(argv[++i])) return false; }
+        else if (!strcmp(a, "--wheel-buttons") && more) { if (!wheel_buttons_option(argv[++i])) return false; }
         else if (!strcmp(a, "--enemy-rank") && more) {  /* cabinet | easy..hardest | extra1 | extra2 */
             int r = enemy_rank_parse(argv[++i]);
             if (r < -1) return false;
@@ -1196,6 +972,39 @@ static void netplay_start(void) {
     if (lobby_can_sign_in()) lobby_sign_in();
 }
 
+/* lobby_event's pad button press: Guide or L1+R1 toggle the lobby; while it is
+ * open, the d-pad moves and A or B is held for its release. */
+static void lobby_pad_down(const SDL_Event *ev, bool *toggle, bool *used) {
+    SDL_Gamepad *pad = SDL_GetGamepadFromID(ev->gbutton.which);
+    int b = ev->gbutton.button;
+    if (b == SDL_GAMEPAD_BUTTON_GUIDE) *toggle = true;
+    else if (pad && ((b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER
+                      && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER))
+                  || (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER
+                      && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER))))
+        *toggle = true;
+    else if (g_lobby.open) {
+        *used = true;
+        if (b == SDL_GAMEPAD_BUTTON_DPAD_UP)   lobby_move(-1);
+        if (b == SDL_GAMEPAD_BUTTON_DPAD_DOWN) lobby_move(+1);
+        if (b == SDL_GAMEPAD_BUTTON_SOUTH || b == SDL_GAMEPAD_BUTTON_EAST)
+            g_lobby.pressed = b;
+    }
+}
+
+/* lobby_event's key press: F1 toggles the lobby; while it is open, every key
+ * but Escape is the lobby's, the arrows moving, Return picking, Backspace closing. */
+static void lobby_key_down(const SDL_Event *ev, bool *toggle, bool *used) {
+    if (ev->key.scancode == SDL_SCANCODE_F1) *toggle = true;
+    else if (g_lobby.open && ev->key.scancode != SDL_SCANCODE_ESCAPE) {
+        *used = true;
+        if (ev->key.scancode == SDL_SCANCODE_UP)        lobby_move(-1);
+        if (ev->key.scancode == SDL_SCANCODE_DOWN)      lobby_move(+1);
+        if (ev->key.scancode == SDL_SCANCODE_RETURN)    lobby_activate();
+        if (ev->key.scancode == SDL_SCANCODE_BACKSPACE) lobby_show(false);
+    }
+}
+
 /* The netplay lobby takes the pad and the keyboard while it is open: L1+R1,
  * Guide or F1 toggle it; the d-pad moves, A picks and B closes, both on
  * release, so the button is up again before the game resumes. True if the
@@ -1203,21 +1012,7 @@ static void netplay_start(void) {
 static bool lobby_event(const SDL_Event *ev, bool *pad_changed) {
     bool toggle = false, used = false;
     if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
-        SDL_Gamepad *pad = SDL_GetGamepadFromID(ev->gbutton.which);
-        int b = ev->gbutton.button;
-        if (b == SDL_GAMEPAD_BUTTON_GUIDE) toggle = true;
-        else if (pad && ((b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER
-                          && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER))
-                      || (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER
-                          && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER))))
-            toggle = true;
-        else if (g_lobby.open) {
-            used = true;
-            if (b == SDL_GAMEPAD_BUTTON_DPAD_UP)   lobby_move(-1);
-            if (b == SDL_GAMEPAD_BUTTON_DPAD_DOWN) lobby_move(+1);
-            if (b == SDL_GAMEPAD_BUTTON_SOUTH || b == SDL_GAMEPAD_BUTTON_EAST)
-                g_lobby.pressed = b;
-        }
+        lobby_pad_down(ev, &toggle, &used);
     } else if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_UP && g_lobby.open) {
         used = true;
         if (ev->gbutton.button == g_lobby.pressed) {
@@ -1226,14 +1021,7 @@ static bool lobby_event(const SDL_Event *ev, bool *pad_changed) {
             else lobby_show(false);
         }
     } else if (ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat) {
-        if (ev->key.scancode == SDL_SCANCODE_F1) toggle = true;
-        else if (g_lobby.open && ev->key.scancode != SDL_SCANCODE_ESCAPE) {
-            used = true;
-            if (ev->key.scancode == SDL_SCANCODE_UP)        lobby_move(-1);
-            if (ev->key.scancode == SDL_SCANCODE_DOWN)      lobby_move(+1);
-            if (ev->key.scancode == SDL_SCANCODE_RETURN)    lobby_activate();
-            if (ev->key.scancode == SDL_SCANCODE_BACKSPACE) lobby_show(false);
-        }
+        lobby_key_down(ev, &toggle, &used);
     } else if (ev->type == SDL_EVENT_GAMEPAD_AXIS_MOTION && g_lobby.open) {
         used = true;
     }
@@ -1336,6 +1124,7 @@ static bool poll_events(void) {
     while (SDL_PollEvent(&ev)) {
         if (opt.netplay && lobby_event(&ev, &pad_changed)) continue;
         gun_event(&ev);
+        sdl_pads_event(&ev, &pad_changed);
         switch (ev.type) {
             case SDL_EVENT_QUIT: running = false; break;
             case SDL_EVENT_KEY_DOWN:
@@ -1344,21 +1133,6 @@ static bool poll_events(void) {
                 break;
             case SDL_EVENT_KEY_UP:
                 input_action_up(key_to_action(ev.key.scancode));
-                break;
-            case SDL_EVENT_GAMEPAD_ADDED:
-                g_ffb_last = -1;   /* give the new pad the force now */
-                if (SDL_OpenGamepad(ev.gdevice.which))
-                    printf("m2hle: gamepad %s\n", SDL_GetGamepadNameForID(ev.gdevice.which));
-                pad_changed = true;
-                break;
-            case SDL_EVENT_GAMEPAD_REMOVED:
-                SDL_CloseGamepad(SDL_GetGamepadFromID(ev.gdevice.which));
-                pad_changed = true;
-                break;
-            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-            case SDL_EVENT_GAMEPAD_BUTTON_UP:
-            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-                pad_changed = true;
                 break;
             default: break;
         }
@@ -1515,6 +1289,7 @@ static bool versus_start(int argc) {
     }
     if (master) {
         if (opt.pad < 0) opt.pad = 0;
+        g_sdl_pad_only = opt.pad;
         int sx, sy;
         versus_place(&sx, &sy);
         if (!versus_slave_argv(argc, sx, sy) || !child_proc_start(&g_versus_child, g_versus_argv)) {
@@ -1778,6 +1553,29 @@ static const sg_pass_action g_pass_action = {
     .depth     = { .load_action = SG_LOADACTION_CLEAR, .clear_value = 1.0f },
 };
 
+/* What the screen pass draws: the game picture (or the lobby's black), the
+ * scripts' layer, the OSD, the lobby and the debug text. */
+static void render_screen(int fb_w, int fb_h, int ox, int oy, int w, int h, float lerp_t) {
+    /* The lobby is drawn on black, to be read; over a match, on the match. */
+    if (opt.netplay) lobby_update(SDL_GetTicksNS());
+    bool show_game = !(opt.netplay && g_lobby.open && !netplay_state_running(g_lobby.st.state));
+    if (show_game && opt.render_scale > 0)
+        game_render_draw_target(g_rt.texture, opt.linear, ox, oy, w, h);
+    else if (show_game)
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){ox, oy, w, h}, lerp_t);
+    if (show_game) {
+        game_rect_t board = game_render_tile_rect((game_rect_t){ ox, oy, w, h }, false);
+        scripts_draw(fb_w, fb_h, board.x, board.y, board.w, board.h);
+    }
+    gun_place(fb_w, fb_h, ox, oy, show_game ? w : 0, h);
+    if (opt.osd) {
+        osd_update(SDL_GetTicksNS());
+        osd_draw(fb_w, fb_h);
+    }
+    if (opt.netplay) lobby_draw(fb_w, fb_h, SDL_GetTicksNS());
+    if (g_sdtx_on) sdtx_draw();
+}
+
 /* Draw the board's latest frame, the OSD and the lobby, and present it. */
 static void render_frame(void) {
     static int shots_done;
@@ -1816,24 +1614,7 @@ static void render_frame(void) {
                        .depth_format = SG_PIXELFORMAT_DEPTH_STENCIL,
                        .gl.framebuffer = 0 },
     });
-    /* The lobby is drawn on black, to be read; over a match, on the match. */
-    if (opt.netplay) lobby_update(SDL_GetTicksNS());
-    bool show_game = !(opt.netplay && g_lobby.open && !netplay_state_running(g_lobby.st.state));
-    if (show_game && opt.render_scale > 0)
-        game_render_draw_target(g_rt.texture, opt.linear, ox, oy, w, h);
-    else if (show_game)
-        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){ox, oy, w, h}, lerp_t);
-    if (show_game) {
-        game_rect_t board = game_render_tile_rect((game_rect_t){ ox, oy, w, h }, false);
-        scripts_draw(fb_w, fb_h, board.x, board.y, board.w, board.h);
-    }
-    gun_place(fb_w, fb_h, ox, oy, show_game ? w : 0, h);
-    if (opt.osd) {
-        osd_update(SDL_GetTicksNS());
-        osd_draw(fb_w, fb_h);
-    }
-    if (opt.netplay) lobby_draw(fb_w, fb_h, SDL_GetTicksNS());
-    if (g_sdtx_on) sdtx_draw();
+    render_screen(fb_w, fb_h, ox, oy, w, h, lerp_t);
     int pzone = hprof_enter(HPROF_PRESENT);   /* host_prof.h */
     sg_end_pass();
     sg_commit();
@@ -1904,52 +1685,10 @@ static int run_loop(bool audio) {
     return rc;
 }
 
-int main(int argc, char **argv) {
-    versus_keep_cmdline(argc, argv);
-    if (!parse_args(argc, argv)) {
-        fprintf(stderr, "usage: m2hle [--rom] <set.zip> [--render-fps N] [--window WxH] [--stats] [--osd]\n"
-                        "             [--log FILE] [--log-level SPEC] [--pad-map LIST] [--shot FRAME:FILE] [--exit-after N]\n"
-                        "             [--netplay] [--net-config FILE] [--net-delay N]\n"
-                        "             [--versus] [--pad N] [--window-at X,Y]\n"
-                        "             [--scripts DIR] [--no-scripts] [--script-option KEY=VALUE]\n");
-        return 2;
-    }
-    if (opt.pad_map && !apply_pad_map(opt.pad_map)) return 2;
-
-    /* The session log flushes every line to disk and a running game warns
-     * about unknown COP commands many times a second: off unless asked for. */
-    log_init();
-    crash_trace_install();
-    log_set_path(opt.log_path ? opt.log_path : "off");
-    if (opt.log_levels && !log_set_levels(opt.log_levels))
-        fprintf(stderr, "m2hle: --log-level %s: expected LEVEL or CHANNEL=LEVEL, comma separated\n",
-                opt.log_levels);
-
-    mem_init(&state.bus, NULL, 0);
-    i960_reset(&state.cpu);
-    bp_init();
-    wp_init();
-    if (!load_rom(opt.rom)) { dump_log_tail(12); return 1; }
-    scripts_load();
-
-    versus_before_sdl();
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
-        fprintf(stderr, "m2hle: SDL_Init: %s\n", SDL_GetError());
-        return 1;
-    }
-    SDL_AudioStream *audio = opt.sound ? sound_start() : NULL;
-    if (!gl_window_open()) { SDL_Quit(); return 1; }
-    int rc = gfx_start();
-    if (rc) return rc;
-    game_target_make();
-
-    if (opt.netplay) netplay_start();
-    if (!versus_start(argc)) return 1;
-    emu_thread_init(&state.emu, &state.cpu, &state.bus);
-    emu_run(&state.emu);
-
-    rc = run_loop(audio != NULL);
-
+/* After the run loop: the emu thread first, then what it used (the link, the
+ * scripts, backup RAM, netplay, sound), the --verify-* reports, then the video
+ * and SDL. */
+static void shut_down(SDL_AudioStream *audio) {
     emu_thread_shutdown(&state.emu);
     versus_stop();   /* after the emu thread: it reads the link's socket */
     if (g_m2lua.loaded)
@@ -1977,5 +1716,55 @@ int main(int argc, char **argv) {
     romset_free(&state.romset);
     mem_shutdown(&state.bus);
     log_file_close();
+}
+
+int main(int argc, char **argv) {
+    versus_keep_cmdline(argc, argv);
+    if (!parse_args(argc, argv)) {
+        fprintf(stderr, "usage: m2hle [--rom] <set.zip> [--render-fps N] [--window WxH] [--stats] [--osd]\n"
+                        "             [--log FILE] [--log-level SPEC] [--pad-map LIST] [--shot FRAME:FILE] [--exit-after N]\n"
+                        "             [--netplay] [--net-config FILE] [--net-delay N]\n"
+                        "             [--versus] [--pad N] [--window-at X,Y]\n"
+                        "             [--scripts DIR] [--no-scripts] [--script-option KEY=VALUE]\n");
+        return 2;
+    }
+    if (opt.pad_map && !apply_pad_map(opt.pad_map)) return 2;
+    g_sdl_pad_only = opt.pad;
+
+    /* The session log flushes every line to disk and a running game warns
+     * about unknown COP commands many times a second: off unless asked for. */
+    log_init();
+    crash_trace_install();
+    log_set_path(opt.log_path ? opt.log_path : "off");
+    if (opt.log_levels && !log_set_levels(opt.log_levels))
+        fprintf(stderr, "m2hle: --log-level %s: expected LEVEL or CHANNEL=LEVEL, comma separated\n",
+                opt.log_levels);
+
+    mem_init(&state.bus, NULL, 0);
+    i960_reset(&state.cpu);
+    bp_init();
+    wp_init();
+    if (!load_rom(opt.rom)) { dump_log_tail(12); return 1; }
+    scripts_load();
+
+    versus_before_sdl();
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_HAPTIC)) {
+        fprintf(stderr, "m2hle: SDL_Init: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_AudioStream *audio = opt.sound ? sound_start() : NULL;
+    if (!gl_window_open()) { SDL_Quit(); return 1; }
+    int rc = gfx_start();
+    if (rc) return rc;
+    game_target_make();
+
+    if (opt.netplay) netplay_start();
+    if (!versus_start(argc)) return 1;
+    emu_thread_init(&state.emu, &state.cpu, &state.bus);
+    emu_run(&state.emu);
+
+    rc = run_loop(audio != NULL);
+
+    shut_down(audio);
     return rc;
 }
