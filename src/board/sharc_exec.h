@@ -562,13 +562,18 @@ static inline void sharc_osage_sphere(uint32_t c, float *x, float *y, float *z) 
     *x = cx + ex * k; *y = cy + ey * k; *z = cz + ez * k;
 }
 
+/* sharc_osage_segment's start: the record into 0x30341, its bias [8..10] into 0x3036B. */
+static inline void sharc_osage_segment_bias(uint32_t rec) {
+    sharc_dm_set(0x30341u, rec);
+    for (uint32_t k = 0; k < 3; k++) sharc_dm_set(0x3036Bu + k, sharc_dm_get(rec + 8 + k));
+}
+
 /* Type 5, one segment (PM 0x207BD). rec is the record after its type word:
  * [0..2] the point it last reached, [3..5] its carry, [7] its length and
  * [8..10] the bias os_set_osage leaves. */
 static inline void sharc_osage_segment(uint32_t rec) {
     const uint32_t P = 0x30362u;                     /* the point the chain has reached */
-    sharc_dm_set(0x30341u, rec);
-    for (uint32_t k = 0; k < 3; k++) sharc_dm_set(0x3036Bu + k, sharc_dm_get(rec + 8 + k));
+    sharc_osage_segment_bias(rec);
     for (uint32_t k = 0; k < 3; k++) sharc_dm_set(0x30377u + k, sharc_dm_get(P + k));
     float a[3], b[3];
     sharc_osage_xform(0x3037Au, rec, a);
