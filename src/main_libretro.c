@@ -87,7 +87,8 @@
 #include "registry.h"
 #include "m2lua.h"         /* M2emulator's game scripts, their options as RetroArch cheats */
 #include "lightgun_host.h" /* a port's light gun (The House of the Dead) */
-#include "ffb.h"           /* the drive board's force feedback as rumble (Daytona USA) */
+#include "ffb.h"           /* the drive board's force feedback as rumble (Daytona USA, Sega Rally) */
+#include "wheel_host.h"    /* the left stick and the analog triggers as the wheel and pedals */
 
 /* The largest picture the frontend's framebuffer is made for: it allocates this
  * much once, colour and depth. Full screen draws at the output's size, up to it. */
@@ -325,8 +326,8 @@ static struct retro_core_option_v2_definition option_defs[] = {
         { NULL, NULL } },
       "off" },
     { "m2hle_ffb", "Force feedback", NULL,
-      "Daytona USA's drive board, as the pad's rumble: the wheel's kicks and shakes. A pad has no spring or "
-      "friction, so the weight the wheel has at speed is not in it.",
+      "The drive board, as the pad's rumble: Daytona USA's kicks and shakes, Sega Rally's hard turns of the "
+      "wheel (a slide, a crash). A pad has no spring or friction, so the weight the wheel has is not in it.",
       NULL, NULL,
       { { "100", "100%" }, { "75", "75%" }, { "50", "50%" }, { "25", "25%" }, { "0", "Off" }, { NULL, NULL } },
       "100" },
@@ -416,7 +417,7 @@ static bool lr_option_applies(const char *key) {
     if (!strcmp(key, "m2hle_stf_version") || !strcmp(key, "m2hle_sound_driver") || !strncmp(key, "m2hle_gems_", 11))
         return !strcmp(profile_rom_set(p), "sfight");
     if (!strncmp(key, "m2hle_wheel_", 12)) return p->quirks.io_5649;
-    if (!strcmp(key, "m2hle_ffb"))         return p->quirks.model1_io;
+    if (!strcmp(key, "m2hle_ffb"))         return p->quirks.model1_io || p->quirks.io_5649;
     return true;
 }
 
@@ -709,6 +710,24 @@ static uint32_t lr_port_held(unsigned port) {
         for (int i = 0; i < LR_GEAR_BIND_COUNT; i++)
             if (lr_btn(0, lr_gear_binds[i].id)) held |= in->bits[lr_gear_binds[i].act];
     return held | lr_port_gun(port);
+}
+
+/* A driving game's wheel and pedals (wheel_host.h, Pinboard #1082): port 1's
+ * left stick turns the wheel as far as it is pushed, R2 and L2 press the
+ * accelerator and the brake as far as they are pulled (RetroArch's analog
+ * triggers; a pad without them presses all the way). Sessions and replays
+ * read the buttons, so the triggers also hold Button 1 / Button 2 past half:
+ * the held bits it adds. */
+static uint32_t lr_wheel(void) {
+    if (!wheel_host_on() || g_shell_on) { wheel_host_set(false, 0, 0, 0); return 0; }
+    int ax = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
+    int ac = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_BUTTON, RETRO_DEVICE_ID_JOYPAD_R2);
+    int br = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_BUTTON, RETRO_DEVICE_ID_JOYPAD_L2);
+    if (!ac && lr_btn(0, RETRO_DEVICE_ID_JOYPAD_R2)) ac = IO5649_AXIS_MAX;
+    if (!br && lr_btn(0, RETRO_DEVICE_ID_JOYPAD_L2)) br = IO5649_AXIS_MAX;
+    wheel_host_set(true, wheel_host_steer(ax, WHEEL_HOST_STICK_DEAD), ac, br);
+    const game_input_map_t *in = &g_active_profile->input;
+    return (ac > 16000 ? in->bits[GAME_INPUT_P1_B1] : 0) | (br > 16000 ? in->bits[GAME_INPUT_P1_B2] : 0);
 }
 
 /* A held mask as netplay.h's canonical word (NP_BIT_*): either side's bits count
@@ -1168,7 +1187,9 @@ static void lr_shell_reset(void *u) {
     if (state.emu.run_state != EMU_RUNNING) emu_run(&state.emu);
 }
 
-static bool lr_shell_von(void) { return g_active_profile && !strcmp(g_active_profile->id, "vonj"); }
+static bool lr_shell_von(void) {
+    return g_active_profile && (!strcmp(g_active_profile->id, "vonj") || !strcmp(g_active_profile->id, "von"));
+}
 
 static void lr_shell_apply(void *u, const uint8_t v[8], int versus) {
     (void)u;
@@ -1229,8 +1250,8 @@ static uint32_t lr_port_held_shell(unsigned port) {
 /* The shell's frame; true when the game gets the pad. *board_paused: the
  * shell holds the board still (its offline menus). */
 static bool lr_shell_input(bool *board_paused) {
-    bool session = pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_wanted();
-    if (emu_ggpo_wanted() && g_ps3ui_shell.scr != PS3UI_SH_GAME) ps3ui_shell_go(&g_ps3ui_shell, PS3UI_SH_GAME);
+    bool session = pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_match();
+    if (emu_ggpo_match() && g_ps3ui_shell.scr != PS3UI_SH_GAME) ps3ui_shell_go(&g_ps3ui_shell, PS3UI_SH_GAME);
     ps3ui_shell_frame(&g_ps3ui_shell, lr_lobby_pad(), lr_lobby_pad_port(1), session);
     /* Online Battle in RetroArch's own netplay mode: say where it lives */
     if (g_ps3ui_shell.scr == PS3UI_SH_ONLINE && opt.online != LR_ONLINE_RPCN) {
@@ -1890,16 +1911,32 @@ static emu_slice_result_t lr_slice(void) {
 }
 
 /* RetroArch session: run the frame lockstep allows, waiting briefly for it. */
+/* RetroArch's lockstep from its barrier on: no SOLO under it (emu_ggpo.h). */
+static bool lr_pkt_busy(void) { return g_pkt.state != PKT_OFF && g_pkt.state != PKT_ENDED; }
+
+/* A frame with nobody else: a linked game's SOLO twin (emu_ggpo.h, Pinboard
+ * #1110) when it has one, else one slice. */
+static void lr_alone_slice(uint32_t held) {
+    if (emu_ggpo_wanted() && !emu_ggpo_match()) {
+        g_input.held = held;
+        if (state.emu.run_state != EMU_RUNNING) emu_run(&state.emu);
+        emu_ggpo_tick(&state.emu);
+        return;
+    }
+    lr_slice();
+}
+
 static bool lr_run_pkt(uint32_t local_held) {
     int64_t give_up = emu_now_us() + LR_NET_WAIT_US;
     for (;;) {
         uint32_t w0 = 0, w1 = 0;
         pkt_step_t step = pkt_lockstep_begin_frame(&g_pkt, lr_held_to_word(local_held), lr_now_ms(), &w0, &w1);
+        if (step != PKT_STEP_OFF && emu_ggpo_solo()) emu_ggpo_shutdown(&state.emu);
         switch (step) {
             case PKT_STEP_OFF:
                 netplay_release_inputs();
                 g_input.held = local_held;
-                lr_slice();
+                lr_alone_slice(local_held);
                 return true;
             case PKT_STEP_RESET:
                 lr_pkt_reset();
@@ -1945,6 +1982,7 @@ static bool lr_run_rpcn(uint32_t local_held) {
     int64_t give_up = emu_now_us() + LR_NET_WAIT_US;
     for (;;) {
         netplay_step_t step = emu_netplay_pump(&state.emu);
+        if (emu_ggpo_solo() && !emu_ggpo_solo_wanted()) emu_ggpo_shutdown(&state.emu);   /* a room has the board */
         if (step == NETPLAY_STEP_RESET) continue;   /* done inside the pump; ask again */
         if (step == NETPLAY_STEP_WAIT) {
             if (emu_now_us() >= give_up) return false;
@@ -1953,7 +1991,8 @@ static bool lr_run_rpcn(uint32_t local_held) {
         }
         if (step == NETPLAY_STEP_OFF && m2comm_linked()) return lr_run_linked();
         link_pace_stop(&state.emu.link_pace);
-        lr_slice();
+        if (step == NETPLAY_STEP_OFF) lr_alone_slice(local_held);
+        else lr_slice();
         /* A watcher behind the fighters runs a few extra slices a frame until it
          * has caught up (netplay_catching_up): one retro_run is one slice, and
          * nothing else would ever close the gap. */
@@ -2331,6 +2370,7 @@ RETRO_API void retro_init(void) {
     log_init();
     g_log.file_open_attempted = 1;
     mem_init(&state.bus, NULL, 0);
+    g_ggpo_solo_veto = lr_pkt_busy;
     i960_reset(&state.cpu);
     bp_init();
     wp_init();
@@ -2424,6 +2464,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game) {
     if (opt.online == LR_ONLINE_RETROARCH) {
         if (!env_cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, &lr_netpacket))
             lr_log(RETRO_LOG_WARN, "this frontend has no netpacket interface: no RetroArch netplay");
+        netplay_set_reset_hook(lr_netplay_reset_cb, NULL);   /* SOLO's cold boots (emu_ggpo.h) */
     } else if (opt.online == LR_ONLINE_GGPO) {
         lr_ggpo_init();
     } else {
@@ -2471,7 +2512,9 @@ RETRO_API void retro_unload_game(void) {
 
 RETRO_API void retro_reset(void) {
     /* Inside a session a reset on one machine is a desync by definition. */
-    if (pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_wanted()) return;
+    if (pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_match()) return;
+    /* SOLO's other cabinet boots again with this one (emu_ggpo_tick). */
+    if (emu_ggpo_solo()) emu_ggpo_shutdown(&state.emu);
     lr_install_board();
     if (state.emu.run_state != EMU_RUNNING) emu_run(&state.emu);
 }
@@ -2483,7 +2526,7 @@ static void lr_ggpo_paused(void) {
 
 /* A session of any kind: each machine is one player. */
 static bool lr_in_session(void) {
-    return pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_wanted();
+    return pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_match();
 }
 
 /* A retro_run's board with GGPO chosen: a session's frame (or its wait), or,
@@ -2497,37 +2540,8 @@ static bool lr_run_ggpo(uint32_t held) {
     return true;
 }
 
-RETRO_API void retro_run(void) {
-    hprof_tick();   /* the in-process profiler: M2HLE_HOSTPROF or /tmp/m2hle-hostprof (host_prof.h) */
-    bool updated = false;
-    if (env_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
-        lr_read_options(false);   /* a new size is announced by lr_draw */
-    }
-
-    if (g_backup_reload) {
-        g_backup_reload = false;
-        backup_ram_reload(state.bus.back);
-        if (g_active_profile->backup_fn) g_active_profile->backup_fn(&state.romset, &state.bus);
-    }
-
-    input_poll_cb();
-    uint32_t held = g_shell_on ? lr_port_held_shell(0) : lr_port_held(0);
-    /* Port 2 is the second player on this machine -- not in a session, where
-     * each machine is one player. */
-    bool in_session = lr_in_session();
-    if (!in_session) held |= g_shell_on ? lr_port_held_shell(1) : lr_port_held(1);
-    /* Ports 3 and 4: players 3 and 4 of a four-player cabinet, only on this
-     * machine too (the board reads them only outside a session). */
-    uint32_t far_bits = !in_session && input_four_players() ? lr_port_held(2) | lr_port_held(3) : 0;
-    bool board_paused = false;
-    if (g_shell_on && !lr_shell_input(&board_paused)) held = far_bits = 0;
-    if (!in_session) held = lr_script_held(held);
-    g_input.far_held = far_bits;
-
-    if (opt.online == LR_ONLINE_RPCN) lr_rpcn_toasts();
-
-    hprof_phase(0);   /* the frame log's phases: 0 input, 1 board, 2 audio, 3-5 lr_draw, 6 sound wait */
-    int64_t snd_wait0 = g_emu_times.sound_wait_us;
+/* This frame's board, run the way the online mode runs it. */
+static bool lr_run_frame(uint32_t held, bool board_paused) {
     bool ran;
     if (board_paused) {
         ran = false;   /* the shell's menus: the board waits, as the PS3 suspends it */
@@ -2549,6 +2563,41 @@ RETRO_API void retro_run(void) {
             lr_message(g_pkt.note, 240);
         }
     }
+    return ran;
+}
+
+RETRO_API void retro_run(void) {
+    hprof_tick();   /* the in-process profiler: M2HLE_HOSTPROF or /tmp/m2hle-hostprof (host_prof.h) */
+    bool updated = false;
+    if (env_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
+        lr_read_options(false);   /* a new size is announced by lr_draw */
+    }
+
+    if (g_backup_reload) {
+        g_backup_reload = false;
+        backup_ram_reload(state.bus.back);
+        if (g_active_profile->backup_fn) g_active_profile->backup_fn(&state.romset, &state.bus);
+    }
+
+    input_poll_cb();
+    uint32_t held = g_shell_on ? lr_port_held_shell(0) : lr_port_held(0) | lr_wheel();
+    /* Port 2 is the second player on this machine -- not in a session, where
+     * each machine is one player. */
+    bool in_session = lr_in_session();
+    if (!in_session) held |= g_shell_on ? lr_port_held_shell(1) : lr_port_held(1);
+    /* Ports 3 and 4: players 3 and 4 of a four-player cabinet, only on this
+     * machine too (the board reads them only outside a session). */
+    uint32_t far_bits = !in_session && input_four_players() ? lr_port_held(2) | lr_port_held(3) : 0;
+    bool board_paused = false;
+    if (g_shell_on && !lr_shell_input(&board_paused)) held = far_bits = 0;
+    if (!in_session) held = lr_script_held(held);
+    g_input.far_held = far_bits;
+
+    if (opt.online == LR_ONLINE_RPCN) lr_rpcn_toasts();
+
+    hprof_phase(0);   /* the frame log's phases: 0 input, 1 board, 2 audio, 3-5 lr_draw, 6 sound wait */
+    int64_t snd_wait0 = g_emu_times.sound_wait_us;
+    bool ran = lr_run_frame(held, board_paused);
 
     g_lr_runs++;
     if (!ran) g_lr_skips++;

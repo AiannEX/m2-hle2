@@ -119,6 +119,14 @@ static inline void powsled_install(const romset_t *rs, i960_cpu_t *cpu, memory_b
     mem_init(bus, rs->maincpu, rs->maincpu_size);
     powsled_set_unit(bus, g_powsled_unit);
     powsled_seed_settings(rs, bus);
+    /* The unit is the program's bytes, so they go with the board: a GGPO
+     * match swaps the Main and the ride through the one bus (emu_twin.h). */
+    if (bus->rom && bus->rom_size >= POWSLED_CAM_AT + 4u) {
+        savestate_extra("powsled", "UNIT", &g_powsled_unit, sizeof g_powsled_unit);
+        savestate_extra("powsled", "UNIT.mode", bus->rom + POWSLED_MODE_AT, 1);
+        savestate_extra("powsled", "UNIT.id", bus->rom + POWSLED_ID_AT, 4);
+        savestate_extra("powsled", "UNIT.cam", bus->rom + POWSLED_CAM_AT, 1);
+    }
 
     model2b_cop_install(bus, rs->copro_data, rs->copro_data_size);
     savestate_extra("powsled", "M2BCOP", &g_m2bc, sizeof g_m2bc);
@@ -163,6 +171,55 @@ static inline bool powsled_link_role(memory_bus_t *bus, game_link_role_t role) {
     return true;
 }
 
+/* The Main's operator, for a ride played alone (emu_ggpo.h, SOLO; Pinboard
+ * #1110). The race state, 0x53E744 on every unit, is 4 between races, 5 with
+ * entry open, 6 once it is closed, 7 racing and 8 on the results, then 4
+ * again. The operator opens entry between races (P1 Call), waits for a rider
+ * to press Entry (either seat), closes entry (P2 Call twice: the Main's own
+ * entry, then the close) and starts the race (the Main's IN1 bit 4). Entry
+ * stays open with nobody in it: the ride waits for its player. */
+#define POWSLED_RACE_STATE 0x0053E744u
+#define POWSLED_OP_PRESS   10   /* frames a button is held */
+#define POWSLED_OP_GAP     60   /* frames between the operator's presses */
+
+static struct {
+    uint8_t  state;      /* the race state last seen */
+    uint32_t in_state;   /* frames in it */
+    uint32_t entered;    /* frames since a rider pressed Entry, 0 none */
+    int      steps;      /* P2 Calls given in this entry */
+    uint32_t since;      /* frames since the last press began */
+} g_powsled_op;
+
+static inline uint32_t powsled_solo_op(memory_bus_t *bus, uint32_t held) {
+    enum { CALL = 0x200, ENTRY = 0x100 | 0x400, STEP = 0x800, GO = 0x20000 };
+    uint8_t st = mem_read8(bus, POWSLED_RACE_STATE);
+    if (st != g_powsled_op.state) {
+        memset(&g_powsled_op, 0, sizeof g_powsled_op);
+        g_powsled_op.state = st;
+        g_powsled_op.since = POWSLED_OP_GAP;
+    }
+    g_powsled_op.in_state++;
+    g_powsled_op.since++;
+    uint32_t press = 0;
+    switch (st) {
+    case 4: press = CALL; break;
+    case 5:
+        if (!g_powsled_op.entered && (held & ENTRY)) g_powsled_op.entered = 1;
+        else if (g_powsled_op.entered) g_powsled_op.entered++;
+        if (g_powsled_op.entered > POWSLED_OP_GAP && g_powsled_op.steps < 2) press = STEP;
+        break;
+    case 6: press = GO; break;
+    default: return 0;
+    }
+    if (!press) return 0;
+    if (g_powsled_op.in_state < POWSLED_OP_GAP) return 0;   /* let the state settle */
+    if (g_powsled_op.since >= POWSLED_OP_GAP) {
+        g_powsled_op.since = 0;
+        if (press == STEP) g_powsled_op.steps++;
+    }
+    return g_powsled_op.since < POWSLED_OP_PRESS ? press : 0;
+}
+
 /* MAME INPUT_PORTS_START(powsled): IN0 the cabinet (COIN1 0x01, COIN2 0x02,
  * TEST 0x04, SERVICE1 0x08, START 0x10 / 0x20, SERVICE2 0x40, Cancel Error
  * 0x80), IN1 the riders' buttons (P1 Entry 0x01, P1 Call 0x02, P2 Entry 0x04,
@@ -188,6 +245,8 @@ static const game_profile_t powsled_profile = {
     .install_fn      = powsled_install,
     .hook_count      = 0,
     .link_role       = powsled_link_role,
+    .link_twin       = true,   /* GGPO: the Main (1P) and a ride (2P) on each machine */
+    .link_solo       = powsled_solo_op,   /* alone: a Main beside the ride, its panel worked */
     .input = {
         .bits = {
             [GAME_INPUT_P1_COIN]  = 0x00000001,

@@ -67,6 +67,10 @@
 #include "m2lua_mcp.h"       /* ...and the bridge's script_* commands */
 #include "lightgun_ui.h"      /* the mouse as a light gun, and its crosshairs */
 #include "net/comm_local.h"   /* --comm-master / --comm-slave: two boards linked on 127.0.0.1 */
+#if M2HLE_PADS
+#include "sdl_pads.h"         /* gamepads, racing wheels and force feedback through SDL3 (#1082) */
+#endif
+#include "controls_window.h"  /* the Controls window: devices and keys, per profile (#1147) */
 #if defined(__linux__)
 #include <unistd.h>          /* readlink: scripts/ beside the executable */
 #endif
@@ -104,6 +108,7 @@ static int  g_headless   = 0;      /* --headless: no window, GPU or audio device
 static int  g_net_window = 0;      /* --netplay: open the netplay window at startup */
 static int  g_kiosk_on   = 0;      /* --kiosk: capture mode from startup */
 static int  g_no_tray    = 0;      /* --no-tray: --headless without its icon */
+static int  g_no_pads    = 0;      /* --no-pads: no gamepads or wheels (and no SDL) */
 /* --no-sound-board (or M2HLE_NO_SOUND_BOARD=1): boot with the 68000 and SCSP
  * detached, for training runs that want frames, not sound. The sound board is
  * a third to a half of the emu thread. It is board state, not only audio: its
@@ -167,6 +172,7 @@ static struct {
     bool             show_m68k_mem;
     bool             show_debug;
     bool             show_netplay;
+    bool             show_controls;   /* the Controls window (controls_window.h) */
     bool             always_show_menu;  /* Debug -> Always show menu bar */
     m68k_state_t     m68k_snapshot;   /* prev-frame 68K state for change highlights */
 } state;
@@ -525,6 +531,16 @@ static void netplay_ggpo_announce(void) {
 #endif
 }
 
+/* Once online, the one step the flags ask for: host (--net-host), join (--net-join) or search. */
+static void netplay_cli_act(const netplay_status_t st) {
+    static int      acted     = 0;
+    if (!acted && st.state == NETPLAY_ONLINE) {
+        if (g_net_auto == 1)      { acted = 1; netplay_post(NETPLAY_CMD_HOST, &g_net_cli); }
+        else if (g_net_auto == 2) { acted = 1; netplay_post(NETPLAY_CMD_JOIN, &g_net_cli); }
+        else                      { acted = 1; netplay_post(NETPLAY_CMD_SEARCH, &g_net_cli); }
+    }
+}
+
 /*
  * Drives the --net-* flags. Called every frame from both the windowed and the
  * headless loop; posts exactly the commands the netplay window's buttons post,
@@ -534,7 +550,6 @@ static void netplay_cli_pump(void) {
     if (!g_net_cli.server[0]) return;
 
     static int      connected = 0;
-    static int      acted     = 0;
     static int      started   = 0;
     static netplay_state_t last = (netplay_state_t)-1;
 
@@ -560,11 +575,7 @@ static void netplay_cli_pump(void) {
                      (unsigned long long)st.room_id, (unsigned long long)st.room_id);
     }
 
-    if (!acted && st.state == NETPLAY_ONLINE) {
-        if (g_net_auto == 1)      { acted = 1; netplay_post(NETPLAY_CMD_HOST, &g_net_cli); }
-        else if (g_net_auto == 2) { acted = 1; netplay_post(NETPLAY_CMD_JOIN, &g_net_cli); }
-        else                      { acted = 1; netplay_post(NETPLAY_CMD_SEARCH, &g_net_cli); }
-    }
+    netplay_cli_act(st);
 
     /* Start only once both ends can actually reach each other: announcing into a
      * void just logs "still waiting" every five seconds. */
@@ -613,6 +624,20 @@ static void draw_bus_stats_window(void) {
     igEnd();
 }
 
+/* SKY EYE's status lines: its phase, the stage and camera it was asked for,
+ * and the game's own camera as read this frame. */
+static void draw_sky_eye_status(int have, int stage, const float p[3], const int a[3]) {
+    const sky_eye_req_t *q = &g_sky_eye.req;
+    igText("phase: %s", SKY_EYE_PHASE_NAME[g_sky_eye.phase]);
+    if (g_sky_eye.phase != SKY_EYE_OFF)
+        igText("asked: stage %d  eye %.3f %.3f %.3f  ang 0x%04X 0x%04X%s", q->stage,
+               q->pos[0], q->pos[1], q->pos[2], q->xang & 0xFFFF, q->yang & 0xFFFF,
+               q->from_explorer ? "  (from the explorer's pos)" : "");
+    if (have)
+        igText("game:  STAGE NUMBER %d  Xpos %.3f Ypos %.3f Zpos %.3f\n       Xang 0x%04X Yang 0x%04X Zang 0x%04X",
+               stage + 1, p[0], p[1], p[2], a[0] & 0xFFFF, a[1] & 0xFFFF, a[2] & 0xFFFF);
+}
+
 /* SKY EYE (core/sky_eye.h): paste a noclip view link, go to its stage and
  * camera; or copy the game's camera out as one. */
 static void draw_sky_eye_window(void) {
@@ -653,15 +678,7 @@ static void draw_sky_eye_window(void) {
     if (locked) emu_mutex_unlock(&state.emu.mutex);
     if (out[0]) igSetClipboardText(out);
     if (err[0]) igTextColored((ImVec4){1, 0.4f, 0.4f, 1}, "%s", err);
-    const sky_eye_req_t *q = &g_sky_eye.req;
-    igText("phase: %s", SKY_EYE_PHASE_NAME[g_sky_eye.phase]);
-    if (g_sky_eye.phase != SKY_EYE_OFF)
-        igText("asked: stage %d  eye %.3f %.3f %.3f  ang 0x%04X 0x%04X%s", q->stage,
-               q->pos[0], q->pos[1], q->pos[2], q->xang & 0xFFFF, q->yang & 0xFFFF,
-               q->from_explorer ? "  (from the explorer's pos)" : "");
-    if (have)
-        igText("game:  STAGE NUMBER %d  Xpos %.3f Ypos %.3f Zpos %.3f\n       Xang 0x%04X Yang 0x%04X Zang 0x%04X",
-               stage + 1, p[0], p[1], p[2], a[0] & 0xFFFF, a[1] & 0xFFFF, a[2] & 0xFFFF);
+    draw_sky_eye_status(have, stage, p, a);
     igEnd();
 }
 
@@ -728,6 +745,8 @@ static void menu_profile(void) {
         if (igMenuItemBoolPtr(g_profiles[i]->display_name, NULL, &sel, true))
             g_active_profile = g_profiles[i];
     }
+    igSeparator();
+    igMenuItemBoolPtr("Controls...", NULL, &state.show_controls, true);
     /* The CPU opponent's AI table, taken as each fight starts (sfight.h
      * sfight_hook_enemy_rank_table); a netplay session plays the cabinet's. */
     if (g_active_profile && g_active_profile->quirks.enemy_ranks) {
@@ -948,6 +967,50 @@ static void init_take_focus(void) {
 #endif
 }
 
+#if M2HLE_PADS
+/* Gamepads and racing wheels (Pinboard #1082): SDL3 for its joysticks and
+ * haptics only, sokol keeps the window. They play while the window has the
+ * focus (a second m2hle on the same desktop, a netplay test, keeps its own);
+ * capture mode and --no-pads take none. */
+static bool g_pads_on, g_pads_focused = true;
+
+static void pads_init(void) {
+    if (g_no_pads || g_kiosk_on) return;
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    /* SDL would turn SIGINT/SIGTERM into a quit event that only it sees: the
+     * window then outlives Ctrl+C and `timeout`. */
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+    if (!SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_HAPTIC)) {
+        LOG_WARN("pads: SDL_Init: %s; no gamepads or wheels", SDL_GetError());
+        return;
+    }
+    g_pads_on = true;
+}
+
+static void pads_frame(void) {
+    if (!g_pads_on) return;
+    SDL_Event ev;
+    bool changed = false;
+    while (SDL_PollEvent(&ev)) sdl_pads_event(&ev, &changed);
+    if (!g_pads_focused) return;
+    if (changed) pad_refresh();
+    ffb_update();
+}
+
+static bool pads_running(void) { return g_pads_on; }
+
+static void pads_focus(bool focused) {
+    if (!g_pads_on || focused == g_pads_focused) return;
+    g_pads_focused = focused;
+    if (focused) pad_refresh();
+    else { lobby_pad_release(); ffb_stop_all(); }
+}
+#endif
+
+#if !M2HLE_PADS
+static bool pads_running(void) { return false; }
+#endif
+
 static void init(void) {
     log_init();
     crash_trace_install();
@@ -978,6 +1041,9 @@ static void init(void) {
 
     init_renderer();
     init_audio_av();
+#if M2HLE_PADS
+    pads_init();     /* #1082 made it and never called it: no pad ever opened */
+#endif
 
     /* The overlay plugin, if one was asked for. After game_render_init because
      * its layers are GPU images, and before the emu thread because a plugin
@@ -1355,6 +1421,32 @@ static void headless_shutdown(void) {
     tray_headless_stop();
 }
 
+/* --headless once the board is up: say what can drive it, then pump the
+ * snapshots, netplay and the tray (and the A/V server's frames) until the tray
+ * or the bridge asks to quit. */
+static void headless_loop(bool av_on) {
+    LOG_INFO("headless: running%s%s", g_mcp_enable ? " with the MCP bridge" : "",
+             av_on ? " with the A/V server"
+                   : (g_mcp_enable ? "" : " (no --mcp: nothing can drive it)"));
+    if (av_on && !g_autorun && !g_mcp_enable)
+        LOG_WARN("av: the board is stopped and nothing can start it - a client will "
+                 "get the stream header and then silence. Add --run.");
+    while (!tray_exit_requested() && !mcp_quit_requested()) {
+        emu_update_snapshots(&state.emu);
+        netplay_cli_pump();
+        netplay_room_announce();
+        netplay_ggpo_announce();
+        tray_headless_pump();
+        tray_headless_tick(g_emu_frames);
+        if (av_on) {
+            headless_av_frame();
+            headless_sleep_ms(1);
+        } else {
+            emu_sleep_ms(5);
+        }
+    }
+}
+
 /* --headless: the emulator and its MCP bridge and nothing else. The graders in
  * tools/ drive the game over the bridge and read what they need out of memory
  * and the display list, so a window, a GPU context and an audio device are only
@@ -1411,39 +1503,15 @@ static int headless_main(void) {
     if (g_autorun) emu_run(&state.emu);
 
     if (!g_no_tray) headless_tray_start();
-    LOG_INFO("headless: running%s%s", g_mcp_enable ? " with the MCP bridge" : "",
-             av_on ? " with the A/V server"
-                   : (g_mcp_enable ? "" : " (no --mcp: nothing can drive it)"));
-    if (av_on && !g_autorun && !g_mcp_enable)
-        LOG_WARN("av: the board is stopped and nothing can start it - a client will "
-                 "get the stream header and then silence. Add --run.");
-    while (!tray_exit_requested() && !mcp_quit_requested()) {
-        emu_update_snapshots(&state.emu);
-        netplay_cli_pump();
-        netplay_room_announce();
-        netplay_ggpo_announce();
-        tray_headless_pump();
-        tray_headless_tick(g_emu_frames);
-        if (av_on) {
-            headless_av_frame();
-            headless_sleep_ms(1);
-        } else {
-            emu_sleep_ms(5);
-        }
-    }
+    headless_loop(av_on);
 
     headless_shutdown();
     return 0;
 }
 
-/* The debug windows and the menu bar: everything but the game. */
-static void draw_windows(void) {
-    draw_menu_bar();
-    draw_file_dialog();
-    shader_ui_draw(state.file_dialog);
-    replay_ui_dialog(&state.emu, state.file_dialog);
-    replay_ui_window(&state.emu, state.file_dialog);
-
+/* The main board's debug windows: the i960, memory, breakpoints, the COP,
+ * the 3D decoder and the object viewer. */
+static void draw_board_windows(void) {
     if (state.show_cpu)
         cpu_window_draw(&state.emu.cpu_snapshot, &state.emu.cpu_prev_snapshot, &state.show_cpu);
     if (state.show_memview)     memview_draw(&state.bus, &state.show_memview);
@@ -1456,6 +1524,17 @@ static void draw_windows(void) {
         geo3d_window_draw(&state.geo3d, &state.show_geo3d, &md);
     }
     objview_window_draw(&state.show_objview, &state.romset, &state.bus);
+}
+
+/* The debug windows and the menu bar: everything but the game. */
+static void draw_windows(void) {
+    draw_menu_bar();
+    draw_file_dialog();
+    shader_ui_draw(state.file_dialog);
+    replay_ui_dialog(&state.emu, state.file_dialog);
+    replay_ui_window(&state.emu, state.file_dialog);
+
+    draw_board_windows();
     if (state.show_bus_stats)   draw_bus_stats_window();
     if (state.show_sky_eye)     draw_sky_eye_window();
     if (state.show_m68k_cpu || state.show_m68k_mem) sound_settle();   /* not mid-run on the sound thread */
@@ -1466,6 +1545,7 @@ static void draw_windows(void) {
     if (state.show_m68k_mem)    m68k_memview_draw(&state.show_m68k_mem);
     if (state.show_debug)       debug_window_draw(&state.show_debug);
     if (state.show_netplay)     netplay_window_draw(&state.show_netplay);
+    controls_window_draw(&state.show_controls, pads_running());
     netplay_empty_room_overlay();
     netplay_vs_again_overlay();
     if (state.show_demo)        igShowDemoWindow(&state.show_demo);
@@ -1564,10 +1644,43 @@ static void extract_model_tick(void) {
     }
 }
 
+/* The game into the swapchain pass: the stream's target when the window
+ * mirrors it, the filter's when there is one, else drawn here; then the
+ * overlay or the script's drawing over it. */
+static void window_draw_game(int ox, int oy, int w, int h, bool post, bool win_overlay, float lerp_t) {
+    /* Back colour → background tiles → 3D scene → foreground/HUD — unless
+     * the A/V pass above has already drawn this frame, in which case the
+     * window shows that target rather than redrawing it. */
+    if (s_av_mirror)
+        game_render_draw_target(av_capture_color_tex(), true, ox, oy, w, h);
+    else if (post)
+        post_shader_draw(ox, oy, w, h, sapp_width(), sapp_height());
+    else
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
+                        (game_rect_t){ox, oy, w, h}, lerp_t);
+
+    /* The overlay goes UNDER any debug window that is open, which is right:
+     * those are for the person at the keyboard and the overlay is for the
+     * stream. simgui_render() is below, outside this block. */
+    if (win_overlay) overlay_host_draw();
+
+    /* What the game's script drew (PostDraw), over the game and under the
+     * debug windows. Not on the A/V stream: that is the board's picture. */
+    if (!win_overlay) m2lua_ui_draw(ox, oy, w, h);
+    lightgun_ui_set_rect(ox, oy, w, h);
+    lightgun_ui_draw(ox, oy, w, h);
+
+    extract_model_tick();
+}
+
 static void frame(void) {
     /* `quit` over the bridge. Capture mode would otherwise swallow the close,
      * which is the point of capture mode -- so say we mean it. */
     if (mcp_quit_requested()) { kiosk_allow_quit(); sapp_request_quit(); }
+    controls_frame(pads_running());   /* the profile's controls, when it changes */
+#if M2HLE_PADS
+    pads_frame();
+#endif
 
     simgui_new_frame(&(simgui_frame_desc_t){
         .width       = sapp_width(),
@@ -1647,31 +1760,7 @@ static void frame(void) {
 
     /* Draw the game letterboxed into the swapchain, then ImGui on top.
      * Layer order: back-back colour → background tiles → (3D, Phase 9) → FG/HUD. */
-    {
-        /* Back colour → background tiles → 3D scene → foreground/HUD — unless
-         * the A/V pass above has already drawn this frame, in which case the
-         * window shows that target rather than redrawing it. */
-        if (s_av_mirror)
-            game_render_draw_target(av_capture_color_tex(), true, ox, oy, w, h);
-        else if (post)
-            post_shader_draw(ox, oy, w, h, sapp_width(), sapp_height());
-        else
-            game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
-                            (game_rect_t){ox, oy, w, h}, lerp_t);
-
-        /* The overlay goes UNDER any debug window that is open, which is right:
-         * those are for the person at the keyboard and the overlay is for the
-         * stream. simgui_render() is below, outside this block. */
-        if (win_overlay) overlay_host_draw();
-
-        /* What the game's script drew (PostDraw), over the game and under the
-         * debug windows. Not on the A/V stream: that is the board's picture. */
-        if (!win_overlay) m2lua_ui_draw(ox, oy, w, h);
-        lightgun_ui_set_rect(ox, oy, w, h);
-        lightgun_ui_draw(ox, oy, w, h);
-
-        extract_model_tick();
-    }
+    window_draw_game(ox, oy, w, h, post, win_overlay, lerp_t);
 
     simgui_render();
     sg_end_pass();
@@ -1693,6 +1782,9 @@ static void frame(void) {
 
 static void cleanup(void) {
     kiosk_shutdown();      /* take the tray icon down before the window goes */
+#if M2HLE_PADS
+    if (g_pads_on) { lobby_pad_release(); ffb_stop_all(); SDL_Quit(); g_pads_on = false; }
+#endif
     /* First: the writer thread is still sending out of slots the renderer owns
      * and the target below is about to go. It keeps both rings — the audio tap
      * runs on the emu thread, which is still going at this point, and that is
@@ -1721,26 +1813,9 @@ static void cleanup(void) {
     log_file_close();
 }
 
-static void event(const sapp_event* ev) {
-    simgui_handle_event(ev);
-
-    /* Alt+F4 and the taskbar's Close reach sokol as a quit request. In capture
-     * mode only the tray's Exit item is allowed to end the run — the point of
-     * the mode is that nothing on the desktop can stop the recording. */
-    if (ev->type == SAPP_EVENTTYPE_QUIT_REQUESTED && !kiosk_quit_allowed()) {
-        sapp_cancel_quit();
-        return;
-    }
-
-    /* Game input flows through the emulated I/O ports (read by the game's vblank
-     * interrupt) — set/clear the host held mask here. Routed regardless of ImGui
-     * focus so arcade muscle-memory isn't eaten by a debug window. */
-    if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && !ev->key_repeat) input_key_down((int)ev->key_code);
-    if (ev->type == SAPP_EVENTTYPE_KEY_UP)                      input_key_up((int)ev->key_code);
-    m2lua_ui_event(ev);
-    lightgun_ui_event(ev);
-
-    if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) return;
+/* The debugger's hotkeys: Esc quits, F9 runs or stops the board, F5/F6/F7
+ * step it and F8 reboots the sound board. */
+static void event_hotkey(const sapp_event* ev) {
     switch (ev->key_code) {
         case SAPP_KEYCODE_ESCAPE: if (!kiosk_active()) sapp_request_quit(); break;
         case SAPP_KEYCODE_F9:
@@ -1764,6 +1839,36 @@ static void event(const sapp_event* ev) {
             break;
         default: break;
     }
+}
+
+static void event(const sapp_event* ev) {
+    simgui_handle_event(ev);
+
+    /* Alt+F4 and the taskbar's Close reach sokol as a quit request. In capture
+     * mode only the tray's Exit item is allowed to end the run — the point of
+     * the mode is that nothing on the desktop can stop the recording. */
+    if (ev->type == SAPP_EVENTTYPE_QUIT_REQUESTED && !kiosk_quit_allowed()) {
+        sapp_cancel_quit();
+        return;
+    }
+
+    /* A key the Controls window is binding goes to it, not the game. */
+    if (controls_key_event(ev)) return;
+
+    /* Game input flows through the emulated I/O ports (read by the game's vblank
+     * interrupt) — set/clear the host held mask here. Routed regardless of ImGui
+     * focus so arcade muscle-memory isn't eaten by a debug window. */
+    if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && !ev->key_repeat) input_key_down((int)ev->key_code);
+    if (ev->type == SAPP_EVENTTYPE_KEY_UP)                      input_key_up((int)ev->key_code);
+    m2lua_ui_event(ev);
+    lightgun_ui_event(ev);
+#if M2HLE_PADS
+    if (ev->type == SAPP_EVENTTYPE_FOCUSED)   pads_focus(true);
+    if (ev->type == SAPP_EVENTTYPE_UNFOCUSED) pads_focus(false);
+#endif
+
+    if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) return;
+    event_hotkey(ev);
 }
 
 sapp_desc sokol_main(int argc, char* argv[]) {
@@ -1841,6 +1946,16 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             } else LOG_WARN("--comm-slave %s: expected PORT:TOKEN", argv[i]);
         } else if (i + 1 < argc && lightgun_host_option(argv[i], argv[i + 1])) {
             i++;                      /* a light gun's flash on the trigger (lightgun_host.h) */
+        } else if (strcmp(argv[i], "--no-pads") == 0) {
+            g_no_pads = 1;            /* no gamepads or wheels */
+#if M2HLE_PADS
+        } else if (i + 1 < argc && sdl_pads_option(argv[i], argv[i + 1])) {
+            /* --pad-map, --pad N, --wheel-axes, --wheel-buttons, --ffb-gain (sdl_pads.h) */
+            if (sdl_pads_option(argv[i], argv[i + 1]) < 0) LOG_WARN("%s %s: not understood", argv[i], argv[i + 1]);
+            else if (!strcmp(argv[i], "--pad-map") || !strncmp(argv[i], "--wheel-", 8))
+                controls_cli_note(argv[i], argv[i + 1]);   /* over each profile's controls file */
+            i++;
+#endif
         } else if (strcmp(argv[i], "--run") == 0) {
             g_autorun = 1;
         } else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc) {

@@ -131,7 +131,7 @@ camera is not drawn.
 
 **`sky_eye_link()`**
 The game's camera and stage now as a noclip link fragment (`#game=sfight&tab=stage&…`
-with `eye`/`ang`, and `pos`/`target`/`look` for a noclip without them). Append it to
+with the board's `eye`/`ang` only). Append it to
 the explorer's page URL.
 
 **`get_registers()`**
@@ -331,7 +331,7 @@ on player 2's (`g_input.far_held`; left out, it stays as it was). The board
 reads them only outside netplay, replays and follows. Returns `far` too.
 
 **`set_gun(player: int = 0, x: float = 0.5, y: float = 0.5, offscreen: int = 0, on: int = 1)`**
-On a light-gun profile (The House of the Dead), aim a gun as the window's
+On a light-gun profile (The House of the Dead, Virtua Cop), aim a gun as the window's
 mouse would: `x` and `y` run 0..1 across and down the picture, `offscreen: 1`
 points it off the picture (a shot there reloads), `on: 0` hands it back to the
 pad's walk. Fire with `set_input` (P1 trigger `0x100`, reload `0x400`; P2

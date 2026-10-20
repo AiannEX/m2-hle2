@@ -28,6 +28,21 @@
  * pressed. 0x80 ± 0x58 (0x28..0xD8) and pedals 0x20 / 0xE0 sit inside that,
  * the same margins MAME's Daytona gives its wheel and pedals (0x20-0xE0).
  *
+ * A host with an analog wheel or pedals (a racing wheel, a pad's stick and
+ * triggers; Pinboard #1082) gives their positions instead (io5649_host_analog):
+ * the wheel then reads where it is turned, center + steer * range, and a pedal
+ * how far it is pressed, between the released and pressed values. A pedal's
+ * held bit still floors it, and LEFT / RIGHT still walk the wheel while the
+ * host's wheel is centred (a pad's d-pad beside its stick). That position is
+ * the host's, not the network's, so, as with a light gun's pointer
+ * (lightgun.h), only a board this host's hands drive reads it: one in a
+ * session, a follow or a replay keeps to the held bits. A replay or a follow recorded with an analog wheel carries only
+ * the held bits, so it plays the race as the d-pad would have.
+ *
+ * Port E (IO+0x08, register 4) is the drive board's (drive_board.h): the game
+ * writes it, the board's buffer keeps the byte (savestated with the rest of
+ * the I/O window), and io5649_drive reads it for the host's force feedback.
+ *
  * Determinism: the state moves only on the board's own vblank count
  * (g_irqt.vbl_count, brought up to date at the read) and the held bits, so it
  * is board state like any other: a profile registers `g_io5649` with
@@ -54,6 +69,7 @@
 #define IO5649_PEDAL_OFF     0x20
 #define IO5649_PEDAL_ON      0xE0
 #define IO5649_STEPS_MAX     64      /* frames caught up at one read */
+#define IO5649_AXIS_MAX      32767   /* io5649_host_analog's full scale */
 
 /* The held bits that drive it; a profile fills these from its input map.
  * gear[g] is the button for gate g (0 = N, 1..4). */
@@ -85,6 +101,23 @@ static io5649_controls_t  g_io5649_controls;
  * the network (then the adjustment is the spec's). */
 static uint32_t (*g_io5649_held_fn)(void);
 static int      (*g_io5649_from_net_fn)(void);
+/* "Is the board driven from elsewhere" (a session, a follow, a replay), set by
+ * emu_thread.h as lightgun.h's. */
+static int      (*g_io5649_remote_fn)(void);
+
+/* A host's analog wheel and pedals: steer -32767 (full left) .. 32767 (full
+ * right), accel and brake 0 (released) .. 32767 (floored). Host input, read
+ * only by a board that is not driven from elsewhere. */
+typedef struct {
+    volatile int on;          /* an analog device drives them */
+    volatile int steer, accel, brake;
+} io5649_host_t;
+
+static io5649_host_t g_io5649_host;
+
+/* The board's I/O window (the bus's buffer, set by input.h): port E there is
+ * the drive board's last command. */
+static const uint8_t *g_io5649_regs;
 
 /* --wheel-center N, --wheel-range N, --wheel-speed N (decimal or 0x hex): true
  * when `opt` is one of them. Out-of-range values are clamped where they are used. */
@@ -112,6 +145,23 @@ static inline io5649_wheel_t io5649_wheel(void) {
 
 static inline uint32_t io5649_held(void) { return g_io5649_held_fn ? g_io5649_held_fn() : 0; }
 
+/* The host's wheel and pedals (thread-safe enough: words the board reads whole).
+ * Out-of-range values are clamped. on = false hands them back to the held bits. */
+static inline void io5649_host_analog(bool on, int steer, int accel, int brake) {
+    g_io5649_host.steer = io5649_clamp(steer, -IO5649_AXIS_MAX, IO5649_AXIS_MAX);
+    g_io5649_host.accel = io5649_clamp(accel, 0, IO5649_AXIS_MAX);
+    g_io5649_host.brake = io5649_clamp(brake, 0, IO5649_AXIS_MAX);
+    g_io5649_host.on    = on;
+}
+
+static inline bool io5649_host_live(void) {
+    return g_io5649_host.on && !(g_io5649_from_net_fn && g_io5649_from_net_fn())
+        && !(g_io5649_remote_fn && g_io5649_remote_fn());
+}
+
+/* The drive board's command (port E), 0 before there is a board. */
+static inline uint8_t io5649_drive(void) { return g_io5649_regs ? g_io5649_regs[0x08] : 0; }
+
 /* Power-on: wheel at the spec's centre (the same on every machine; a local
  * adjustment takes it from there), lever in 1st, mux on channel 0. */
 static inline void io5649_reset(void) {
@@ -138,22 +188,35 @@ static inline void io5649_advance(void) {
     g_io5649.last_vbl = now;
     uint32_t held = io5649_held();
     io5649_shift(held);
-    if (!steps) return;
-    if (steps > IO5649_STEPS_MAX) steps = IO5649_STEPS_MAX;
     io5649_wheel_t w = io5649_wheel();
     int dir = ((held & g_io5649_controls.right) ? 1 : 0) - ((held & g_io5649_controls.left) ? 1 : 0);
+    if (io5649_host_live() && (g_io5649_host.steer || !dir)) {   /* where the host's wheel is turned */
+        int d = g_io5649_host.steer * w.range;                     /* rounded to the nearest step */
+        d = (d + (d < 0 ? -IO5649_AXIS_MAX / 2 : IO5649_AXIS_MAX / 2)) / IO5649_AXIS_MAX;
+        g_io5649.steer = io5649_clamp(w.center + d, 0, 255);
+        return;
+    }
+    if (!steps) return;
+    if (steps > IO5649_STEPS_MAX) steps = IO5649_STEPS_MAX;
     int target = w.center + dir * w.range;
     int move = (int)steps * w.speed;
     int s = g_io5649.steer;
     g_io5649.steer = s < target ? io5649_clamp(s + move, s, target) : io5649_clamp(s - move, target, s);
 }
 
+/* A pedal: floored while its bit is held, else where the host's pedal is. */
+static inline uint8_t io5649_pedal(bool held, int host) {
+    if (held) return IO5649_PEDAL_ON;
+    if (!io5649_host_live()) return IO5649_PEDAL_OFF;
+    return (uint8_t)(IO5649_PEDAL_OFF + (host * (IO5649_PEDAL_ON - IO5649_PEDAL_OFF) + IO5649_AXIS_MAX / 2) / IO5649_AXIS_MAX);
+}
+
 static inline uint8_t io5649_analog(int ch) {
     uint32_t held = io5649_held();
     switch (ch) {
         case 0:  return (uint8_t)io5649_clamp(g_io5649.steer, 0, 255);
-        case 1:  return (held & g_io5649_controls.accel) ? IO5649_PEDAL_ON : IO5649_PEDAL_OFF;
-        case 2:  return (held & g_io5649_controls.brake) ? IO5649_PEDAL_ON : IO5649_PEDAL_OFF;
+        case 1:  return io5649_pedal(held & g_io5649_controls.accel, g_io5649_host.accel);
+        case 2:  return io5649_pedal(held & g_io5649_controls.brake, g_io5649_host.brake);
         default: return 0x00;
     }
 }

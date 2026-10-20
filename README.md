@@ -81,7 +81,7 @@ the next game cheaper instead of being spent on a single ROM set.
 | 3D pipeline | Index-array polygon decoder (J = 1.0 vs. reference meshes), textures, flat + luma shading, backface cull, shadows |
 | MC68000 sound CPU | Full opcode core with Motorola cycle timing, unit tests |
 | SCSP audio | Register-level chip (slots, timers, DSP) run one sample at a time in lockstep with the 68000; host output via sokol_audio |
-| Input | Interrupt-driven, through the real 315-5649 I/O ports; optional button macros (`--macros`, or `--macro a=b1+b2` per key; `--pad-map north=b1+b2` on the handheld; the Controls panel in the browser). Air Walkers' players 3 and 4 play from the third and fourth pad, or `--macro t=p3:up`. Daytona and Sega Rally take a button per gear (`--macro q=gearn`, `gear1`..`gear4`; L/L2/R/R2 in RetroArch; rows in the Controls panel), and Service / Test map like any button |
+| Input | Interrupt-driven, through the real 315-5649 I/O ports; optional button macros (`--macros`, or `--macro a=b1+b2` per key; `--pad-map north=b1+b2` on the handheld; the Controls panel in the browser; on the desktop, Profile > Controls... picks keyboard, gamepad or wheel and rebinds every key and button, saved per profile). Air Walkers' players 3 and 4 play from the third and fourth pad, or `--macro t=p3:up`. Daytona and Sega Rally take a button per gear (`--macro q=gearn`, `gear1`..`gear4`; L/L2/R/R2 in RetroArch; rows in the Controls panel), and Service / Test map like any button |
 | Debug UI | CPU / memory / bus stats / COP / 3D / object viewer / 68K / breakpoint windows |
 | Netplay | RPCN matchmaking (our server or the official np.rpcs3.net) + direct peer-to-peer delay lockstep (`--netplay`); GGPO rollback through its own lobby (desktop, web and libretro builds); rooms of up to eight with a winner-stays queue; cross-play with the PS3 release on the official server |
 | PS3-release menus | The Console profile's title, main menu, Arcade / Offline Versus settings and online lobby, redrawn after the PS3 release (libretro core and web build) |
@@ -90,8 +90,20 @@ the next game cheaper instead of being spent on a single ROM set.
 | Streaming | Raw board video and audio on one socket and one clock (`--av-port`), and a plugin that paints over the picture (`--overlay`) |
 | Picture filters | The Arcade switch (a real board's tone curve, ghosting, noise and 4:3 shape; every build), and over it Lost Judgment's CRT scanlines, as YAMP ports them, or a libretro GLSL shader preset of your own (web and Linux builds): the Video menu, `--arcade`, `--crt`, `--shader`; the browser's Picture tab. Depth per pixel (`--pixel-depth`, off by default) draws each pixel at its own depth instead of the board's one sort key a polygon |
 
-Game profiles live in [src/profiles/](src/profiles/): `sfight_console`, `sfight`, `fvipers`,
-`m2snake` (the web build carries the two Sonic the Fighters profiles only).
+Game profiles live in [src/profiles/](src/profiles/), one per ROM set (`registry.h`): Sonic the
+Fighters (`sfight_console`, `sfight`), Sega Rally Championship (`srallyc`), Virtual-On (`vonj`),
+Dynamite Cop / Dynamite Deka 2 (`dynamcop`, `dyndeka2`, `dynamcopb`, `dyndeka2b`, `dynamcopc`),
+Fighting Vipers (`fvipers`), The House of the Dead (`hotd`), Daytona USA (`daytona`), Dead or Alive
+(`doa`, `doab`, `doaa`, `doaab`, `doaae`), Virtua Fighter 2 (`vf2`, `vf2b`, `vf2a`, `vf2o`), Air
+Walkers (`airwlkrs`), Power Sled (`powsled`) and Virtua Cop (`vcop`, with the I/O board's
+`model1io2.zip`; the mouse is the gun, a shot off the picture reloads). The desktop build adds the
+homebrew `m2snake` and `sfight_homebrew`.
+
+Every build, the web one too, also runs these clone sets, each picked by its zip's name (Pinboard #1286):
+`schamp` (Sonic Championship), `hotdo` and `hotdp` (The House of the Dead's first release and
+prototype; `hotdp` runs in Japanese only), and the Daytona USA builds `daytona93`, `daytonase`,
+`daytonas`, `daytonat`, `daytonata` and `daytonagtx` (MAME's `model1io.zip` beside them).
+`daytonam` (To The MAXX) is not one: it passes its protection check, then crashes.
 
 ### Sonic the Fighters: Console and Arcade
 
@@ -117,7 +129,12 @@ pick the same one to see each other's rooms.
 
 `powsled.zip` is a ride, the Slave unit. A ride races only on a comm-board ring with a Main
 unit, which runs the same program in another mode (MAME patches the Relay's program into a
-Main; here the ride's program is patched the same way). Run two copies, the Main first:
+Main; here the ride's program is patched the same way).
+
+Loaded alone (Pinboard #1110), the ride races by itself: the Main runs beside it in the
+same process, and its operator opens entry, closes it and starts the race when the rider
+presses **P1 Entry** (`P1 B1`). `--ggpo-solo 0` turns that off. For a Main of your own, or a
+second ride, run two copies, the Main first:
 
 ```bash
 m2hle --rom powsled.zip --run --comm-master                    # the Main; prints comm-link PORT:TOKEN
@@ -129,6 +146,16 @@ entry, then on the ride **P1 Entry** (`P1 B1`), then on the Main **P2 Call** (`P
 and **P2 B3** (the Main's IN1 bit 4) for the race. The ride steers with its two pedals, **P1
 Left** and **P1 Right**. The Main shows the race
 from the Relay's camera, behind the riders.
+
+Over the internet the two boards meet in a Room Match on RPCN (desktop or the website's
+`powsled.html`, Pinboard #1089): the room's owner runs the Main and the guest rides. The match
+runs no lockstep; each board keeps its own 60 Hz and the room carries the comm ring.
+`tools/powsled-rpcn-pair.mjs` races two headless copies that way on a local RPCN.
+
+A GGPO match (Pinboard #1095) runs both boards on each machine: the challenger, player 1,
+is the Main and the one who accepts, player 2, rides; only the two players' inputs cross the
+network. A race of two riders (three boards) is not a GGPO match. `tools/powsled-ggpo-pair.mjs`
+races two headless copies that way through a local ggpo-server.
 
 ## Layout
 
@@ -284,7 +311,7 @@ m2hle --rom sfight.zip --ggpo-lobby default --ggpo-user FRIEND --ggpo-pass PASSW
 ```
 
 `--ggpo-signup` creates the account first, and `--ggpo-delay N` sets the local input delay
-(2 frames by default). `--ggpo-remote IP:PORT --ggpo-player 1|2 --ggpo-local PORT` plays straight
+(`auto` by default: picked from the first ping, 2 to 7 frames). `--ggpo-remote IP:PORT --ggpo-player 1|2 --ggpo-local PORT` plays straight
 to an address with no lobby. Over the MCP bridge, `{"cmd":"ggpo_lobby"}` reports and drives the
 lobby.
 

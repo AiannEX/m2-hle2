@@ -5,7 +5,8 @@
  * Daytona's own commands decode to their effects (the table in drive_board.h),
  * a pad rumbles only for the pushes and the shake, a wheel gets the spring and
  * friction too, --ffb-gain scales it all and 0 turns it off, and a game with
- * no drive board gets nothing.
+ * no drive board gets nothing. Sega Rally's port E (Pinboard #1082) speaks its
+ * own language: a torque of 1-32 to one side, a pad rumbling for the hard half.
  *
  * A ctest (CMakeLists.txt, ffb_test).
  */
@@ -72,6 +73,35 @@ int main(void) {
     o = play(0x57);
     CHECK(!o.strong && !o.weak && !o.push && o.effect.kind == DRIVE_PUSH, "gain 0: off, the command still read");
     CHECK(!ffb_option("--wheel-range", "1"), "other options are not ffb's");
+    ffb_option("--ffb-gain", "100");
+
+    /* Sega Rally: the 315-5649's port E (IO+0x08). */
+    e = drive_board_decode_srally(0x80);
+    CHECK(e.kind == DRIVE_TORQUE && e.dir == +1 && e.level == 1, "rally 0x80: torque right 1");
+    e = drive_board_decode_srally(0xDF);
+    CHECK(e.kind == DRIVE_TORQUE && e.dir == -1 && e.level == 32, "rally 0xDF: torque left 32");
+    CHECK(drive_board_decode_srally(0x00).kind == DRIVE_NONE && drive_board_decode_srally(0x15).kind == DRIVE_NONE
+          && drive_board_decode_srally(0xFF).kind == DRIVE_NONE && drive_board_decode_srally(0xA0).kind == DRIVE_NONE,
+          "rally 0x00 0x15 0xA0 0xFF: no force");
+
+    static uint8_t io[0x40];
+    memset(io, 0xFF, sizeof io);
+    prof.quirks.model1_io = false;
+    prof.quirks.io_5649 = true;
+    g_io5649_regs = io;
+    g_model1io.drive = 0x57;   /* Daytona's board is not this game's */
+    CHECK(ffb_poll().effect.kind == DRIVE_NONE, "rally: port E 0xFF before the first write, no force");
+    io[0x08] = 0x8F;
+    o = ffb_poll();
+    CHECK(o.effect.kind == DRIVE_TORQUE && o.push > 0 && !o.strong && !o.weak, "rally torque 16 right: a wheel's push, no rumble");
+    io[0x08] = 0xD0;
+    ffb_out_t t17 = ffb_poll();
+    io[0x08] = 0xDF;
+    ffb_out_t t32 = ffb_poll();
+    CHECK(t17.push < 0 && t32.push == -0x7FFF && t17.strong >= 0x4000 && t32.strong > t17.strong && t32.weak == t32.strong / 3,
+          "rally torque left 17 / 32: rumble from 17, full push at 32");
+    g_io5649_regs = NULL;
+    CHECK(ffb_poll().effect.kind == DRIVE_NONE, "rally: no I/O board yet, no force");
 
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;

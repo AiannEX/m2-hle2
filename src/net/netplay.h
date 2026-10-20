@@ -221,8 +221,14 @@
  *    vblanks, and Fighting Vipers' texture loader keeps up (Pinboard #1075).
  * 33: a racing cabinet's gear buttons (GAME_INPUT_GEAR_N .. GEAR_4) are
  *    canonical bits 12-16, and the lever goes to that gate (Pinboard #1137).
+ * 34: Fighting Vipers' COP ops 0x79, 0x7C, 0x7D and 0x7E (its inner 3x3
+ *    tables), which went down as commands; a broken cage's pieces land
+ *    (Pinboard #1331). 33 is #1137's (PR #479).
+ * 36: Fighting Vipers' COP 0x3A bins balls at 1/16 unit and leaves a radius-0
+ *    P1 ball's mask alone, as its own program does, where it ran STF's 1/8
+ *    (Pinboard #1353). 35 is #1347's (PR #505).
  */
-#define NETPLAY_PROTO_REV 33
+#define NETPLAY_PROTO_REV 36
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.
@@ -2639,6 +2645,30 @@ static inline bool netplay_twitch_reuse(const netplay_config_t *asked) {
     return true;
 }
 
+/* A token that went dead because someone else on this machine signed in with
+ * Twitch (another copy of the emulator, or YAMP) left its replacement in the
+ * settings file. Offer that before forgetting anything -- forgetting would save
+ * an empty token over the one that works. True when it signed in again with it. */
+static inline bool netplay_twitch_try_replaced(void) {
+    if (!g_netplay.twitch_tried_owner) {
+        netplay_config_t disk;
+        if (netplay_settings_read_current(&disk) && disk.twitch_token[0]
+            && strcmp(disk.twitch_token, g_netplay.cfg.twitch_token) != 0
+            && netplay_same_twitch_server(&disk, &g_netplay.cfg)
+            && (g_netplay.twitch_wanted || netplay_same_name(disk.twitch_npid, g_netplay.cfg.npid))) {
+            g_netplay.twitch_tried_owner = true;
+            netplay_twitch_copy(&g_netplay.cfg, &disk);
+            memcpy(g_netplay.twitch_synced, disk.twitch_token, sizeof(disk.twitch_token));
+            snprintf(g_netplay.cfg.npid, sizeof(g_netplay.cfg.npid), "%s", disk.twitch_npid);
+            netplay_log("the stored Twitch login was replaced on this machine - signing in with "
+                        "the new one as %s", g_netplay.cfg.npid);
+            netplay_do_connect(&g_netplay.cfg);
+            return true;
+        }
+    }
+    return false;
+}
+
 /*
  * The server refused a login that offered the stored Twitch token. Called once,
  * on the way into NETPLAY_FAILED.
@@ -2657,26 +2687,7 @@ static inline bool netplay_twitch_reuse(const netplay_config_t *asked) {
 static inline void netplay_twitch_refused(void) {
     if (!g_netplay.sent_twitch_token || !g_netplay.session.credential_refused) return;
 
-    /* A token that went dead because someone else on this machine signed in
-     * with Twitch (another copy of the emulator, or YAMP) left its replacement
-     * in the settings file. Offer that before forgetting anything -- forgetting
-     * would save an empty token over the one that works. */
-    if (!g_netplay.twitch_tried_owner) {
-        netplay_config_t disk;
-        if (netplay_settings_read_current(&disk) && disk.twitch_token[0]
-            && strcmp(disk.twitch_token, g_netplay.cfg.twitch_token) != 0
-            && netplay_same_twitch_server(&disk, &g_netplay.cfg)
-            && (g_netplay.twitch_wanted || netplay_same_name(disk.twitch_npid, g_netplay.cfg.npid))) {
-            g_netplay.twitch_tried_owner = true;
-            netplay_twitch_copy(&g_netplay.cfg, &disk);
-            memcpy(g_netplay.twitch_synced, disk.twitch_token, sizeof(disk.twitch_token));
-            snprintf(g_netplay.cfg.npid, sizeof(g_netplay.cfg.npid), "%s", disk.twitch_npid);
-            netplay_log("the stored Twitch login was replaced on this machine - signing in with "
-                        "the new one as %s", g_netplay.cfg.npid);
-            netplay_do_connect(&g_netplay.cfg);
-            return;
-        }
-    }
+    if (netplay_twitch_try_replaced()) return;
 
     const char *owner = g_netplay.cfg.twitch_npid;
     bool under_own_name = !owner[0] || strcmp(owner, g_netplay.cfg.npid) == 0;
@@ -3298,6 +3309,27 @@ static inline void netplay_heal_take_room(bool host, uint64_t room_id) {
     netplay_room_or_defer(&cmd);
 }
 
+/* While a heal looks for the owner's new room: join it once the room list
+ * has it, search again now and then, and give up when the time is out. */
+static inline void netplay_heal_find_room(uint64_t now) {
+    if (!g_netplay.heal_find_until_ms || g_netplay.state != NETPLAY_ONLINE) return;
+    if (now > g_netplay.heal_find_until_ms) {
+        netplay_log("%s has not opened a room again; pick one from the list", g_netplay.heal_owner);
+        g_netplay.heal_find_until_ms = 0;
+        return;
+    }
+    const rpcn_session_t *ss = &g_netplay.session;
+    for (uint32_t i = 0; i < ss->room_count; i++) {
+        if (!rpcn_same_npid(ss->rooms[i].owner, g_netplay.heal_owner)) continue;
+        netplay_heal_take_room(false, ss->rooms[i].room_id);
+        return;
+    }
+    if (now - g_netplay.heal_search_ms >= NETPLAY_HEAL_SEARCH_MS && !rpcn_session_search_pending(ss)) {
+        g_netplay.heal_search_ms = now;
+        rpcn_session_search(&g_netplay.session, false, NULL);
+    }
+}
+
 /* The room half of a heal, once signed in again. */
 static inline void netplay_heal_room_pump(void) {
     uint64_t now = net_now_ms();
@@ -3327,22 +3359,7 @@ static inline void netplay_heal_room_pump(void) {
             g_netplay.heal_find_until_ms = now + NETPLAY_HEAL_FIND_MS;
         }
     }
-    if (!g_netplay.heal_find_until_ms || g_netplay.state != NETPLAY_ONLINE) return;
-    if (now > g_netplay.heal_find_until_ms) {
-        netplay_log("%s has not opened a room again; pick one from the list", g_netplay.heal_owner);
-        g_netplay.heal_find_until_ms = 0;
-        return;
-    }
-    const rpcn_session_t *ss = &g_netplay.session;
-    for (uint32_t i = 0; i < ss->room_count; i++) {
-        if (!rpcn_same_npid(ss->rooms[i].owner, g_netplay.heal_owner)) continue;
-        netplay_heal_take_room(false, ss->rooms[i].room_id);
-        return;
-    }
-    if (now - g_netplay.heal_search_ms >= NETPLAY_HEAL_SEARCH_MS && !rpcn_session_search_pending(ss)) {
-        g_netplay.heal_search_ms = now;
-        rpcn_session_search(&g_netplay.session, false, NULL);
-    }
+    netplay_heal_find_room(now);
 }
 
 /* Once per slice: the next attempt, when it is due. */
@@ -3906,6 +3923,21 @@ static inline void netplay_save_own_settings(void) {
     g_netplay.own_hidden_chars  = g_hidden_chars;
 }
 
+/* The room's PLAYER MATCH rules, at the same cold boot. */
+static inline void netplay_adopt_room_rules(const room_state_t *r) {
+    if (g_rounds_to_win != (int)r->rounds_to_win || g_round_time != (int)r->round_time
+        || g_game_type != (int)r->game_type || g_hidden_chars != (int)r->hidden) {
+        g_rounds_to_win = r->rounds_to_win;
+        g_round_time    = r->round_time;
+        g_game_type     = r->game_type & 3;
+        g_hidden_chars  = r->hidden ? 1 : 0;
+        netplay_log("this room's rules: %u rounds to win, %u s a round, Type %c, secret characters %s",
+                    r->rounds_to_win ? (unsigned)r->rounds_to_win : 2u,
+                    r->round_time ? (unsigned)r->round_time : 30u,
+                    'A' + (r->game_type & 3), r->hidden ? "On" : "Off");
+    }
+}
+
 /* The owner's region and VS mode, before the reset that boots into
  * them: a board booted as another region is another game from frame 0,
  * and one in the other VS mode leaves the match a different way. */
@@ -3925,18 +3957,7 @@ static inline void netplay_adopt_room_settings(const room_state_t *r) {
                                    : "this room plays with DAMAGE: NORMAL (catch-up damage)");
         g_damage_real = r->damage_real ? 1 : 0;
     }
-    /* The room's PLAYER MATCH rules, at the same cold boot. */
-    if (g_rounds_to_win != (int)r->rounds_to_win || g_round_time != (int)r->round_time
-        || g_game_type != (int)r->game_type || g_hidden_chars != (int)r->hidden) {
-        g_rounds_to_win = r->rounds_to_win;
-        g_round_time    = r->round_time;
-        g_game_type     = r->game_type & 3;
-        g_hidden_chars  = r->hidden ? 1 : 0;
-        netplay_log("this room's rules: %u rounds to win, %u s a round, Type %c, secret characters %s",
-                    r->rounds_to_win ? (unsigned)r->rounds_to_win : 2u,
-                    r->round_time ? (unsigned)r->round_time : 30u,
-                    'A' + (r->game_type & 3), r->hidden ? "On" : "Off");
-    }
+    netplay_adopt_room_rules(r);
 }
 
 /* A fighter's match in a game whose cabinets link their comm boards (Virtual-On,
@@ -4011,6 +4032,19 @@ static inline void netplay_member_stop_session(const room_state_t *r) {
     }
 }
 
+/* The room's last result, when our board did not reach it itself. */
+static inline void netplay_member_missed_result(const room_state_t *r, uint16_t me) {
+    /* A result our board did not see -- we were not running it, or dropped out
+     * of it -- is still ours to record, and still moves our entry request. */
+    if (r->phase == ROOM_PHASE_LOBBY && r->match && r->last_result <= 1
+        && g_netplay.me.result_match != r->match && !g_netplay.match_live) {
+        if (room_after_result(&g_netplay.me, me, r, r->match, r->last_result)) {
+            g_netplay.me_dirty = true;
+            netplay_after_result_ready();
+        }
+    }
+}
+
 /*
  * Every member's half, the owner's included: do what the room state says.
  * A match we have not started yet is started -- as a fighter if the state names
@@ -4044,15 +4078,7 @@ static inline void netplay_member_pump(void) {
 
     if (on_our_boards) netplay_member_stop_session(r);
 
-    /* A result our board did not see -- we were not running it, or dropped out
-     * of it -- is still ours to record, and still moves our entry request. */
-    if (r->phase == ROOM_PHASE_LOBBY && r->match && r->last_result <= 1
-        && g_netplay.me.result_match != r->match && !g_netplay.match_live) {
-        if (room_after_result(&g_netplay.me, me, r, r->match, r->last_result)) {
-            g_netplay.me_dirty = true;
-            netplay_after_result_ready();
-        }
-    }
+    netplay_member_missed_result(r, me);
 }
 
 /* A fighter whose board has reached the result goes on repeating its last
