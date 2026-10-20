@@ -126,7 +126,7 @@ static inline void input_keys_default(void) {
 static const char *const g_input_action_names[GAME_INPUT_COUNT] = {
     "p1_up", "p1_down", "p1_left", "p1_right", "p1_b1", "p1_b2", "p1_b3", "p1_b4", "p1_start", "p1_coin",
     "p2_up", "p2_down", "p2_left", "p2_right", "p2_b1", "p2_b2", "p2_b3", "p2_b4", "p2_start", "p2_coin",
-    "service", "test",
+    "service", "test", "gearn", "gear1", "gear2", "gear3", "gear4",
 };
 
 static inline int input_action_by_name(const char *s) {
@@ -276,10 +276,30 @@ static inline int input_combo_name(const char *s, size_t n) {
     return -1;
 }
 
+/* The n characters at s as one of the cabinet's own buttons (any case):
+ * service, test, and a racing cabinet's gearn, gear1-gear4 (io_5649.h). Its
+ * GAME_INPUT_*, or -1. */
+static inline int input_cabinet_name(const char *s, size_t n) {
+    static const struct { const char *name; int act; } names[] = {
+        { "service", GAME_INPUT_SERVICE }, { "test", GAME_INPUT_TEST },
+        { "gearn", GAME_INPUT_GEAR_N }, { "gear1", GAME_INPUT_GEAR_1 }, { "gear2", GAME_INPUT_GEAR_2 },
+        { "gear3", GAME_INPUT_GEAR_3 }, { "gear4", GAME_INPUT_GEAR_4 },
+    };
+    for (int i = 0; i < (int)(sizeof names / sizeof names[0]); i++) {
+        if (strlen(names[i].name) != n) continue;
+        size_t c = 0;
+        while (c < n && (s[c] | 0x20) == names[i].name[c]) c++;
+        if (c == n) return names[i].act;
+    }
+    return -1;
+}
+
 /* Parse a combo: '+'-separated b1 b2 b3 b4 up down left right start coin,
  * optionally after "p2:" for player 2, or "p3:" / "p4:" for players 3 and 4
  * of a four-player cabinet (INPUT_COMBO_FAR) -- "b1+b2", "p2:b1+b2+b3",
- * "p3:up". Returns the action mask, or 0 if the text is not one. */
+ * "p3:up". Without a prefix (or with "p1:") it may name the cabinet's own
+ * buttons too: "service", "gear3". Returns the action mask, or 0 if the text
+ * is not one. */
 static inline uint32_t input_combo_parse(const char *s) {
     int base = GAME_INPUT_P1_UP;
     uint32_t acts = 0;
@@ -291,8 +311,9 @@ static inline uint32_t input_combo_parse(const char *s) {
     while (*s) {
         size_t n = strcspn(s, "+");
         int found = input_combo_name(s, n);
-        if (found < 0) return 0;
-        acts |= 1u << (base + found);
+        int cab = found < 0 && base == GAME_INPUT_P1_UP && !acts ? input_cabinet_name(s, n) : -1;
+        if (found < 0 && cab < 0) return 0;
+        acts |= 1u << (cab >= 0 ? cab : base + found);
         s += n;
         if (*s == '+') s++;
     }
@@ -347,16 +368,16 @@ static inline void input_key_up(int kc) {
 }
 
 /* acts as input_combo_parse (or sdl_pads.h's actions_by_name) reads it, in
- * buf: "b1+b2", "p2:up", "service", "none". "" for a mix it cannot write
- * (two players' actions, or SERVICE with another). */
+ * buf: "b1+b2", "p2:up", "service", "gear3", "none". "" for a mix it cannot
+ * write (two players' actions, or a cabinet button with another). */
 static inline const char *input_combo_format(uint32_t acts, char *buf, size_t cap) {
     static const char *const names[] = { "up", "down", "left", "right", "b1", "b2", "b3", "b4", "start", "coin" };
     const uint32_t p1 = (1u << GAME_INPUT_P2_UP) - 1, p2 = ((1u << GAME_INPUT_SERVICE) - 1) & ~p1;
     acts &= ~INPUT_COMBO_FAR;
     buf[0] = '\0';
     if (!acts) { snprintf(buf, cap, "none"); return buf; }
-    if (acts == 1u << GAME_INPUT_SERVICE) { snprintf(buf, cap, "service"); return buf; }
-    if (acts == 1u << GAME_INPUT_TEST)    { snprintf(buf, cap, "test"); return buf; }
+    for (int a = GAME_INPUT_SERVICE; a < GAME_INPUT_COUNT; a++)   /* service, test, gearn .. gear4 */
+        if (acts == 1u << a) { snprintf(buf, cap, "%s", g_input_action_names[a]); return buf; }
     if ((acts & p1) && (acts & p2)) return buf;
     if (acts & ~(p1 | p2)) return buf;
     int base = (acts & p1) ? GAME_INPUT_P1_UP : GAME_INPUT_P2_UP;
@@ -400,11 +421,20 @@ static void input_io_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int 
 static uint32_t input_board_held(void) { return g_input.use_net ? g_input.net_held : g_input.held; }
 static int      input_board_from_net(void) { return g_input.use_net; }
 
+/* io_5649.h's controls: the wheel, pedals and shifts from the quirks, a
+ * gear's own button from the input map. */
+static inline void input_io5649_controls(void) {
+    const game_quirks_t *q = &g_active_profile->quirks;
+    const uint32_t *bits = g_active_profile->input.bits;
+    g_io5649_controls = (io5649_controls_t){ q->wheel.left, q->wheel.right, q->wheel.accel,
+                                             q->wheel.brake, q->wheel.shift_up, q->wheel.shift_down,
+                                             { bits[GAME_INPUT_GEAR_N], bits[GAME_INPUT_GEAR_1], bits[GAME_INPUT_GEAR_2],
+                                               bits[GAME_INPUT_GEAR_3], bits[GAME_INPUT_GEAR_4] } };
+}
+
 /* A 315-5649 board (a wheel): io_5649.h serves the ports and takes the writes. */
 static inline void input_attach_5649(mem_region_t *r) {
-    const game_quirks_t *q = &g_active_profile->quirks;
-    g_io5649_controls = (io5649_controls_t){ q->wheel.left, q->wheel.right, q->wheel.accel,
-                                             q->wheel.brake, q->wheel.shift_up, q->wheel.shift_down };
+    input_io5649_controls();
     g_io5649_held_fn     = input_board_held;
     g_io5649_from_net_fn = input_board_from_net;
     g_io5649_regs        = r->data;      /* port E: the drive board's command (ffb.h) */
@@ -562,12 +592,10 @@ static inline void input_attach(memory_bus_t *bus) {
     if (g_active_profile && g_active_profile->quirks.model1_io) {
         /* The install put the board's window at IO_BASE (model1io.h); the
          * Z80 reads the controls through io_5649.h's model. */
-        const game_quirks_t *q = &g_active_profile->quirks;
-        g_io5649_controls = (io5649_controls_t){ q->wheel.left, q->wheel.right, q->wheel.accel,
-                                                 q->wheel.brake, q->wheel.shift_up, q->wheel.shift_down };
+        input_io5649_controls();
         g_io5649_held_fn     = input_board_held;
         g_io5649_from_net_fn = input_board_from_net;
-        g_model1io_vr4       = q->model1_io_vr4;
+        g_model1io_vr4       = g_active_profile->quirks.model1_io_vr4;
         LOG_INFO("input: Model 1 I/O board");
         return;
     }

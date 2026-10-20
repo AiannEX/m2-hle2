@@ -67,6 +67,9 @@ typedef enum {
     GAME_INPUT_P2_B1, GAME_INPUT_P2_B2, GAME_INPUT_P2_B3, GAME_INPUT_P2_B4,
     GAME_INPUT_P2_START, GAME_INPUT_P2_COIN,
     GAME_INPUT_SERVICE, GAME_INPUT_TEST,
+    /* A racing cabinet's four-speed lever, one button a gate (MAME's GEARS
+     * port): a press puts the lever there and it stays (io_5649.h). */
+    GAME_INPUT_GEAR_N, GAME_INPUT_GEAR_1, GAME_INPUT_GEAR_2, GAME_INPUT_GEAR_3, GAME_INPUT_GEAR_4,
     GAME_INPUT_COUNT
 } game_input_t;
 

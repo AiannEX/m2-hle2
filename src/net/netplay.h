@@ -219,6 +219,8 @@
  * 32: a frame is the board's 434,600 i960 cycles (16 MHz over 656 x 424 at
  *    25 MHz), not 60 Hz's 416,667: every game gets MAME's time between
  *    vblanks, and Fighting Vipers' texture loader keeps up (Pinboard #1075).
+ * 33: a racing cabinet's gear buttons (GAME_INPUT_GEAR_N .. GEAR_4) are
+ *    canonical bits 12-16, and the lever goes to that gate (Pinboard #1137).
  * 34: Fighting Vipers' COP ops 0x79, 0x7C, 0x7D and 0x7E (its inner 3x3
  *    tables), which went down as commands; a broken cage's pieces land
  *    (Pinboard #1331). 33 is #1137's (PR #479).
@@ -670,7 +672,7 @@ typedef struct {
 
     /* Input ownership, derived from the active profile's input map. */
     uint32_t          p1_mask, p2_mask, sys_mask;
-    uint32_t          bit_p1[12], bit_p2[12];   /* canonical bit -> profile mask */
+    uint32_t          bit_p1[17], bit_p2[17];   /* canonical bit -> profile mask (NP_BIT_COUNT) */
 
     uint64_t          last_wait_report_ms;
     uint64_t          stall_since_ms;
@@ -870,15 +872,44 @@ static void netplay_session_log_cb(void *ctx, const char *msg) {
 /*
  * Canonical input bits. Player-agnostic on purpose: a word says what a PLAYER is
  * doing, and each machine expands it onto whichever side that player owns. Bits
- * 10 and 11 only mean anything from player 0, which owns the cabinet.
+ * 10 on (service, test, a racing cabinet's gear buttons) only mean anything
+ * from player 0, which owns the cabinet.
  */
 enum {
     NP_BIT_UP = 0, NP_BIT_DOWN, NP_BIT_LEFT, NP_BIT_RIGHT,
     NP_BIT_B1, NP_BIT_B2, NP_BIT_B3, NP_BIT_B4,
     NP_BIT_START, NP_BIT_COIN,
     NP_BIT_SERVICE, NP_BIT_TEST,
+    NP_BIT_GEAR_N, NP_BIT_GEAR_1, NP_BIT_GEAR_2, NP_BIT_GEAR_3, NP_BIT_GEAR_4,
     NP_BIT_COUNT
 };
+
+_Static_assert(NP_BIT_COUNT <= 17, "g_netplay.bit_p1 / bit_p2 hold NP_BIT_COUNT masks");
+
+/* The cabinet's canonical bits (NP_BIT_SERVICE on) and their actions. */
+#define NP_CABINET_BITS (NP_BIT_COUNT - NP_BIT_SERVICE)
+static const int np_cabinet_actions[NP_CABINET_BITS] = {
+    GAME_INPUT_SERVICE, GAME_INPUT_TEST,
+    GAME_INPUT_GEAR_N, GAME_INPUT_GEAR_1, GAME_INPUT_GEAR_2, GAME_INPUT_GEAR_3, GAME_INPUT_GEAR_4,
+};
+
+/* The cabinet's bits of a word from a held mask, under a profile's map. */
+static inline uint32_t np_cabinet_word(uint32_t held, const game_input_map_t *in) {
+    uint32_t word = 0;
+    for (int i = 0; i < NP_CABINET_BITS; i++) {
+        uint32_t bit = in->bits[np_cabinet_actions[i]];
+        if (bit && (held & bit)) word |= 1u << (NP_BIT_SERVICE + i);
+    }
+    return word;
+}
+
+/* Player 0's word's cabinet bits as held bits, under a profile's map. */
+static inline uint32_t np_cabinet_held(uint32_t w0, const game_input_map_t *in) {
+    uint32_t held = 0;
+    for (int i = 0; i < NP_CABINET_BITS; i++)
+        if (w0 & (1u << (NP_BIT_SERVICE + i))) held |= in->bits[np_cabinet_actions[i]];
+    return held;
+}
 
 static inline void netplay_build_masks(const game_profile_t *p) {
     memset(g_netplay.bit_p1, 0, sizeof(g_netplay.bit_p1));
@@ -903,9 +934,10 @@ static inline void netplay_build_masks(const game_profile_t *p) {
         g_netplay.p1_mask  |= g_netplay.bit_p1[i];
         g_netplay.p2_mask  |= g_netplay.bit_p2[i];
     }
-    g_netplay.bit_p1[NP_BIT_SERVICE] = p->input.bits[GAME_INPUT_SERVICE];
-    g_netplay.bit_p1[NP_BIT_TEST]    = p->input.bits[GAME_INPUT_TEST];
-    g_netplay.sys_mask = g_netplay.bit_p1[NP_BIT_SERVICE] | g_netplay.bit_p1[NP_BIT_TEST];
+    for (int i = 0; i < NP_CABINET_BITS; i++) {
+        g_netplay.bit_p1[NP_BIT_SERVICE + i] = p->input.bits[np_cabinet_actions[i]];
+        g_netplay.sys_mask |= g_netplay.bit_p1[NP_BIT_SERVICE + i];
+    }
 }
 
 /*
@@ -921,15 +953,12 @@ static inline uint32_t netplay_sample_local(void) {
             || (g_netplay.bit_p2[i] && (held & g_netplay.bit_p2[i])))
             word |= (1u << i);
     }
-    /* Service and test belong to the cabinet, so only player 0 may send them —
-     * a guest holding F2 must not be able to open the operator menu on the
-     * host's board, and more to the point, must not do it on only one of them. */
-    if (g_netplay.local_player == 0) {
-        if (g_netplay.bit_p1[NP_BIT_SERVICE] && (held & g_netplay.bit_p1[NP_BIT_SERVICE]))
-            word |= (1u << NP_BIT_SERVICE);
-        if (g_netplay.bit_p1[NP_BIT_TEST] && (held & g_netplay.bit_p1[NP_BIT_TEST]))
-            word |= (1u << NP_BIT_TEST);
-    }
+    /* Service, test and the gear buttons belong to the cabinet, so only
+     * player 0 may send them — a guest holding F2 must not be able to open the
+     * operator menu on the host's board, and more to the point, must not do it
+     * on only one of them. */
+    if (g_netplay.local_player == 0 && g_active_profile)
+        word |= np_cabinet_word(held, &g_active_profile->input);
     return word;
 }
 
@@ -942,8 +971,8 @@ static inline void netplay_apply_inputs(uint32_t w0, uint32_t w1) {
         if (w0 & (1u << i)) held |= g_netplay.bit_p1[i];
         if (w1 & (1u << i)) held |= g_netplay.bit_p2[i];
     }
-    if (w0 & (1u << NP_BIT_SERVICE)) held |= g_netplay.bit_p1[NP_BIT_SERVICE];
-    if (w0 & (1u << NP_BIT_TEST))    held |= g_netplay.bit_p1[NP_BIT_TEST];
+    for (int i = NP_BIT_SERVICE; i < NP_BIT_COUNT; i++)
+        if (w0 & (1u << i)) held |= g_netplay.bit_p1[i];
     /* Into the override, not over the keyboard's own mask — see input_state_t. */
     g_input.net_held = held;
     g_input.use_net  = 1;

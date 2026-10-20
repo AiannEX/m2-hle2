@@ -2191,7 +2191,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             /* One key that presses several buttons at once: --macro a=b1+b2,
              * --macro kp1=p2:b1+b2+b3. Repeatable; see input_combo_parse.
              * Players 3 and 4 of a four-player cabinet have keys only this
-             * way: --macro t=p3:up, --macro kp8=p4:up. */
+             * way: --macro t=p3:up, --macro kp8=p4:up. A racing cabinet's
+             * gear buttons too: --macro q=gearn, --macro w=gear1 .. gear4. */
             char spec[64];
             snprintf(spec, sizeof spec, "%s", argv[++i]);
             char *eq = strchr(spec, '=');

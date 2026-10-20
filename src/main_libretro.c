@@ -611,10 +611,23 @@ static const lr_bind_t lr_binds[] = {
 };
 #define LR_BIND_COUNT (int)(sizeof lr_binds / sizeof lr_binds[0])
 
+/* A racing cabinet's gear buttons (io_5649.h) on player 1's shoulders, laid
+ * out as the lever's H: L 1st, L2 2nd, R 3rd, R2 4th. Neutral has no RetroPad
+ * button left: shift down from 1st. L + R still opens the lobby. */
+static const struct { unsigned id; int act; const char *name; } lr_gear_binds[] = {
+    { RETRO_DEVICE_ID_JOYPAD_L,  GAME_INPUT_GEAR_1, "1st gear" },
+    { RETRO_DEVICE_ID_JOYPAD_L2, GAME_INPUT_GEAR_2, "2nd gear" },
+    { RETRO_DEVICE_ID_JOYPAD_R,  GAME_INPUT_GEAR_3, "3rd gear" },
+    { RETRO_DEVICE_ID_JOYPAD_R2, GAME_INPUT_GEAR_4, "4th gear" },
+};
+#define LR_GEAR_BIND_COUNT (int)(sizeof lr_gear_binds / sizeof lr_gear_binds[0])
+
+static bool lr_has_gears(void) { return g_active_profile && g_active_profile->input.bits[GAME_INPUT_GEAR_1]; }
+
 static void lr_set_input_descriptors(void) {
     static const char *names[] = { "Up", "Down", "Left", "Right", "Button 1", "Button 2", "Button 3",
                                    "Button 4", "Start", "Coin", "Test", "Service" };
-    struct retro_input_descriptor desc[4 * LR_BIND_COUNT + 3];
+    struct retro_input_descriptor desc[4 * LR_BIND_COUNT + LR_GEAR_BIND_COUNT + 3];
     int n = 0;
     /* Ports 3 and 4 are players 3 and 4 of a four-player cabinet (Air Walkers). */
     unsigned ports = input_four_players() ? 4 : 2;
@@ -623,7 +636,10 @@ static void lr_set_input_descriptors(void) {
             if (port > 0 && lr_binds[i].p2 < 0) continue;
             desc[n++] = (struct retro_input_descriptor){ port, RETRO_DEVICE_JOYPAD, 0, lr_binds[i].id, names[i] };
         }
-    if (opt.online != LR_ONLINE_RETROARCH) {
+    if (lr_has_gears())
+        for (int i = 0; i < LR_GEAR_BIND_COUNT; i++)
+            desc[n++] = (struct retro_input_descriptor){ 0, RETRO_DEVICE_JOYPAD, 0, lr_gear_binds[i].id, lr_gear_binds[i].name };
+    else if (opt.online != LR_ONLINE_RETROARCH) {
         desc[n++] = (struct retro_input_descriptor){ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Online lobby (with R)" };
         desc[n++] = (struct retro_input_descriptor){ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Online lobby (with L)" };
     }
@@ -690,6 +706,9 @@ static uint32_t lr_port_held(unsigned port) {
         if (lr_binds[i].id == RETRO_DEVICE_ID_JOYPAD_RIGHT) on |= ax >  dead;
         if (on) held |= in->bits[act];
     }
+    if (port == 0 && lr_has_gears())
+        for (int i = 0; i < LR_GEAR_BIND_COUNT; i++)
+            if (lr_btn(0, lr_gear_binds[i].id)) held |= in->bits[lr_gear_binds[i].act];
     return held | lr_port_gun(port);
 }
 
@@ -720,9 +739,7 @@ static uint32_t lr_held_to_word(uint32_t held) {
     uint32_t word = 0;
     for (int i = 0; i < 10; i++)
         if (in->bits[p1[i]] && (held & in->bits[p1[i]])) word |= 1u << i;
-    if (in->bits[GAME_INPUT_SERVICE] && (held & in->bits[GAME_INPUT_SERVICE])) word |= 1u << NP_BIT_SERVICE;
-    if (in->bits[GAME_INPUT_TEST]    && (held & in->bits[GAME_INPUT_TEST]))    word |= 1u << NP_BIT_TEST;
-    return word;
+    return word | np_cabinet_word(held, in);
 }
 
 /* Two players' words into the board's held mask: netplay_apply_inputs, whose
@@ -738,8 +755,7 @@ static void lr_apply_words(uint32_t w0, uint32_t w1) {
         if (w0 & (1u << i)) held |= in->bits[p1[i]];
         if (w1 & (1u << i)) held |= in->bits[p2[i]];
     }
-    if (w0 & (1u << NP_BIT_SERVICE)) held |= in->bits[GAME_INPUT_SERVICE];
-    if (w0 & (1u << NP_BIT_TEST))    held |= in->bits[GAME_INPUT_TEST];
+    held |= np_cabinet_held(w0, in);
     g_input.net_held = held;
     g_input.use_net  = 1;
 }

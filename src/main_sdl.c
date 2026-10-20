@@ -16,8 +16,9 @@
  * --pad-map  comma-separated button=action pairs overriding the defaults, e.g.
  *            "south=b1,east=b2,west=b3". Buttons: south east west north start
  *            back l1 r1 l3 r3 guide; actions: b1 b2 b3 b4 start coin service
- *            test none, or a combo that holds several at once (a "macro"),
- *            e.g. "north=b1+b2,l3=b1+b2+b3".
+ *            test none, a racing cabinet's gearn gear1 gear2 gear3 gear4 (one
+ *            button a gate, Daytona and Sega Rally), or a combo that holds
+ *            several at once (a "macro"), e.g. "north=b1+b2,l3=b1+b2+b3".
  * --shot     save a PNG of the first rendered frame at or after game frame N.
  * --exit-after  quit after N game frames (for scripted checks).
  * --host-prof START:SECS[:FILE]  sample the process's own CPU time for SECS
