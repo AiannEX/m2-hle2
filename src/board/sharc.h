@@ -176,6 +176,13 @@ static inline float sharc_angle_to_rad(int32_t fp) {
 static const uint8_t *g_sharc_copro_rom      = NULL;
 static size_t         g_sharc_copro_rom_size = 0;
 
+/* Fn_area_table_gen (0x3A) as Fighting Vipers' COP program has it (PM 0x20B8A):
+ * bins of 1/16 unit, not STF's 1/8, and a P1 ball of radius 0 keeps its mask
+ * (sharc_coli.h). The program is the game's upload, which the HLE does not
+ * run, so the profile says which one it is: mem_init clears it, fvipers_install
+ * sets it after. */
+static bool           g_sharc_area_fv        = false;
+
 /* sin/cos of a signed 16-bit angle the way the firmware takes them (_L202C1):
  * straight out of the ROM, sin at DM 0x1C10000 + angle, cos 0x20000 further on.
  * The tables are rounded to six decimals, so cos(0x4000) is exactly 0 and

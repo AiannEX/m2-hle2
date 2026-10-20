@@ -291,6 +291,29 @@ int main(void) {
           "Fn_initialize empties the matrix stack");
     g_cop.ctl = NULL;
 
+    /* ---- Fn_area_table_gen (0x3A): STF's 1/8-unit bins against FV's 1/16 ----
+     * One P0 ball at x 0.3 (radius 0.019), P1 ball 0 at x 0.5595 (radius 0.19),
+     * P1 ball 1 of radius 0. STF's bins put the pair in reach, FV's finer ones
+     * do not, and FV leaves the radius-0 ball's mask alone (Pinboard #1353). */
+    {
+        static uint8_t bufram[0x20000 * 4];
+        cop_reset();
+        g_sharc.sharc_dm_ext = bufram; g_sharc.sharc_dm_ext_size = sizeof bufram;
+        sharc_dm_setf(0x1403F40u, 0.3f);    sharc_dm_setf(0x1403FA0u, 0.3f);
+        sharc_dm_setf(0x1407F40u, 0.5595f); sharc_dm_setf(0x1407FA0u, 0.5595f);
+        sharc_dm_setf(0x30600u, 0.019f);    sharc_dm_setf(0x30700u, 0.19f);
+        uint32_t am[2][2];
+        for (int fv = 0; fv < 2; fv++) {
+            g_sharc_area_fv = fv;
+            sharc_coli_area_table_gen(0, 0, 0, 0);
+            am[fv][0] = sharc_dm_get(0x1403E20u); am[fv][1] = sharc_dm_get(0x1403E21u);
+        }
+        g_sharc_area_fv = false;
+        g_sharc.sharc_dm_ext = NULL; g_sharc.sharc_dm_ext_size = 0;
+        CHECK(am[0][0] == 1u && am[0][1] == 0u, "0x3A, STF: 1/8-unit bins keep the pair, a radius-0 P1 ball gets mask 0");
+        CHECK(am[1][0] == 0u && am[1][1] == 0xFFFFFFFFu, "0x3A, FV: 1/16-unit bins drop the pair, a radius-0 P1 ball keeps its mask");
+    }
+
     printf("\n%s (%d failures)\n", g_fail ? "FAILED" : "ALL PASS", g_fail);
     return g_fail ? 1 : 0;
 }
