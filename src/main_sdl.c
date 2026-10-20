@@ -1686,6 +1686,39 @@ static int run_loop(bool audio) {
     return rc;
 }
 
+/* After the run loop: the emu thread first, then what it used (the link, the
+ * scripts, backup RAM, netplay, sound), the --verify-* reports, then the video
+ * and SDL. */
+static void shut_down(SDL_AudioStream *audio) {
+    emu_thread_shutdown(&state.emu);
+    versus_stop();   /* after the emu thread: it reads the link's socket */
+    if (g_m2lua.loaded)
+        printf("m2hle: script %s: %llu frames%s%s\n", g_m2lua.path, (unsigned long long)g_m2lua.frames,
+               g_m2lua.error[0] ? ", last error: " : "", g_m2lua.error);
+    m2lua_unload();       /* End(), and the script's ROM patches off */
+    backup_ram_flush();   /* the board has stopped: what it holds now is final */
+    if (opt.netplay) netplay_shutdown();   /* after the emu thread: it is the only thing that pumps it */
+    if (audio) SDL_DestroyAudioStream(audio);   /* after the emu thread: no more ring writes */
+    if (opt.verify_fill)
+        printf("verify-fill: %llu frames of fills checked, %llu differed, %llu skipped (vertex buffer uploaded twice)\n",
+               (unsigned long long)g_vf.frames, (unsigned long long)g_vf.bad_frames, (unsigned long long)g_vf.skipped);
+    if (opt.verify_gpu_tiles)
+        printf("verify-gpu-tiles: %llu composed frames checked, %llu differed\n",
+               (unsigned long long)g_vt.frames, (unsigned long long)g_vt.bad_frames);
+    game_target_destroy();
+    scripts_images_shutdown();
+    if (g_sdtx_on) sdtx_shutdown();
+    game_render_shutdown();
+    video_shutdown(&state.video);
+    sg_shutdown();
+    SDL_GL_DestroyContext(g_gl);
+    SDL_DestroyWindow(g_window);
+    SDL_Quit();
+    romset_free(&state.romset);
+    mem_shutdown(&state.bus);
+    log_file_close();
+}
+
 int main(int argc, char **argv) {
     versus_keep_cmdline(argc, argv);
     if (!parse_args(argc, argv)) {
@@ -1732,32 +1765,6 @@ int main(int argc, char **argv) {
 
     rc = run_loop(audio != NULL);
 
-    emu_thread_shutdown(&state.emu);
-    versus_stop();   /* after the emu thread: it reads the link's socket */
-    if (g_m2lua.loaded)
-        printf("m2hle: script %s: %llu frames%s%s\n", g_m2lua.path, (unsigned long long)g_m2lua.frames,
-               g_m2lua.error[0] ? ", last error: " : "", g_m2lua.error);
-    m2lua_unload();       /* End(), and the script's ROM patches off */
-    backup_ram_flush();   /* the board has stopped: what it holds now is final */
-    if (opt.netplay) netplay_shutdown();   /* after the emu thread: it is the only thing that pumps it */
-    if (audio) SDL_DestroyAudioStream(audio);   /* after the emu thread: no more ring writes */
-    if (opt.verify_fill)
-        printf("verify-fill: %llu frames of fills checked, %llu differed, %llu skipped (vertex buffer uploaded twice)\n",
-               (unsigned long long)g_vf.frames, (unsigned long long)g_vf.bad_frames, (unsigned long long)g_vf.skipped);
-    if (opt.verify_gpu_tiles)
-        printf("verify-gpu-tiles: %llu composed frames checked, %llu differed\n",
-               (unsigned long long)g_vt.frames, (unsigned long long)g_vt.bad_frames);
-    game_target_destroy();
-    scripts_images_shutdown();
-    if (g_sdtx_on) sdtx_shutdown();
-    game_render_shutdown();
-    video_shutdown(&state.video);
-    sg_shutdown();
-    SDL_GL_DestroyContext(g_gl);
-    SDL_DestroyWindow(g_window);
-    SDL_Quit();
-    romset_free(&state.romset);
-    mem_shutdown(&state.bus);
-    log_file_close();
+    shut_down(audio);
     return rc;
 }
