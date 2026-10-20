@@ -48,7 +48,8 @@ const same = (...ids) => Object.fromEntries(ids.map((id) => [id, id]));
  * same layout share a board; vf2a and vf2o check another version and would wipe it, and
  * fvipers, hotd, daytona and airwlkrs have one profile each. */
 const MORE = [
-  ['vonj', 'Cyber Troopers Virtual-On', vonj, { sets: same('vonj', 'vonu') }],
+  /* von (USA) keeps the same block at the same place as vonj (Pinboard #1342). */
+  ['vonj', 'Cyber Troopers Virtual-On', vonj, { sets: same('vonj', 'von') }],
   ['dynamcop', 'Dynamite Cop', dynamcop,
     { sets: same('dynamcopb', 'dyndeka2b', 'dynamcop', 'dyndeka2', 'dynamcopc') }],
   ['fvipers', 'Fighting Vipers', fvipers, { sets: same('fvipers', 'fvipersb') }],
