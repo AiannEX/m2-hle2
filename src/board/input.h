@@ -126,7 +126,7 @@ static inline void input_keys_default(void) {
 static const char *const g_input_action_names[GAME_INPUT_COUNT] = {
     "p1_up", "p1_down", "p1_left", "p1_right", "p1_b1", "p1_b2", "p1_b3", "p1_b4", "p1_start", "p1_coin",
     "p2_up", "p2_down", "p2_left", "p2_right", "p2_b1", "p2_b2", "p2_b3", "p2_b4", "p2_start", "p2_coin",
-    "service", "test",
+    "service", "test", "gearn", "gear1", "gear2", "gear3", "gear4",
 };
 
 static inline int input_action_by_name(const char *s) {
@@ -368,16 +368,16 @@ static inline void input_key_up(int kc) {
 }
 
 /* acts as input_combo_parse (or sdl_pads.h's actions_by_name) reads it, in
- * buf: "b1+b2", "p2:up", "service", "none". "" for a mix it cannot write
- * (two players' actions, or SERVICE with another). */
+ * buf: "b1+b2", "p2:up", "service", "gear3", "none". "" for a mix it cannot
+ * write (two players' actions, or a cabinet button with another). */
 static inline const char *input_combo_format(uint32_t acts, char *buf, size_t cap) {
     static const char *const names[] = { "up", "down", "left", "right", "b1", "b2", "b3", "b4", "start", "coin" };
     const uint32_t p1 = (1u << GAME_INPUT_P2_UP) - 1, p2 = ((1u << GAME_INPUT_SERVICE) - 1) & ~p1;
     acts &= ~INPUT_COMBO_FAR;
     buf[0] = '\0';
     if (!acts) { snprintf(buf, cap, "none"); return buf; }
-    if (acts == 1u << GAME_INPUT_SERVICE) { snprintf(buf, cap, "service"); return buf; }
-    if (acts == 1u << GAME_INPUT_TEST)    { snprintf(buf, cap, "test"); return buf; }
+    for (int a = GAME_INPUT_SERVICE; a < GAME_INPUT_COUNT; a++)   /* service, test, gearn .. gear4 */
+        if (acts == 1u << a) { snprintf(buf, cap, "%s", g_input_action_names[a]); return buf; }
     if ((acts & p1) && (acts & p2)) return buf;
     if (acts & ~(p1 | p2)) return buf;
     int base = (acts & p1) ? GAME_INPUT_P1_UP : GAME_INPUT_P2_UP;

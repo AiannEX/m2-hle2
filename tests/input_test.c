@@ -128,6 +128,12 @@ int main(void) {
               "action masks write as the combo text that parses back to them");
         CHECK(input_action_by_name("p2_start") == GAME_INPUT_P2_START && input_action_by_name("test") == GAME_INPUT_TEST &&
               input_action_by_name("p3_up") == -1, "actions by their controls-file names");
+        bool gears_ok = true;
+        for (int a = GAME_INPUT_GEAR_N; a <= GAME_INPUT_GEAR_4; a++)
+            if (input_action_by_name(g_input_action_names[a]) != a
+                || input_combo_parse(input_combo_format(1u << a, buf, sizeof buf)) != 1u << a) gears_ok = false;
+        CHECK(gears_ok && !strcmp(input_combo_format(1u << GAME_INPUT_GEAR_3, buf, sizeof buf), "gear3"),
+              "a gear's button has a controls-file name, and writes as the text that parses back to it");
 
         g_input_keys[GAME_INPUT_P1_B1][0] = SAPP_KEYCODE_SPACE;   /* B1 on Space, Z free */
         g_input_keys[GAME_INPUT_P1_B2][1] = SAPP_KEYCODE_SPACE;   /* ...and B2's second key too */
