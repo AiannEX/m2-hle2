@@ -608,6 +608,35 @@ target_link_libraries(m2hle PRIVATE sokol miniz imguifiledialog lua55)
 if(TARGET ggpo)
     target_link_libraries(m2hle PRIVATE ggpo)   # --ggpo-* (core/emu_ggpo.h)
 endif()
+# Gamepads, racing wheels and their force feedback (src/ui/sdl_pads.h, Pinboard
+# #1082): SDL3's joystick and haptic parts, no window (sokol_app keeps that).
+# An installed SDL3 if there is one, else its release, fetched and built
+# static. -DM2HLE_PADS=OFF builds the desktop with the keyboard alone.
+option(M2HLE_PADS "Desktop gamepads, wheels and force feedback through SDL3" ON)
+if(M2HLE_PADS)
+    find_package(SDL3 CONFIG QUIET)
+    if(NOT TARGET SDL3::SDL3)
+        include(FetchContent)
+        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
+        set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+        set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(SDL_VIDEO OFF CACHE BOOL "" FORCE)       # sokol_app has the window
+        set(SDL_DIALOG OFF CACHE BOOL "" FORCE)
+        set(SDL_CAMERA OFF CACHE BOOL "" FORCE)
+        set(SDL_UNIX_CONSOLE_BUILD ON CACHE BOOL "" FORCE)   # no X11 / Wayland wanted: no video
+        if(NOT WIN32)
+            set(SDL_AUDIO OFF CACHE BOOL "" FORCE)   # Windows keeps it: DirectInput hangs off SDL_DIRECTX
+        endif()
+        FetchContent_Declare(SDL3
+            URL https://github.com/libsdl-org/SDL/releases/download/release-3.4.8/SDL3-3.4.8.tar.gz
+            URL_HASH SHA256=e9fff7467fb60f037e6708da18b25560649e4c63edc2a69bb871b960d9cbfbba
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        FetchContent_MakeAvailable(SDL3)
+    endif()
+    target_link_libraries(m2hle PRIVATE SDL3::SDL3)
+    target_compile_definitions(m2hle PRIVATE M2HLE_PADS=1)
+endif()
 # The debug dumps (model_tex.txt, cam_ours.csv, the texture extractor, the COP
 # stream) are this build's alone: the handheld, libretro and web builds write no
 # debug files (geo3d.h, GEO3D_DUMP_TEX).
@@ -740,6 +769,8 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     add_executable(link_pace_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/link_pace_test.c)
     # The drive board's commands and the force the hosts play (core/ffb.h). No ROM.
     add_executable(ffb_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/ffb_test.c)
+    # A host's analog wheel and pedals on the 315-5649 (ui/wheel_host.h). No ROM.
+    add_executable(wheel_host_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wheel_host_test.c)
     # The game scripts (core/m2lua.h): the bit helpers, the I960 and Romset
     # calls on a bus, Options, the callbacks' order. No ROM.
     add_executable(m2lua_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/m2lua_test.c)
@@ -823,11 +854,21 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     # UI headers); linking sokol propagates the includes.
     target_link_libraries(emu_test   PRIVATE miniz sokol)   # emu_thread.h -> savestate.h
     target_link_libraries(input_test PRIVATE miniz sokol)
+    # The Controls window's device picks on SDL's virtual joysticks (no hardware).
+    if(M2HLE_PADS)
+        add_executable(pads_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/pads_test.c)
+        target_include_directories(pads_test PRIVATE ${TEST_INCLUDES})
+        target_link_libraries(pads_test PRIVATE miniz sokol SDL3::SDL3)
+        if(MSVC)
+            target_compile_definitions(pads_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+        endif()
+        add_test(NAME pads_test COMMAND pads_test)
+    endif()
     # audio_out.h calls into sokol_audio (its device path is not under test).
     target_link_libraries(audio_out_test PRIVATE sokol)
 
     foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test input_test net_test ps3net_test tile_test heat_test audio_out_test
-              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test tgpx4_test z80_test sharc_cpu_test sfight_settings_test region_test srallyc_native_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test ffb_test m2lua_test)
+              scsp_dsp_test scsp_dsp_test_masks scsp_lazy_test tgp_test tgpx4_test z80_test sharc_cpu_test sfight_settings_test region_test srallyc_native_test retro_shader_test ra_info_cache_test m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test ffb_test wheel_host_test m2lua_test)
         target_include_directories(${t} PRIVATE ${TEST_INCLUDES})
         if(MSVC)
             target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -840,7 +881,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     if(NOT WIN32)
         foreach(t mem_test i960_test rom_test prepared_test emu_test boot_test cop_test geo_test m68k_test
                   input_test net_test ps3net_test tile_test heat_test audio_out_test scsp_dsp_test scsp_dsp_test_masks
-                  scsp_lazy_test tgp_test tgpx4_test z80_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay sharc_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test ffb_test m2lua_test)
+                  scsp_lazy_test tgp_test tgpx4_test z80_test sharc_cpu_test retro_shader_test ra_info_cache_test cop_replay sharc_replay snd_replay snd_bench scsp_fuzz m68k_fuzz i960_fuzz sfight_settings_test region_test srallyc_native_test ps3ui_render m2comm_test comm_link_test comm_role_test comm_local_test link_pace_test ffb_test wheel_host_test m2lua_test)
             target_link_libraries(${t} PRIVATE m)
         endforeach()
     endif()

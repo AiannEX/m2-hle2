@@ -15,7 +15,7 @@
 /* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
  * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop, Fighting Vipers,
  * The House of the Dead, Daytona USA, Virtua Fighter 2, Dead or Alive and
- * Air Walkers (the page's ?game=, web/site/m2hle-games.js). Any other set is only
+ * Air Walkers, Power Sled and Virtua Cop, with the clones of #1286 (the page's ?game=, web/site/m2hle-games.js). Any other set is only
  * download size: left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. */
 #include "srallyc.h"
@@ -24,18 +24,19 @@
 #include "fvipers.h"
 #include "hotd.h"      /* runs since Pinboard #1034, on the web since #1040 */
 #include "daytona.h"   /* runs since Pinboard #1035, on the web since #1047 */
+#include "schamp.h"    /* Pinboard #1286, on the web too */
 #include "doa.h"       /* runs since Pinboard #1050, on the web too */
 #include "vf2.h"       /* runs since Pinboard #1046, on the web since #1055 */
 #include "airwlkrs.h"  /* runs since Pinboard #1063, on the site since #1063 */
+#include "powsled.h"   /* runs since Pinboard #1052, on the site since #1089 */
+#include "vcop.h"      /* runs since Pinboard #1286 */
 #ifndef M2HLE_WEB
-#include "powsled.h"   /* Pinboard #1052 */
 #include "m2snake.h"
 #include "sfight_homebrew.h"
 #endif
 /* Prepared, not runnable (Pinboard #660): the sets noclip reads that the
  * board cannot run yet. A few hundred bytes of chip lists, so the web build
- * has them too. */
-#include "vcop.h"
+ * has them too. None today: Virtua Cop, the last, runs since #1286. */
 
 /* Order matters: the first profile for a ROM set is its default
  * (profile_for_rom_set), so Console comes before Arcade. */
@@ -44,6 +45,7 @@ const game_profile_t *const g_profiles[] = {
     &sfight_profile,
     &srallyc_profile,
     &vonj_profile,
+    &von_profile,
     &dynamcopb_profile,
     &dyndeka2b_profile,
     &dynamcop_profile,
@@ -62,8 +64,19 @@ const game_profile_t *const g_profiles[] = {
     &vf2a_profile,
     &vf2o_profile,
     &airwlkrs_profile,
-#ifndef M2HLE_WEB
     &powsled_profile,
+    &vcop_profile,
+    /* The clones of #1286, on the site under their game (web/site/m2hle-games.js). */
+    &schamp_profile,
+    &hotdo_profile,
+    &hotdp_profile,
+    &daytona93_profile,
+    &daytonase_profile,
+    &daytonas_profile,
+    &daytonat_profile,
+    &daytonata_profile,
+    &daytonagtx_profile,
+#ifndef M2HLE_WEB
     &m2snake_profile,
     &sfight_homebrew_profile,
 #endif
@@ -73,10 +86,8 @@ const size_t g_profile_count = sizeof(g_profiles) / sizeof(g_profiles[0]);
 
 const game_profile_t *g_active_profile = NULL;
 
-const game_profile_t *const g_prepared_profiles[] = {
-    &vcop_profile,
-};
+const game_profile_t *const g_prepared_profiles[] = { NULL };
 
-const size_t g_prepared_count = sizeof(g_prepared_profiles) / sizeof(g_prepared_profiles[0]);
+const size_t g_prepared_count = 0;
 
 #endif /* PROFILES_REGISTRY_H */

@@ -32,7 +32,11 @@
 
 #include "savestate.h"
 
-#define ROLLBACK_PARTS_MAX (32 + SAVESTATE_EXTRA_MAX)
+/* Every part rollback_layout can add: its fixed ones (16 is room to spare),
+ * the bus's buffers and every profile extra. A part past the end is dropped,
+ * and META is the last: a load then kept the newest save's sound budget and
+ * latches, and every rollback of Power Sled split (Pinboard #1095). */
+#define ROLLBACK_PARTS_MAX (16 + SAVESTATE_NBUFS + SAVESTATE_EXTRA_MAX)
 #define ROLLBACK_POOL_MAX  16
 
 /* pack: a part that holds host pointers zeroes them (in a copy) before it is
@@ -71,7 +75,38 @@ static struct {
     void           *pool[ROLLBACK_POOL_MAX];
     int             pool_n;
     uint32_t        live;               /* buffers handed out and not yet back */
+    bool            diff;               /* copy only the chunks that differ (emu_twin.h) */
 } g_rollback;
+
+/* A part's copy. With diff set, 4 KB at a time and only where the bytes differ:
+ * the same bytes either way. Twin sessions copy four boards a frame, between
+ * two cabinets of one game and frames a few apart, and most of a board (the
+ * texture RAM, CG, the sound RAM, the programs) is the same in both; reading
+ * both sides costs less than writing one. */
+#define ROLLBACK_DIFF_CHUNK 4096u
+
+static inline void rollback__copy(void *dst, const void *src, size_t n) {
+    if (!g_rollback.diff) { memcpy(dst, src, n); return; }
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+    while (n) {
+        size_t k = n < ROLLBACK_DIFF_CHUNK ? n : ROLLBACK_DIFF_CHUNK;
+        if (memcmp(d, s, k)) memcpy(d, s, k);
+        d += k; s += k; n -= k;
+    }
+}
+
+/* A part and a buffer change places, 4 KB at a time, only where they differ
+ * (SOLO's twin, emu_twin.h: one pass where a save and a load take two). */
+static inline void rollback__swap(void *a, void *b, size_t n) {
+    uint8_t t[ROLLBACK_DIFF_CHUNK];
+    uint8_t *x = (uint8_t *)a, *y = (uint8_t *)b;
+    while (n) {
+        size_t k = n < ROLLBACK_DIFF_CHUNK ? n : ROLLBACK_DIFF_CHUNK;
+        if (memcmp(x, y, k)) { memcpy(t, x, k); memcpy(x, y, k); memcpy(y, t, k); }
+        x += k; y += k; n -= k;
+    }
+}
 
 static inline void rollback__add(const char *name, void *p, size_t n, void (*pack)(void *), bool ptrs) {
     if (g_rollback.n >= ROLLBACK_PARTS_MAX) {
@@ -148,7 +183,7 @@ static inline void rollback_save_to(void *dst, const savestate_emu_t *emu) {
      * that waited first lost the whole overlap with the sound thread whenever
      * one followed every frame, as RetroArch's rewind does (Pinboard #594). */
     for (int i = 0; i < g_rollback.n; i++) {
-        if (!g_rollback.part[i].late) memcpy(buf + off, g_rollback.part[i].p, g_rollback.part[i].n);
+        if (!g_rollback.part[i].late) rollback__copy(buf + off, g_rollback.part[i].p, g_rollback.part[i].n);
         off += g_rollback.part[i].n;
     }
     sound_settle();
@@ -158,7 +193,7 @@ static inline void rollback_save_to(void *dst, const savestate_emu_t *emu) {
     g_rollback.meta.emu = *emu;
     off = 0;
     for (int i = 0; i < g_rollback.n; i++) {
-        if (g_rollback.part[i].late) memcpy(buf + off, g_rollback.part[i].p, g_rollback.part[i].n);
+        if (g_rollback.part[i].late) rollback__copy(buf + off, g_rollback.part[i].p, g_rollback.part[i].n);
         off += g_rollback.part[i].n;
     }
 }
@@ -176,7 +211,7 @@ static inline void rollback_load(const void *data, memory_bus_t *bus, savestate_
     const uint8_t *buf = (const uint8_t *)data;
     size_t off = 0;
     for (int i = 0; i < g_rollback.n; i++) {
-        memcpy(g_rollback.part[i].p, buf + off, g_rollback.part[i].n);
+        rollback__copy(g_rollback.part[i].p, buf + off, g_rollback.part[i].n);
         off += g_rollback.part[i].n;
     }
     savestate_geo_put(&g_rollback.meta.geo);

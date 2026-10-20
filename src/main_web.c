@@ -72,6 +72,7 @@
 #include "lightgun_sgl.h"   /* the mouse and touches as light guns, and their crosshairs */
 #include "ffb.h"            /* the drive board's force feedback, for the page to rumble */
 #include "cabinet_picture.h" /* the Picture tab's cabinet: another cabinet's colours, live */
+#include "wheel_host.h"     /* the page's analog wheel and pedals (Pinboard #1082) */
 
 /* The single TU that defines g_profiles[] / g_active_profile. Under M2HLE_WEB it
  * registers sfight alone. */
@@ -345,6 +346,7 @@ static bool web_follow_ready(void) {
 static bool web_ggpo_slice(void);
 
 static bool web_slice(void) {
+    emu_ggpo_solo_netplay(&state.emu);
     if (emu_ggpo_wanted()) return web_ggpo_slice();
     netplay_step_t np = emu_netplay_pump(&state.emu);
     g_web_waited = (np == NETPLAY_STEP_WAIT);
@@ -400,7 +402,7 @@ static bool g_web_select_tap;   /* one shell frame of SELECT, from the page */
 static bool g_web_shot_want;    /* the page asked for a screenshot (web_shot_arm) */
 static bool g_web_shot_state;   /* ... and a savestate taken with it */
 
-static bool web_pause_refused(void) { return netplay_in_room() || netplay_active() || emu_ggpo_wanted(); }
+static bool web_pause_refused(void) { return netplay_in_room() || netplay_active() || emu_ggpo_match(); }
 
 /* 1 when the page may offer the button: a game is loaded, no room has us, and
  * the Console shell is not in one of its own menus (which hold the board). */
@@ -958,6 +960,25 @@ static void web_count_render(int64_t render_t0) {
     if (render_us > g_web_perf.render_us_max) g_web_perf.render_us_max = render_us;
 }
 
+/* Where the game goes on the page, and the passes drawn before the
+ * swapchain's (the filter's source, the offscreen render scale). */
+static void web_place_picture(web_picture_t *pic, bool game) {
+    /* A filter over the picture (post_shader.h) reads the game from a target of
+     * its own, at the render scale, and only covers the game's rectangle. */
+    game_rect_t r = game_render_letterbox(sapp_width(), sapp_height(),
+                                          web_picture_width(), VIDEO_HEIGHT);
+    pic->ox = r.x; pic->oy = r.y; pic->w = r.w; pic->h = r.h;
+    crt_pots_place(&pic->ox, &pic->oy, &pic->w, &pic->h);
+    post_shader_set_input_scale(g_web_rt.want);
+    web_cheats_place(pic, game && !pic->overlay && !g_web_objview_show);
+    pic->post = game && !g_web_objview_show && post_shader_active();
+    if (pic->post) web_draw_post_source(pic->w, pic->h, pic->lerp_t);
+
+    /* Offscreen first, when there is a render scale: the game at N x 496x384. */
+    pic->offscreen = game && !pic->post && g_web_rt.scale > 0;
+    if (pic->offscreen) web_draw_offscreen(pic->lerp_t);
+}
+
 static void frame(void) {
     web_count_callback();
 
@@ -988,20 +1009,7 @@ static void frame(void) {
         pic.lerp_t = game_frame_lerp();
     }
 
-    /* A filter over the picture (post_shader.h) reads the game from a target of
-     * its own, at the render scale, and only covers the game's rectangle. */
-    game_rect_t r = game_render_letterbox(sapp_width(), sapp_height(),
-                                          web_picture_width(), VIDEO_HEIGHT);
-    pic.ox = r.x; pic.oy = r.y; pic.w = r.w; pic.h = r.h;
-    crt_pots_place(&pic.ox, &pic.oy, &pic.w, &pic.h);
-    post_shader_set_input_scale(g_web_rt.want);
-    web_cheats_place(&pic, game && !pic.overlay && !g_web_objview_show);
-    pic.post = game && !g_web_objview_show && post_shader_active();
-    if (pic.post) web_draw_post_source(pic.w, pic.h, pic.lerp_t);
-
-    /* Offscreen first, when there is a render scale: the game at N x 496x384. */
-    pic.offscreen = game && !pic.post && g_web_rt.scale > 0;
-    if (pic.offscreen) web_draw_offscreen(pic.lerp_t);
+    web_place_picture(&pic, game);
 
     web_present(&pic, &lobby_cv);
     if (g_web_shot_want) web_shot_done(&pic);
@@ -1031,6 +1039,15 @@ static int g_web_cheats_rect[4];   /* the picture on the canvas: web_cheats_plac
 EMSCRIPTEN_KEEPALIVE unsigned web_ffb(void) {
     ffb_out_t o = ffb_poll();
     return (unsigned)(o.strong >> 8) << 16 | (unsigned)(o.weak >> 8) << 8 | o.effect.cmd;
+}
+
+/* A driving game's analog wheel and pedals (wheel_host.h, Pinboard #1082):
+ * web_wheel_on says whether the game has them; the page then sends player 1's
+ * pad's turn (-32767 left .. 32767 right) and pedals (0 .. 32767) each poll
+ * (m2hle-pad.js), on = 0 when no pad has them. */
+EMSCRIPTEN_KEEPALIVE int web_wheel_on(void) { return wheel_host_on(); }
+EMSCRIPTEN_KEEPALIVE void web_wheel(int on, int steer, int accel, int brake) {
+    wheel_host_set(on != 0 && web_game_pad(), steer, accel, brake);
 }
 
 /* The page's canvas asks before its context menu: not while a right click reloads a gun. */
@@ -2290,6 +2307,18 @@ static void web_status_play(web_json_t *w, const netplay_status_t *st) {
     web_put(w, ",\"empty_room\":%s", web_tf(st->empty_room));
 }
 
+/* A linked game's comm link (netplay_comm_open: Virtual-On, Power Sled): open
+ * once the room's match starts, the role the board booted into
+ * (game_link_role_t), the ring (node of nodes, up) and the datagrams, with
+ * those lost to the inbox or torn. */
+static void web_status_comm(web_json_t *w, const struct netplay_comm_status *c) {
+    web_put(w, ",\"comm\":{\"open\":%s,\"linked\":%s,\"role\":%u,\"ring_up\":%s,\"node\":%u,\"nodes\":%u,"
+            "\"ring_sent\":%u,\"ring_taken\":%u,\"sent\":%u,\"taken\":%u,\"lost\":%u}",
+            web_tf(c->open), web_tf(c->linked), (unsigned)c->role, web_tf(c->ring_up), (unsigned)c->node,
+            (unsigned)c->nodes, c->ring_sent, c->ring_taken, c->sent, c->taken,
+            c->overflow + c->too_big + c->torn);
+}
+
 /* One row of the room search, `i` rows down, with why this build cannot join it. */
 static void web_status_listing(web_json_t *w, uint32_t i, const rpcn_room_listing_t *r) {
     const char *why = netplay_room_reject_reason(r->flag_attr, g_active_profile);
@@ -2332,6 +2361,7 @@ EMSCRIPTEN_KEEPALIVE const char *web_netplay_status(unsigned log_from) {
     web_status_sign_in(&w, &st);
     web_status_room(&w, &st);
     web_status_play(&w, &st);
+    web_status_comm(&w, &st.comm);
     web_put(&w, ",\"search_pending\":%s,\"rooms\":[", web_tf(st.search_pending));
     for (uint32_t i = 0; i < st.room_count && i < RPCN_MAX_ROOMS; i++) web_status_listing(&w, i, &st.rooms[i]);
     web_put(&w, "]");

@@ -475,6 +475,22 @@ static inline void video__compose_gpu(video_state_t *vid, memory_bus_t *bus,
     vid->targets_valid = true;
     vid->gpu_composes++;
 }
+
+/* The CPU's compose: the layers drawn into bg_pixels / fg_pixels and uploaded. */
+static inline void video__compose_cpu(video_state_t *vid, memory_bus_t *bus,
+                                      bool tile_changed, bool gfx_changed, bool pens_changed) {
+    /* Only what changed is drawn again, and a frame that changes no
+     * pixel uploads nothing (tile_compose_cpu). */
+    if (tile_compose_cpu(&vid->cpu, bus, (const uint8_t (*)[32])vid->pen_chan, gfx_changed,
+                         tile_changed, pens_changed, vid->bg_pixels, vid->fg_pixels)) {
+        sg_update_image(vid->bg_image, &(sg_image_data){
+            .mip_levels[0] = { .ptr = vid->bg_pixels, .size = sizeof(vid->bg_pixels) },
+        });
+        sg_update_image(vid->fg_image, &(sg_image_data){
+            .mip_levels[0] = { .ptr = vid->fg_pixels, .size = sizeof(vid->fg_pixels) },
+        });
+    }
+}
 /*
  * Bring the back colour, BG and FG layer textures up to date with the bus.
  * Call once per frame before the swapchain pass.
@@ -504,17 +520,7 @@ static inline void video_update(video_state_t *vid, memory_bus_t *bus) {
     if (vid->gpu) {
         video__compose_gpu(vid, bus, tile_changed, gfx_changed, pens_changed);
     } else {
-        /* Only what changed is drawn again, and a frame that changes no
-         * pixel uploads nothing (tile_compose_cpu). */
-        if (tile_compose_cpu(&vid->cpu, bus, (const uint8_t (*)[32])vid->pen_chan, gfx_changed,
-                             tile_changed, pens_changed, vid->bg_pixels, vid->fg_pixels)) {
-            sg_update_image(vid->bg_image, &(sg_image_data){
-                .mip_levels[0] = { .ptr = vid->bg_pixels, .size = sizeof(vid->bg_pixels) },
-            });
-            sg_update_image(vid->fg_image, &(sg_image_data){
-                .mip_levels[0] = { .ptr = vid->fg_pixels, .size = sizeof(vid->fg_pixels) },
-            });
-        }
+        video__compose_cpu(vid, bus, tile_changed, gfx_changed, pens_changed);
     }
 
     /* 1×1 solid back-back colour (palette[0] through the pen tables); only the
