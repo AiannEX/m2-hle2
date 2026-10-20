@@ -259,6 +259,22 @@ static bool pad_plays_here(int i) {
     return opt.pad < 0 || i == opt.pad;
 }
 
+/* One gamepad's d-pad, left stick and bound buttons, ORed into now[]. */
+static void pad_read(SDL_Gamepad *pad, bool now[GAME_INPUT_COUNT]) {
+    const int dead = 16000;
+    int ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
+    int ay = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
+    now[GAME_INPUT_P1_UP]    |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)    || ay < -dead;
+    now[GAME_INPUT_P1_DOWN]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)  || ay >  dead;
+    now[GAME_INPUT_P1_LEFT]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)  || ax < -dead;
+    now[GAME_INPUT_P1_RIGHT] |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || ax >  dead;
+    for (int b = 0; b < PAD_BIND_COUNT; b++) {
+        if (!g_pad_binds[b].acts || !SDL_GetGamepadButton(pad, g_pad_binds[b].button)) continue;
+        for (int a = 0; a < GAME_INPUT_COUNT; a++)
+            if (g_pad_binds[b].acts & ACT(a)) now[a] = true;
+    }
+}
+
 static void pad_refresh(void) {
     bool now[GAME_INPUT_COUNT] = {0};
     int count = 0;
@@ -267,18 +283,7 @@ static void pad_refresh(void) {
         if (!pad_plays_here(i)) continue;
         SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
         if (!pad) continue;
-        const int dead = 16000;
-        int ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
-        int ay = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
-        now[GAME_INPUT_P1_UP]    |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)    || ay < -dead;
-        now[GAME_INPUT_P1_DOWN]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)  || ay >  dead;
-        now[GAME_INPUT_P1_LEFT]  |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)  || ax < -dead;
-        now[GAME_INPUT_P1_RIGHT] |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || ax >  dead;
-        for (int b = 0; b < PAD_BIND_COUNT; b++) {
-            if (!g_pad_binds[b].acts || !SDL_GetGamepadButton(pad, g_pad_binds[b].button)) continue;
-            for (int a = 0; a < GAME_INPUT_COUNT; a++)
-                if (g_pad_binds[b].acts & ACT(a)) now[a] = true;
-        }
+        pad_read(pad, now);
     }
     SDL_free(ids);
     for (int a = 0; a < GAME_INPUT_COUNT; a++) {
