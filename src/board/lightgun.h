@@ -30,14 +30,21 @@
  * and savestates carry it with no word on the wire beyond the pad's. A host
  * with a pointer (a mouse) aims it directly instead (lightgun_point): that
  * position is the host's, not the network's, so a board fed from the network
- * ignores it and keeps to the pad's aim. So does a board a follow or a
- * replay drives: their records hold the pad's word, not the pointer.
+ * ignores it and keeps to the pad's aim.
+ *
+ * A follow's leader and a replay's recorder carry the pointer (Pinboard
+ * #1415): each slice reads one copy of it, latched at the slice's start
+ * (lightgun_latch), and the feed's GUN record holds that copy whenever it
+ * changes. A follower, and so a replay's playback, puts the record's copy in
+ * (lightgun_feed_put) and reads no host pointer; a feed with no GUN record
+ * keeps to the pad's aim, as before the record existed.
  */
 #ifndef M2HLE_LIGHTGUN_H
 #define M2HLE_LIGHTGUN_H
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "irq_timer.h"
 
@@ -80,6 +87,10 @@ static lightgun_pointer_t  g_lightgun_pointer[LIGHTGUN_PLAYERS];
  * driven from elsewhere" (a session, a follow, a replay), set by emu_thread.h,
  * which sees all three. */
 static uint32_t (*g_lightgun_held_fn)(void);
+/* The copy a slice reads while one is latched or fed (follow.h, replay.h):
+ * then no host pointer is read. */
+static lightgun_pointer_t  g_lightgun_fed[LIGHTGUN_PLAYERS];
+static int                 g_lightgun_fed_on;
 static int      (*g_lightgun_remote_fn)(void);
 
 static inline int lightgun_clamp(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -102,8 +113,59 @@ static inline void lightgun_point(int player, bool on, bool offscreen, float x, 
     pt->x = x; pt->y = y; pt->offscreen = offscreen; pt->on = on;
 }
 
+/* The pointer gun `p` reads this slice: the fed copy, or the host's. */
+static inline const lightgun_pointer_t *lightgun__pointer(int p) {
+    return g_lightgun_fed_on ? &g_lightgun_fed[p] : &g_lightgun_pointer[p];
+}
+
 static inline bool lightgun_pointer_live(int p) {
+    if (g_lightgun_fed_on) return g_lightgun_fed[p].on != 0;
     return g_lightgun_pointer[p].on && !lightgun_remote();
+}
+
+/* ---- The feed's GUN record (follow.h, replay.h) ---------------------------
+ * Per player: u8 on, u8 offscreen, u16 0, the x and y floats' bits, all
+ * little-endian. Bits, not a conversion: the board's own maths turns them
+ * into A/D values on every host alike. */
+#define LIGHTGUN_FEED_BYTES (LIGHTGUN_PLAYERS * 12)
+
+static inline uint32_t lightgun__fbits(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
+static inline float    lightgun__bitsf(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
+
+/* Latch the host's pointers for this slice (a leader or a recorder; both may
+ * be on, and share the one copy). The payload is what the slice reads. */
+static inline void lightgun_latch(uint8_t out[LIGHTGUN_FEED_BYTES]) {
+    if (!g_lightgun_fed_on) {
+        for (int p = 0; p < LIGHTGUN_PLAYERS; p++) {
+            const lightgun_pointer_t *h = &g_lightgun_pointer[p];
+            lightgun_pointer_t *f = &g_lightgun_fed[p];
+            f->on = h->on && !lightgun_remote(); f->offscreen = h->offscreen; f->x = h->x; f->y = h->y;
+        }
+        g_lightgun_fed_on = 1;
+    }
+    for (int p = 0; p < LIGHTGUN_PLAYERS; p++) {
+        const lightgun_pointer_t *f = &g_lightgun_fed[p];
+        uint8_t *q = out + p * 12;
+        uint32_t x = lightgun__fbits(f->x), y = lightgun__fbits(f->y);
+        q[0] = f->on ? 1 : 0; q[1] = f->offscreen ? 1 : 0; q[2] = q[3] = 0;
+        for (int i = 0; i < 4; i++) { q[4 + i] = (uint8_t)(x >> (8 * i)); q[8 + i] = (uint8_t)(y >> (8 * i)); }
+    }
+}
+
+/* The slice is over: the host's pointers drive again. */
+static inline void lightgun_unlatch(void) { g_lightgun_fed_on = 0; }
+
+/* A follower's copy: a GUN record's payload, or NULL for none (the pad's aim). */
+static inline void lightgun_feed_put(const uint8_t *in) {
+    for (int p = 0; p < LIGHTGUN_PLAYERS; p++) {
+        lightgun_pointer_t *f = &g_lightgun_fed[p];
+        if (!in) { f->on = 0; f->offscreen = 0; f->x = f->y = 0.5f; continue; }
+        const uint8_t *q = in + p * 12;
+        uint32_t x = 0, y = 0;
+        for (int i = 0; i < 4; i++) { x |= (uint32_t)q[4 + i] << (8 * i); y |= (uint32_t)q[8 + i] << (8 * i); }
+        f->on = q[0] != 0; f->offscreen = q[1] != 0; f->x = lightgun__bitsf(x); f->y = lightgun__bitsf(y);
+    }
+    g_lightgun_fed_on = 1;
 }
 
 /* Where gun `p` points, 0..1 across the picture (for a crosshair). */
@@ -128,7 +190,7 @@ static inline void lightgun_advance(void) {
         const lightgun_range_t    *r = &g_lightgun_range[p];
         const lightgun_controls_t *c = &g_lightgun_controls[p];
         if (lightgun_pointer_live(p)) {
-            const lightgun_pointer_t *pt = &g_lightgun_pointer[p];
+            const lightgun_pointer_t *pt = lightgun__pointer(p);
             g_lightgun.x[p] = r->x_min + (int)(pt->x * (float)(r->x_max - r->x_min) + 0.5f);
             g_lightgun.y[p] = r->y_min + (int)(pt->y * (float)(r->y_max - r->y_min) + 0.5f);
         } else if (steps) {
@@ -147,7 +209,7 @@ static inline void lightgun_advance(void) {
 static inline bool lightgun_offscreen(int p, uint32_t held) {
     const lightgun_range_t *r = &g_lightgun_range[p];
     if (held & g_lightgun_controls[p].reload) return true;
-    if (lightgun_pointer_live(p) && g_lightgun_pointer[p].offscreen) return true;
+    if (lightgun_pointer_live(p) && lightgun__pointer(p)->offscreen) return true;
     int bx = (r->x_max - r->x_min) * 5 / 100, by = (r->y_max - r->y_min) * 5 / 100;
     return g_lightgun.x[p] <= r->x_min + bx || g_lightgun.x[p] >= r->x_max - bx
         || g_lightgun.y[p] <= r->y_min + by || g_lightgun.y[p] >= r->y_max - by;

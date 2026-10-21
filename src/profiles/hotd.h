@@ -314,6 +314,15 @@ static inline void hotdp_install(const romset_t *rs, i960_cpu_t *cpu, memory_bus
     .enable_68k_sound   = true, \
 }
 
+/* The game's mode word (Pinboard #1415): 4 from START (the opening scene
+ * included), 5 the continue count, 7 game over; then 1, 9 and attract's 2, 3
+ * and 8 (its demo plays a game too). A local game is recorded while it is 4-7. */
+#define HOTD_MODE 0x0051EE14u
+static bool hotd_in_play(memory_bus_t *bus) {
+    uint16_t m = mem_read16(bus, HOTD_MODE);
+    return m >= 4 && m <= 7;
+}
+
 #define HOTD_HOOKS(country_default, settings_loaded) .hook_count = 2, .hooks = { \
     { country_default, hotd_hook_country_default, "country_default" }, \
     { settings_loaded, hotd_hook_settings_loaded, "settings_loaded" }, \
@@ -327,6 +336,7 @@ static const game_profile_t hotd_profile = {
     .install_fn   = hotd_install,
     HOTD_HOOKS(HOTD_HOOK_ADDR_COUNTRY_DEFAULT, HOTD_HOOK_ADDR_SETTINGS_LOADED),
     .input        = HOTD_INPUT,
+    .in_play      = hotd_in_play,
     .quirks       = HOTD_QUIRKS(0xe73530, 7477, HOTD_REGION_HOOKED),
 };
 
@@ -341,6 +351,7 @@ static const game_profile_t hotdo_profile = {
     .install_fn   = hotd_install,
     HOTD_HOOKS(HOTD_HOOK_ADDR_COUNTRY_DEFAULT, HOTD_HOOK_ADDR_SETTINGS_LOADED),
     .input        = HOTD_INPUT,
+    .in_play      = hotd_in_play,
     .quirks       = HOTD_QUIRKS(0xe73530, 7477, HOTD_REGION_HOOKED),
 };
 
