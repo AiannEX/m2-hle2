@@ -29,34 +29,22 @@
 </head>
 <body>
 
-<!-- The PS3's button glyphs, drawn here (no image files): <svg><use href="#ps-cross"/></svg>.
-     Not display:none -- a gradient inside a hidden SVG does not paint in every browser. -->
+<!-- The pad's button glyphs: Kenney's Input Prompts (CC0, prompts/License.txt), the
+     colour buttons in prompts/ inlined so a <svg><use href="#ps-cross"/></svg> needs no
+     fetch. tools/prompts/import_kenney.py copies the pack. -->
 <svg class="ps-sprite" width="0" height="0" aria-hidden="true" focusable="false">
   <defs>
-    <linearGradient id="ps-bevel" x1="0.15" y1="0.1" x2="0.85" y2="0.9">
-      <stop offset="0" stop-color="#4D4A4D"/>
-      <stop offset="1" stop-color="#7A787A"/>
-    </linearGradient>
-    <symbol id="ps-disc" viewBox="0 0 44 44">
-      <circle cx="22" cy="22" r="21" fill="#211C21"/>
-      <circle cx="22" cy="22" r="20" fill="url(#ps-bevel)"/>
-      <circle cx="22" cy="22" r="16.5" fill="#333433"/>
+    <symbol id="ps-circle" viewBox="8 8 48 48">
+      <path fill="#FF6666" d="M37.7 26.35 Q40 28.65 40 32 40 35.35 37.7 37.7 35.35 40 32 40 28.7 40 26.4 37.7 L26.35 37.65 Q24 35.3 24 32 24 28.7 26.35 26.35 L26.4 26.35 Q28.7 24 32 24 35.35 24 37.7 26.35 M44 32 Q44 27 40.5 23.5 37 20 32 20 27.05 20 23.55 23.5 20 27 20 32 20 37 23.55 40.5 27.05 44 32 44 37 44 40.5 40.5 44 37 44 32 M56 32 Q56 42 48.95 48.95 42 56 32 56 22.05 56 15 48.95 8 42 8 32 8 22.05 15 15 22.05 8 32 8 42 8 48.95 15 56 22.05 56 32"/>
     </symbol>
-    <symbol id="ps-circle" viewBox="0 0 44 44">
-      <use href="#ps-disc"/>
-      <circle cx="22" cy="22" r="8.5" fill="none" stroke="#FF4118" stroke-width="3"/>
+    <symbol id="ps-cross" viewBox="8 8 48 48">
+      <path fill="#7C66E8" d="M22.8 20 L20 22.8 29.2 32 20 41.2 22.8 44 32 34.8 41.2 44 44 41.2 34.8 32 44 22.8 41.2 20 32 29.2 22.8 20 M56 32 Q56 42 48.95 48.95 42 56 32 56 22.05 56 15 48.95 8 42 8 32 8 22.05 15 15 22.05 8 32 8 42 8 48.95 15 56 22.05 56 32"/>
     </symbol>
-    <symbol id="ps-cross" viewBox="0 0 44 44">
-      <use href="#ps-disc"/>
-      <path d="M14.5 14.5 29.5 29.5M29.5 14.5 14.5 29.5" stroke="#7B75B5" stroke-width="3" stroke-linecap="round"/>
+    <symbol id="ps-triangle" viewBox="8 8 48 48">
+      <path fill="#40E2A0" d="M56 32 Q56 42 48.95 48.95 42 56 32 56 22.05 56 15 48.95 8 42 8 32 8 22.05 15 15 22.05 8 32 8 42 8 48.95 15 56 22.05 56 32 M46 42 L32 18 18 42 46 42 M32 25.95 L39.05 38 25 38 32 25.95"/>
     </symbol>
-    <symbol id="ps-triangle" viewBox="0 0 44 44">
-      <use href="#ps-disc"/>
-      <path d="M22 12.5 31 28.5H13Z" fill="none" stroke="#39C78C" stroke-width="3" stroke-linejoin="round"/>
-    </symbol>
-    <symbol id="ps-square" viewBox="0 0 44 44">
-      <use href="#ps-disc"/>
-      <rect x="14" y="14" width="16" height="16" fill="none" stroke="#DE5DDE" stroke-width="3"/>
+    <symbol id="ps-square" viewBox="8 8 48 48">
+      <path fill="#FF69F8" d="M56 32 Q56 42 48.95 48.95 42 56 32 56 22.05 56 15 48.95 8 42 8 32 8 22.05 15 15 22.05 8 32 8 42 8 48.95 15 56 22.05 56 32 M20 20 L20 44 44 44 44 20 20 20 M24 40 L24 24 40 24 40 40 24 40"/>
     </symbol>
   </defs>
 </svg>
@@ -132,7 +120,9 @@
       <a href="fonts/OFL-MPLUS.txt" target="_blank">M+</a>,
       <a href="fonts/OFL-MPLUS1Code.txt" target="_blank">M+ Code</a>) &middot;
       <span data-i18n="ui.ggpo.credit">Rollback netplay:</span> <a href="https://github.com/pond3r/ggpo" target="_blank" rel="noopener noreferrer">GGPO</a><span data-i18n="ui.mit">, under the MIT License</span>
-      (<a href="fonts/MIT-GGPO.txt" target="_blank" data-i18n="ui.license">license</a>)
+      (<a href="fonts/MIT-GGPO.txt" target="_blank" data-i18n="ui.license">license</a>) &middot;
+      <span data-i18n="ui.prompts.credit">Button icons:</span> <a href="https://kenney.nl/assets/input-prompts" target="_blank" rel="noopener noreferrer">Kenney</a><span data-i18n="ui.cc0">, under CC0</span>
+      (<a href="prompts/License.txt" target="_blank" data-i18n="ui.license">license</a>)
     </p>
     <div class="ps-hints">
       <label for="file" class="ps-hint hint-rom"><svg class="ps-glyph" aria-hidden="true"><use href="#ps-cross"/></svg><span data-i18n="hint.rom">:Choose file</span></label>
@@ -419,7 +409,9 @@
     <a href="fonts/OFL-MPLUS.txt" target="_blank">M+</a>,
     <a href="fonts/OFL-MPLUS1Code.txt" target="_blank">M+ Code</a>).
     Rollback netplay: <a href="https://github.com/pond3r/ggpo" target="_blank" rel="noopener noreferrer">GGPO</a>
-    by GroundStorm Studios, under the MIT License (<a href="fonts/MIT-GGPO.txt" target="_blank">license</a>).</p>
+    by GroundStorm Studios, under the MIT License (<a href="fonts/MIT-GGPO.txt" target="_blank">license</a>).
+    Button and key icons: <a href="https://kenney.nl/assets/input-prompts" target="_blank" rel="noopener noreferrer">Input Prompts</a>
+    by Kenney (www.kenney.nl), under CC0 (<a href="prompts/License.txt" target="_blank">license</a>).</p>
 </aside>
 
 <!-- The touch buttons (m2hle-touch.js): laid over the game canvas, one layout for
@@ -714,6 +706,7 @@
 <script>m2hleLang.apply(document);</script>
 <script src="m2hle-nozoom.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-game.js?v=@M2HLE_VERSION@"></script>
+<script src="m2hle-prompts.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-keys.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-tools.js?v=@M2HLE_VERSION@"></script>
 <script src="m2hle-objview.js?v=@M2HLE_VERSION@"></script>

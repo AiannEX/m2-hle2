@@ -55,7 +55,7 @@ static int dump_sprites(const char *dir)
         const char *name = id < PS3UI_SPR_COUNT ? ps3ui_sprite_info[id].name : NULL;
         static const char *const extra[] = { "n_cmn_net_00", "n_cmn_net_01", "n_cmn_net_02", "n_cmn_net_03",
                                              "n_cmn_net_xx", "btn_circle", "btn_cross", "btn_triangle",
-                                             "btn_square" };
+                                             "btn_square", "btn_l1", "btn_l2", "btn_r1", "btn_r2" };
         if (!name)
             name = extra[id - PS3UI_SPR_COUNT];
         snprintf(path, sizeof path, "%s/%s.png", dir, name);

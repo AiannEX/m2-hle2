@@ -17,7 +17,7 @@
  *   PAUSE        Resume Game / Help & Options / Exit Game
  *   OPTIONS      Controls (the PS3's six button presets) / Settings (volume) /
  *                Credits
- *   CREDITS      the open-source code and fonts the builds are made of: licence,
+ *   CREDITS      the open-source code, fonts and icons the builds are made of: licence,
  *                copyright and where each comes from
  *
  * Left out on purpose: the logo reel and the title logo (Sega's artwork; the
@@ -130,7 +130,8 @@ static const char *const ps3ui_type_names[PS3UI_TYPES] = { "Standard", "Arcade s
                                                            "Arcade stick 3", "Arcade stick 4", "Arcade stick 5" };
 
 /* CREDITS: every third-party part of a build -- vendor/ (the submodules),
- * src/libretro/libretro.h, licenses/ (the fonts), and the libraries the SDL3
+ * src/libretro/libretro.h, licenses/ (the fonts), Kenney's input prompts
+ * (web/site/prompts/, src/ui/input_prompts.h) and the libraries the SDL3
  * and Linux builds load. Copyright lines as the licence files give them. */
 typedef struct {
     const char *name, *licence, *copyright, *url;
@@ -157,6 +158,7 @@ static const ps3ui_credit_t ps3ui_credits[] = {
       "https://github.com/coz-m/MPLUS_FONTS" },
     { "M PLUS 1 Code (font)", "SIL OFL 1.1", "Copyright 2021 The M+ FONTS Project Authors",
       "https://github.com/coz-m/MPLUS_FONTS" },
+    { "Input Prompts (icons)", "CC0 1.0", "Kenney (www.kenney.nl)", "https://kenney.nl/assets/input-prompts" },
 };
 #define PS3UI_CREDITS ((int)(sizeof ps3ui_credits / sizeof ps3ui_credits[0]))
 #define PS3UI_CREDITS_ROWS 6    /* choice_win_06 */
@@ -668,7 +670,7 @@ static void ps3ui_sh_draw_controls(ps3ui_canvas_t *cv, ps3ui_shell_t *sh)
         if (sh->cursor == 0)
             ps3ui_draw_value_arrows(cv, &st, x, y, ps3ui_text_width(&st, t), alpha);
     }
-    static const char *const keys[PS3UI_KEYS] = { "\x03", "\x01", "\x04", "\x02", "L1", "L2", "R1", "R2" };
+    static const char *const keys[PS3UI_KEYS] = { "\x03", "\x01", "\x04", "\x02", "\x05", "\x06", "\x07", "\x08" };
     if (ps3ui_slot_xy(&s, "p_txt_01_lt", 0, 0, &lx, &ly) && ps3ui_slot_xy(&s, "p_txt_03_rt", 1, 0, &rx, &ry))
         for (int i = 0; i < PS3UI_KEYS; i++) {
             float yy = ly + 54.0f * (float)i;

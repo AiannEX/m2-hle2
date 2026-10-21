@@ -313,7 +313,7 @@ const m2hleKeys = (() => {
         chip.type = 'button';
         chip.title = m2hleLang.t('keys.remove');
         chip.setAttribute('aria-label', m2hleLang.t('keys.remove.from', { key: keyName(code), action: a.label }));
-        chip.textContent = keyName(code) + ' ×';
+        m2hlePrompts.chip(chip, m2hlePrompts.key(code, keyName(code)), keyName(code));
         chip.addEventListener('click', () => { list.splice(i, 1); save(); release(); render(); });
         chips.appendChild(chip);
       });
