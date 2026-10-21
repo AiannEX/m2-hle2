@@ -5,12 +5,13 @@ older Profiler), Windows sees it as a Driving Force EX. It turns 200 degrees, bo
 pedals share one axis, there is no clutch or shifter, and there is no force,
 because no DirectInput effect driver is installed. m2-hle2 now does the work that
 software does, using SDL's hidapi (`src/ui/lg4ff.h`, desktop and SDL3 front ends).
-The G27, the Driving Force GT and the Driving Force Pro use the same commands and
-get the same treatment.
+The G27, the G29 (Pinboard #1419), the Driving Force GT and the Driving Force Pro
+use the same commands and get the same treatment.
 
 - **Mode switch.** A wheel still in compatibility mode is sent the command that
   turns it into its own model, once. It drops off the bus and comes back under its
-  own PID (a G25 is `C299`). SDL lists it as a wheel and `sdl_pads.h` plays it like
+  own PID (a G25 is `C299`, a G29 `C24F`). A G29 is switched from either position
+  of its PS3/PS4 switch. SDL lists it as a wheel and `sdl_pads.h` plays it like
   any other: by default the wheel, accelerator and brake are axes `0,1,2`
   (`--wheel-axes`), and the gear lever is buttons, set with `--wheel-buttons`.
 - **Range.** `--g25-range N` sets the turning range in degrees (default 270, about
@@ -32,11 +33,13 @@ get the same treatment.
 - **Linux.** The kernel's `hid-lg4ff` already switches the mode and gives the force.
   To set the range from here, the wheel's hidraw node has to be writable, e.g.
   `/etc/udev/rules.d/60-logitech-wheel.rules`:
-  `KERNEL=="hidraw*", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c29[4-9a-b]", MODE="0666"`.
+  `KERNEL=="hidraw*", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c29[4-9a-b]|c24f|c260", MODE="0666"`.
+  The kernel does not switch a G29 in its PS4 mode; with the rule, m2hle does.
   Without that rule, m2hle says so once in the log and does nothing more.
 - **Not tried on a real wheel yet:** there is no Logitech wheel here.
   `tests/lg4ff_test.c` checks every report byte for byte. `tests/lg4ff_host_test.c`
-  runs `lg4ff.h` on a pretend G25 that starts in compatibility mode. The direction
+  runs `lg4ff.h` on a pretend G25 that starts in compatibility mode, then on a
+  pretend G29 in its PS4 mode. The direction
   of the push (above `0x80` = right) follows SDL's lg4ff haptics; it is not seen in
   the binary.
 
@@ -131,3 +134,50 @@ it differently.
   - G27 rev LEDs `f8 12 <mask>` (masks 1, 3, 7, f, 1f);
   - `fa fe` and `f3` (`FUN_180017a90`, `FUN_180017a20`);
   - `HidD_SetFeature {04,04}` on close.
+
+## The G29 (Pinboard #1419)
+
+LGS 5.10 is older than the G29. These facts come from **LGS 9.04.49 x64**, the last
+LGS (`LGS_9.04.49_x64_Logitech.exe` from download01.logi.com, sha256
+`6db9f644…d3e0`), read with Ghidra 12.1.4 and objdump. G Hub drives the G29 too;
+with G Hub, SDL has the haptic and we only set the range, as with LGS for a G25.
+
+| File | What it is |
+|---|---|
+| `Drivers/LGJoyHid/WinUSB/LGJoyWinUsb.inf` | binds the G29 in compat mode (`C294` rev `1350`..`1355`) and in its PS4 mode (`C260`) to WinUSB, so LCore.exe can switch it |
+| `Drivers/LGJoyHid/LGJoyHid.inf` | `C24F` (`G29Inst`): the HID minidriver and the force CLSID, as for a G25 |
+| `Drivers/LGJoyHid/LGJoyHidFilter64.sys` | the newer `wmfilter.sys`: device type `0x3F` for `C24F` |
+| `Drivers/VirtualBus/LGJoyXlCore64.sys` | the range |
+| `LCore.exe` | the service: the G29's mode switch |
+
+- **C** Which wheel (LCore.exe `0x140238dd0`): VID `046D`, PID `C294`, `C298` or
+  `C29A`, `rev & 0xff00 == 0x1300` and `rev & 0xff >= 0x50` is a G29 in its PS3
+  mode. The filter's DFGT test (`FUN_1400073c0`) is the same with `< 0x50`: a
+  `C294` with rev `1350` is a G29, not a DFGT. LGS 5.10 took every `13xx` for a DFGT,
+  and so did #1370's first `lg4ff_identify`.
+- **I** Linux's `hid-lg4ff` also takes rev `89xx` for a G29 (its second ident). Not
+  seen in LGS; `lg4ff_identify` takes it too.
+- **C** The switch, PS3 mode (LCore.exe `0x140239030`, called from `0x140238ba6`
+  for each HID device): `00 f8 09 05 01`, written to the HID device. There is no
+  `f8 0a` before it, and no fifth "detach" byte (Linux sends `f8 0a`, then
+  `f8 09 05 01 01`). The filter's table has `f8 0a` / `f8 09 05 01` pairs for the
+  G29 too (`0x1400095b0`, `0x1400095e8`), but no code reads them. Over WinUSB
+  (`0x1402391e0`, for `C294`) it is the same bytes in a `SET_REPORT` (`21 09 00 02`).
+  `lg4ff_mode_switch` sends `f8 09 05 01` as an 8-byte report with ID 0.
+- **C** The switch, PS4 mode (LCore.exe `0x140239100`, for `C260`): the 6 bytes
+  `30 f8 09 05 01 01` written to the wheel's pipe, i.e. the same command as report
+  `0x30`, with the detach byte. Linux does not do this. `lg4ff_mode_switch` writes
+  the same 6 bytes through hidapi; **I** that this reaches the wheel through the
+  HID stack (Windows: an output report `0x30` in its descriptor) is not seen here.
+- **C** `C24F` is device type `0x3F` (`LGJoyHidFilter64.sys`, `FUN_1400031a4`): a 16-bit wheel axis (`0xffff`), 8-bit pedals, and the
+  `OperatingRange` (default 200, at most 900) like the G25's.
+- **C** Range (`LGJoyXlCore64.sys`): for types `0x3F` and `0x40` (the G920) it
+  sends `00 f8 81 <lo> <hi>`, the degrees clamped to 40..900, as a 17-byte write;
+  for the G25 family the same bytes as an 8-byte one. We send 8 bytes;
+  hidapi on Windows pads a write to the device's output report length.
+- **I** Force: LGS 9's `LGJoyFrc64.dll` is a 35 KB stub that hands the effects to
+  the service, so the G29's force reports are not in it. The G29 plays the same
+  `11 08`, `fe 0d`, `81 0e` reports as the G27 in Linux's `hid-lg4ff` and
+  new-lg4ff, and gets the same here.
+- **C** Also seen, not used: `C261` (G920 in its Xbox mode) gets `0f 00 00 01 42`
+  (`0x140239350`).

@@ -1,8 +1,9 @@
 /*
  * lg4ff_proto.h — what a Logitech G25 (and its kin: the Driving Force Pro,
- * Driving Force GT and G27) is sent to leave its compatibility mode, to set
- * its turning range and to play a force (Pinboard #1370): the reports, from
- * the game's force (ffb_out_t). No device here; ui/lg4ff.h writes them.
+ * Driving Force GT, G27 and G29) is sent to leave its compatibility mode, to
+ * set its turning range and to play a force (Pinboard #1370, the G29 #1419):
+ * the reports, from the game's force (ffb_out_t). No device here; ui/lg4ff.h
+ * writes them.
  *
  * Read from Logitech Gaming Software 5.10.127, the last that drives a G25
  * (G Hub does not), in Ghidra and rea: wmfilter.sys (the HID filter that
@@ -16,7 +17,12 @@
  *     revision (bcdDevice) tells which wheel it is. f8 10 makes a G25 itself
  *     (PID C299); a G27 or a DFGT takes f8 0a then f8 09 04 01 / 03 01; a DFP
  *     f8 01. The wheel drops off the bus and comes back as the new PID.
- *   - Range: f8 81 lo hi, in degrees (G25, DFGT, G27; at most 900).
+ *   - The G29 (Logitech Gaming Software 9.04.49, LCore.exe) comes up as a
+ *     Driving Force EX too in its PS3 mode, rev 13xx with the low byte 0x50
+ *     or more (a DFGT is below 0x50), and takes f8 09 05 01. In its PS4 mode
+ *     (PID C260) it takes the same as report 0x30: 30 f8 09 05 01 01. Either
+ *     way it comes back as C24F.
+ *   - Range: f8 81 lo hi, in degrees (G25, DFGT, G27, G29; at most 900).
  *   - Constant force, slot 1: 11 08 f 80, f = 0x80 + the force (-127..127);
  *     0x80 is none, sent as 13 00 (slot 1 stopped).
  *   - The wheel's own centring spring: f5 off; fe 0d a a b, then 14 on.
@@ -36,11 +42,12 @@
 #define LG4FF_RANGE_MIN 40
 #define LG4FF_RANGE_MAX 900
 
-typedef enum { LG4FF_NONE, LG4FF_DFP, LG4FF_G25, LG4FF_DFGT, LG4FF_G27 } lg4ff_model_t;
+typedef enum { LG4FF_NONE, LG4FF_DFP, LG4FF_G25, LG4FF_DFGT, LG4FF_G27, LG4FF_G29 } lg4ff_model_t;
 
 typedef struct {
     lg4ff_model_t model;    /* the wheel it really is */
     bool          compat;   /* still under another PID: it wants the switch */
+    bool          ps4;      /* a G29 in its PS4 mode (C260): the switch is report 0x30 */
 } lg4ff_id_t;
 
 static inline const char *lg4ff_name(lg4ff_model_t m) {
@@ -49,16 +56,27 @@ static inline const char *lg4ff_name(lg4ff_model_t m) {
         case LG4FF_G25:  return "G25";
         case LG4FF_DFGT: return "Driving Force GT";
         case LG4FF_G27:  return "G27";
+        case LG4FF_G29:  return "G29";
         default:         return "wheel";
     }
 }
 
 /* wmfilter.sys's table: the PID and the revision. A G27 is rev 123x under any
  * of its PIDs; a G25 12xx; a DFGT 13xx; a DFP 1xxx otherwise. A Driving Force
- * EX that is only that (rev 2xxx), and every other PID, is none of them. */
+ * EX that is only that (rev 2xxx), and every other PID, is none of them.
+ * LCore.exe (LGS 9) takes a 13xx at 0x1350 or past it, under C294, C298 or
+ * C29A, for a G29 in its PS3 mode; Linux also takes 89xx for one. */
+static inline bool lg4ff__g29_rev(uint16_t rev) {
+    return ((rev & 0xFF00) == 0x1300 && (rev & 0xFF) >= 0x50) || (rev & 0xFF00) == 0x8900;
+}
+
 static inline lg4ff_id_t lg4ff_identify(uint16_t pid, uint16_t rev) {
     bool g27 = (rev & 0xFFF0) == 0x1230;
+    if ((pid == 0xC294 || pid == 0xC298 || pid == 0xC29A) && lg4ff__g29_rev(rev))
+        return (lg4ff_id_t){ LG4FF_G29, true };
     switch (pid) {
+        case 0xC24F: return (lg4ff_id_t){ LG4FF_G29, false };
+        case 0xC260: return (lg4ff_id_t){ LG4FF_G29, true, true };
         case 0xC29B: return (lg4ff_id_t){ LG4FF_G27, false };
         case 0xC29A: return (lg4ff_id_t){ LG4FF_DFGT, false };
         case 0xC299: return (lg4ff_id_t){ g27 ? LG4FF_G27 : LG4FF_G25, g27 };
@@ -82,10 +100,25 @@ static inline void lg4ff_cmd(uint8_t out[LG4FF_REPORT], const uint8_t *b, int n)
     memcpy(out + 1, b, (size_t)(n > 7 ? 7 : n));
 }
 
-/* The commands that make a compat-mode wheel its own model: how many (0-2). */
-static inline int lg4ff_mode_switch(uint8_t out[2][LG4FF_REPORT], lg4ff_model_t m) {
+/* The commands that make a compat-mode wheel its own model: how many (0-2).
+ * Each is LG4FF_REPORT bytes but the PS4-mode G29's, 6 (its length in `len`
+ * when it is given). */
+static inline int lg4ff_mode_switch(uint8_t out[2][LG4FF_REPORT], lg4ff_id_t id, int *len) {
     static const uint8_t ext[] = { 0xF8, 0x0A };
-    switch (m) {
+    if (len) *len = LG4FF_REPORT;
+    switch (id.model) {
+        case LG4FF_G29:
+            if (id.ps4) {   /* LCore.exe writes these 6 bytes to the wheel's pipe */
+                static const uint8_t b[] = { 0x30, 0xF8, 0x09, 0x05, 0x01, 0x01 };
+                memset(out[0], 0, LG4FF_REPORT);
+                memcpy(out[0], b, sizeof b);
+                if (len) *len = (int)sizeof b;
+                return 1;
+            } else {        /* its HID write: ID 0, f8 09 05 01 (no f8 0a first) */
+                const uint8_t b[] = { 0xF8, 0x09, 0x05, 0x01 };
+                lg4ff_cmd(out[0], b, 4);
+                return 1;
+            }
         case LG4FF_G25: { const uint8_t b[] = { 0xF8, 0x10 }; lg4ff_cmd(out[0], b, 2); return 1; }
         case LG4FF_DFP: { const uint8_t b[] = { 0xF8, 0x01 }; lg4ff_cmd(out[0], b, 2); return 1; }
         case LG4FF_G27: { const uint8_t b[] = { 0xF8, 0x09, 0x04, 0x01 };
@@ -97,9 +130,10 @@ static inline int lg4ff_mode_switch(uint8_t out[2][LG4FF_REPORT], lg4ff_model_t 
 }
 
 /* The wheels that take f8 81 (wmxlcore.sys sends it to the DFP's successors
- * only; the DFP's own range is two other commands, not sent here). */
+ * only, LGJoyXlCore64.sys to the G29 too; the DFP's own range is two other
+ * commands, not sent here). */
 static inline bool lg4ff_has_range(lg4ff_model_t m) {
-    return m == LG4FF_G25 || m == LG4FF_DFGT || m == LG4FF_G27;
+    return m == LG4FF_G25 || m == LG4FF_DFGT || m == LG4FF_G27 || m == LG4FF_G29;
 }
 
 static inline int lg4ff_clamp_range(int deg) {

@@ -91,7 +91,7 @@
  *            (--ffb-gain N, 0-100).
  * --fanatec gear|speed|off  a Fanatec base's rev LEDs and display show a
  *            racing game's rpm and its gear (default) or speed (fanatec.h).
- * --g25-range N  a Logitech G25, G27 or DFGT turns N degrees (default 270;
+ * --g25-range N  a Logitech G25, G27, G29 or DFGT turns N degrees (default 270;
  *            0 leaves it). --g25 off leaves those wheels alone: no mode
  *            switch, no range, no force of ours (lg4ff.h, LOGITECH.md).
  * --wheel-buttons N=action,...  that wheel's buttons, e.g. "4=up,5=down" (the

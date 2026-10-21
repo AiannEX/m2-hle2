@@ -1,7 +1,7 @@
 /*
- * lg4ff_test.c -- the reports a Logitech G25, G27, DFGT or DFP gets (Pinboard
- * #1370, core/lg4ff_proto.h), each against the bytes Logitech's drivers send
- * (LOGITECH.md). No device.
+ * lg4ff_test.c -- the reports a Logitech G25, G27, G29, DFGT or DFP gets
+ * (Pinboard #1370, the G29 #1419; core/lg4ff_proto.h), each against the bytes
+ * Logitech's drivers send (LOGITECH.md). No device.
  *
  * A ctest (CMakeLists.txt, lg4ff_test).
  */
@@ -33,8 +33,20 @@ int main(void) {
     CHECK(id.model == LG4FF_G27 && id.compat, "...and under C299 (G25 mode)");
     id = lg4ff_identify(0xC29B, 0x1230);
     CHECK(id.model == LG4FF_G27 && !id.compat, "C29B: the G27 itself");
+    id = lg4ff_identify(0xC294, 0x1340);
+    CHECK(id.model == LG4FF_DFGT && id.compat, "C294 rev 13xx below 1350: a DFGT");
     id = lg4ff_identify(0xC294, 0x1350);
-    CHECK(id.model == LG4FF_DFGT && id.compat, "C294 rev 13xx: a DFGT");
+    CHECK(id.model == LG4FF_G29 && id.compat && !id.ps4, "C294 rev 1350: a G29 in its PS3 mode, not a DFGT");
+    id = lg4ff_identify(0xC29A, 0x1352);
+    CHECK(id.model == LG4FF_G29 && id.compat, "...under C29A too (LCore.exe)");
+    id = lg4ff_identify(0xC294, 0x8900);
+    CHECK(id.model == LG4FF_G29 && id.compat, "...and rev 89xx (Linux)");
+    id = lg4ff_identify(0xC260, 0x0100);
+    CHECK(id.model == LG4FF_G29 && id.compat && id.ps4, "C260: a G29 in its PS4 mode");
+    id = lg4ff_identify(0xC24F, 0x0100);
+    CHECK(id.model == LG4FF_G29 && !id.compat, "C24F: the G29 itself");
+    id = lg4ff_identify(0xC29A, 0x1300);
+    CHECK(id.model == LG4FF_DFGT && !id.compat, "C29A rev 1300: the DFGT itself");
     id = lg4ff_identify(0xC294, 0x1102);
     CHECK(id.model == LG4FF_DFP && id.compat, "C294 rev 1xxx: a DFP");
     id = lg4ff_identify(0xC294, 0x2100);
@@ -43,18 +55,26 @@ int main(void) {
     CHECK(id.model == LG4FF_NONE, "a Logitech receiver: none");
 
     uint8_t s[2][LG4FF_REPORT];
-    CHECK(lg4ff_mode_switch(s, LG4FF_G25) == 1 && IS(s[0], 0x00, 0xF8, 0x10), "G25 switch: 00 f8 10");
-    CHECK(lg4ff_mode_switch(s, LG4FF_G27) == 2 && IS(s[0], 0x00, 0xF8, 0x0A) && IS(s[1], 0x00, 0xF8, 0x09, 0x04, 0x01),
+    int len = 0;
+#define SW(m) lg4ff_mode_switch(s, (lg4ff_id_t){ m, true, false }, &len)
+    CHECK(SW(LG4FF_G25) == 1 && len == 8 && IS(s[0], 0x00, 0xF8, 0x10), "G25 switch: 00 f8 10");
+    CHECK(SW(LG4FF_G27) == 2 && IS(s[0], 0x00, 0xF8, 0x0A) && IS(s[1], 0x00, 0xF8, 0x09, 0x04, 0x01),
           "G27 switch: f8 0a, f8 09 04 01");
-    CHECK(lg4ff_mode_switch(s, LG4FF_DFGT) == 2 && IS(s[1], 0x00, 0xF8, 0x09, 0x03, 0x01), "DFGT switch: ..f8 09 03 01");
-    CHECK(lg4ff_mode_switch(s, LG4FF_DFP) == 1 && IS(s[0], 0x00, 0xF8, 0x01), "DFP switch: f8 01");
+    CHECK(SW(LG4FF_DFGT) == 2 && IS(s[1], 0x00, 0xF8, 0x09, 0x03, 0x01), "DFGT switch: ..f8 09 03 01");
+    CHECK(SW(LG4FF_DFP) == 1 && IS(s[0], 0x00, 0xF8, 0x01), "DFP switch: f8 01");
+    CHECK(SW(LG4FF_G29) == 1 && len == 8 && IS(s[0], 0x00, 0xF8, 0x09, 0x05, 0x01), "G29 (PS3 mode) switch: 00 f8 09 05 01");
+    CHECK(lg4ff_mode_switch(s, lg4ff_identify(0xC260, 0), &len) == 1 && len == 6
+          && !memcmp(s[0], (const uint8_t[]){ 0x30, 0xF8, 0x09, 0x05, 0x01, 0x01 }, 6),
+          "G29 (PS4 mode) switch: report 30, f8 09 05 01 01, 6 bytes");
+#undef SW
 
     uint8_t r[3][LG4FF_REPORT];
     lg4ff_range(r[0], 270);
     CHECK(IS(r[0], 0x00, 0xF8, 0x81, 0x0E, 0x01), "range 270: f8 81 0e 01");
     lg4ff_range(r[0], 1080);
     CHECK(IS(r[0], 0x00, 0xF8, 0x81, 0x84, 0x03), "range past 900: 900");
-    CHECK(lg4ff_has_range(LG4FF_G25) && !lg4ff_has_range(LG4FF_DFP), "f8 81 for the G25, not the DFP");
+    CHECK(lg4ff_has_range(LG4FF_G25) && lg4ff_has_range(LG4FF_G29) && !lg4ff_has_range(LG4FF_DFP),
+          "f8 81 for the G25 and G29, not the DFP");
 
     lg4ff_constant(r[0], 0);
     CHECK(IS(r[0], 0x00, 0x13, 0x00), "no push: slot 1 stopped (13 00)");
