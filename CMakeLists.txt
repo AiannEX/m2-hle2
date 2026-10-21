@@ -771,7 +771,7 @@ if(M2HLE_BUILD_TESTS AND NOT EMSCRIPTEN)
     add_executable(ffb_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/ffb_test.c)
     # The reports a Fanatec base gets for a game's meters (core/fanatec_proto.h). No device.
     add_executable(fanatec_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/fanatec_test.c)
-    # The reports a Logitech G25 (G27, DFGT, DFP) gets: mode switch, range, force (core/lg4ff_proto.h). No device.
+    # The reports a Logitech G25 (G27, G29, DFGT, DFP) gets: mode switch, range, force (core/lg4ff_proto.h). No device.
     add_executable(lg4ff_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/lg4ff_test.c)
     # A host's analog wheel and pedals on the 315-5649 (ui/wheel_host.h). No ROM.
     add_executable(wheel_host_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wheel_host_test.c)

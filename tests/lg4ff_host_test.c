@@ -1,6 +1,7 @@
 /*
- * lg4ff_host_test.c -- ui/lg4ff.h on a pretend G25 (Pinboard #1370): SDL's
- * hidapi calls are this file's, so no hardware.
+ * lg4ff_host_test.c -- ui/lg4ff.h on a pretend G25 (Pinboard #1370), then a
+ * pretend G29 in its PS4 mode (#1419): SDL's hidapi calls are this file's, so
+ * no hardware.
  *
  * The wheel comes up as a Driving Force EX (C294 rev 1200) beside a Logitech
  * mouse: it is sent the G25's mode switch, once, and nothing else. It comes
@@ -8,6 +9,8 @@
  * it only while SDL has no haptic for it, a report only for what changed;
  * the shake rides on the push. Losing the focus lets everything go; a failed
  * write closes the wheel; --g25 off touches nothing; the run's end closes it.
+ * The G29 comes up as C260: it is sent report 0x30's switch and comes back as
+ * C24F, which gets its range.
  *
  * A ctest (CMakeLists.txt, lg4ff_host_test; M2HLE_PADS builds only).
  */
@@ -36,8 +39,9 @@ static int g_fail = 0;
 
 /* ---- The pretend wheel ------------------------------------------------------ */
 
-#define COMPAT "\\\\?\\hid#vid_046d&pid_c294#7&1f&0&0000#{4d1e55b2}"
-#define NATIVE "\\\\?\\hid#vid_046d&pid_c299#7&20&0&0000#{4d1e55b2}"
+static const char *COMPAT = "\\\\?\\hid#vid_046d&pid_c294#7&1f&0&0000#{4d1e55b2}";
+static const char *NATIVE = "\\\\?\\hid#vid_046d&pid_c299#7&20&0&0000#{4d1e55b2}";
+static uint16_t g_compat_pid = 0xC294, g_native_pid = 0xC299, g_rev = 0x1222;
 #define MOUSE  "\\\\?\\hid#vid_046d&pid_c077#7&21&0&0000#{4d1e55b2}"
 
 static SDL_hid_device_info g_info[2];
@@ -64,8 +68,8 @@ SDL_hid_device_info *fake_hid_enumerate(unsigned short vid, unsigned short pid) 
     g_info[0].next = &g_info[1];
     g_info[1].path = (char *)(g_native ? NATIVE : COMPAT);
     g_info[1].vendor_id = LOGITECH_VID;
-    g_info[1].product_id = g_native ? 0xC299 : 0xC294;
-    g_info[1].release_number = 0x1222;
+    g_info[1].product_id = g_native ? g_native_pid : g_compat_pid;
+    g_info[1].release_number = g_rev;
     return &g_info[0];
 }
 void fake_hid_free_enumeration(SDL_hid_device_info *d) { (void)d; }
@@ -168,6 +172,24 @@ int main(void) {
     CHECK(lg4ff_option("--g25-range", "1080") && g_lg4ff_range == 900, "--g25-range 1080 is 900");
     CHECK(lg4ff_option("--g25-range", "0") && g_lg4ff_range == 0, "--g25-range 0 leaves it");
     CHECK(lg4ff_option("--g25", "on") && g_lg4ff_on && !lg4ff_option("--g26", "on"), "--g25 on");
+
+    /* A G29 in its PS4 mode. */
+    COMPAT = "\\\\?\\hid#vid_046d&pid_c260#7&22&0&0000#{4d1e55b2}";
+    NATIVE = "\\\\?\\hid#vid_046d&pid_c24f#7&23&0&0000#{4d1e55b2}";
+    g_compat_pid = 0xC260, g_native_pid = 0xC24F, g_rev = 0x8900;
+    g_native = false;
+    g_lg4ff_range = 270;
+    g_nw = 0;
+    lg4ff_update(&none, false);
+    CHECK(g_nw == 1 && g_w[0].dev == 0 && g_w[0].n == 6
+          && !memcmp(g_w[0].b, (const uint8_t[]){ 0x30, 0xF8, 0x09, 0x05, 0x01, 0x01 }, 6),
+          "a G29 in PS4 mode: report 30 f8 09 05 01 01, 6 bytes, and nothing else");
+    g_native = true;
+    g_changes++;
+    g_nw = 0;
+    lg4ff_update(&none, false);
+    CHECK(g_open[1] == 1 && g_nw == 1 && SENT(1, 0xF8, 0x81, 0x0E, 0x01), "back as C24F: the G29 opens, range 270");
+    lg4ff_shutdown();
 
     printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED", g_fail, g_fail == 1 ? "" : "s");
     return g_fail ? 1 : 0;

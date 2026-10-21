@@ -1,8 +1,8 @@
 /*
  * lg4ff.h — a Logitech G25 without Logitech's software (Pinboard #1370), for
  * the front ends that have SDL: the desktop (main.c) and the handheld
- * (main_sdl.c). The G27, the Driving Force GT and the Driving Force Pro take
- * the same commands and get the same.
+ * (main_sdl.c). The G27, the G29, the Driving Force GT and the Driving Force
+ * Pro take the same commands and get the same (the G29: Pinboard #1419).
  *
  * G Hub does not drive a G25, and without Logitech Gaming Software 5.10 (or
  * the old Profiler) Windows sees a Driving Force EX: 200 degrees, the pedals
@@ -13,7 +13,8 @@
  *
  *   - A wheel still in compatibility mode is sent its mode switch, once. It
  *     drops off the bus and comes back as itself (SDL lists it again, a wheel
- *     sdl_pads.h plays like any other).
+ *     sdl_pads.h plays like any other). A G29 is switched from either of its
+ *     modes, PS3 or PS4.
  *   - The native wheel is given its turning range (--g25-range N degrees, 270
  *     by default as the cabinets' wheels turn; 0 leaves it as it is).
  *   - When SDL has no haptic for the wheel (Windows without Logitech's driver),
@@ -111,7 +112,8 @@ static bool lg4ff__switched(const char *path) {
 
 /* A compat-mode wheel: its mode switch, once a path (a wheel that will not
  * switch is not sent it for ever). */
-static void lg4ff__switch(const SDL_hid_device_info *i, lg4ff_model_t m) {
+static void lg4ff__switch(const SDL_hid_device_info *i, lg4ff_id_t id) {
+    lg4ff_model_t m = id.model;
     if (lg4ff__switched(i->path)) return;
     if (g_lg4ff.nswitched < LG4FF_SWITCHED_MAX)
         snprintf(g_lg4ff.switched[g_lg4ff.nswitched++], sizeof g_lg4ff.switched[0], "%s", i->path);
@@ -124,12 +126,13 @@ static void lg4ff__switch(const SDL_hid_device_info *i, lg4ff_model_t m) {
         return;
     }
     uint8_t r[2][LG4FF_REPORT];
-    int n = lg4ff_mode_switch(r, m);
+    int len;
+    int n = lg4ff_mode_switch(r, id, &len);
     bool ok = true;
-    for (int k = 0; k < n && ok; k++) ok = SDL_hid_write(d, r[k], LG4FF_REPORT) >= 0;
+    for (int k = 0; k < n && ok; k++) ok = SDL_hid_write(d, r[k], (size_t)len) >= 0;
     SDL_hid_close(d);
-    if (ok) LOG_INFO("lg4ff: the %s is in compatibility mode (%04X rev %04X); switched to its own", lg4ff_name(m),
-                     i->product_id, i->release_number);
+    if (ok) LOG_INFO("lg4ff: the %s is in %s mode (%04X rev %04X); switched to its own", lg4ff_name(m),
+                     id.ps4 ? "its PS4" : "compatibility", i->product_id, i->release_number);
     else    LOG_WARN("lg4ff: the %s's mode switch failed: %s", lg4ff_name(m), SDL_GetError());
 }
 
@@ -139,7 +142,7 @@ static void lg4ff__find(void) {
     for (SDL_hid_device_info *i = list; i; i = i->next) {
         lg4ff_id_t id = lg4ff_identify(i->product_id, i->release_number);
         if (id.model == LG4FF_NONE) continue;
-        if (id.compat) { lg4ff__switch(i, id.model); continue; }
+        if (id.compat) { lg4ff__switch(i, id); continue; }
         if (g_lg4ff.dev) continue;
         g_lg4ff.dev = SDL_hid_open_path(i->path);
         if (!g_lg4ff.dev) {
