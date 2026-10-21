@@ -46,6 +46,7 @@ static struct {
     Uint32         changes;      /* SDL_hid_device_change_count when last looked */
     Uint64         looked_ms;
     bool           warned;
+    bool           listed;       /* the devices seen, logged when no base opened */
     /* What the base shows; -1 / "?" = not sent yet. */
     int            mask;
     char           text[4];
@@ -103,9 +104,24 @@ static void fanatec__open_64(const char *path) {
 #define FANATEC__OPEN_HINT ""
 #endif
 
+/* Every Fanatec HID collection. SDL's enumeration lists only joystick and
+ * gamepad collections unless SDL_HINT_HIDAPI_ENUMERATE_ONLY_CONTROLLERS is
+ * "0" (true by default); the commands go to the base's first collection,
+ * whatever its usage, so the hint is off for this one call (Pinboard #1416). */
+static SDL_hid_device_info *fanatec__enumerate(void) {
+    const char *was = SDL_GetHint(SDL_HINT_HIDAPI_ENUMERATE_ONLY_CONTROLLERS);
+    char keep[16] = "";
+    if (was) snprintf(keep, sizeof keep, "%s", was);
+    SDL_SetHint(SDL_HINT_HIDAPI_ENUMERATE_ONLY_CONTROLLERS, "0");
+    SDL_hid_device_info *list = SDL_hid_enumerate(FANATEC_VID, 0);
+    SDL_ResetHint(SDL_HINT_HIDAPI_ENUMERATE_ONLY_CONTROLLERS);
+    if (was) SDL_SetHint(SDL_HINT_HIDAPI_ENUMERATE_ONLY_CONTROLLERS, keep);
+    return list;
+}
+
 /* The first wheel base that opens. */
 static void fanatec__find(void) {
-    SDL_hid_device_info *list = SDL_hid_enumerate(FANATEC_VID, 0);
+    SDL_hid_device_info *list = fanatec__enumerate();
     for (SDL_hid_device_info *i = list; i && !g_fanatec.dev; i = i->next) {
         if (!fanatec_is_base(i->product_id)) continue;
         /* Windows lists each collection; the first is the one with the commands. */
@@ -127,6 +143,14 @@ static void fanatec__find(void) {
         g_fanatec.display = false;
         /* A rim with a rev stripe shows the rim's rev bits as revs. */
         fanatec__cmd(fanatec_rev_translator, true);
+    }
+    /* No base: once, what there was, so a report names the IDs to add. */
+    if (!g_fanatec.dev && !g_fanatec.listed) {
+        g_fanatec.listed = true;
+        if (!list) LOG_INFO("fanatec: no Fanatec HID device (0EB7) found");
+        for (SDL_hid_device_info *i = list; i; i = i->next)
+            LOG_INFO("fanatec: %04X %s, usage %04X:%04X, not opened as a base (%s)", i->product_id,
+                     fanatec_is_base(i->product_id) ? "base" : "not a base", i->usage_page, i->usage, i->path);
     }
     SDL_hid_free_enumeration(list);
 }

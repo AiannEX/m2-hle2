@@ -166,19 +166,34 @@ int main(void) {
     CHECK(!g_pad_pick.guid[0] && !g_wheel_opt.dev.guid[0] && !g_wheel_opt.pedals.guid[0] && !g_wheel_opt.rest_set[0],
           "the defaults drop every pick");
 
-    /* A Fanatec base SDL has no word for (a ClubSport DD, 0EB7:01E9) is the
-     * wheel; Fanatec's pedals on their own lead (0EB7:183B) are not. */
+    /* A Fanatec base SDL has no word for (0EB7:0E07, in the SDK's base table,
+     * not on SDL's wheel list) is the wheel; Fanatec's pedals on their own
+     * lead (0EB7:183B) are not. */
     SDL_DetachVirtualJoystick(base);
-    SDL_JoystickID csdd = attach_vid("FANATEC ClubSport DD", SDL_JOYSTICK_TYPE_UNKNOWN, 0x0EB7, 0x01E9, 3, 16);
+    SDL_JoystickID fbase = attach_vid("FANATEC Wheel", SDL_JOYSTICK_TYPE_UNKNOWN, 0x0EB7, 0x0E07, 3, 16);
     SDL_JoystickID fped = attach_vid("FANATEC ClubSport Pedals", SDL_JOYSTICK_TYPE_UNKNOWN, 0x0EB7, 0x183B, 3, 0);
     pump();
-    CHECK(SDL_GetJoystickTypeForID(csdd) != SDL_JOYSTICK_TYPE_WHEEL, "SDL does not call the ClubSport DD a wheel");
-    CHECK(wheel_is(csdd) && !wheel_is(fped), "a Fanatec base is the wheel, its pedals are not");
-    axis(csdd, 0, -20000);
+    CHECK(SDL_GetJoystickTypeForID(fbase) != SDL_JOYSTICK_TYPE_WHEEL, "SDL does not call 0EB7:0E07 a wheel");
+    CHECK(wheel_is(fbase) && !wheel_is(fped), "a Fanatec base is the wheel, its pedals are not");
+    axis(fbase, 0, -20000);
     pump();
     CHECK(g_io5649_host.steer < -15000, "the Fanatec base steers");
-    SDL_DetachVirtualJoystick(csdd);
+    SDL_DetachVirtualJoystick(fbase);
     SDL_DetachVirtualJoystick(fped);
+    pump();
+
+    /* A GT DD Pro (0EB7:0020, on SDL's list) listed twice, the copy that
+     * never moves first: the one that moves steers. */
+    SDL_JoystickID dead = attach_vid("FANATEC Wheel", SDL_JOYSTICK_TYPE_WHEEL, 0x0EB7, 0x0020, 3, 16);
+    pump();
+    SDL_JoystickID live = attach_vid("FANATEC Wheel", SDL_JOYSTICK_TYPE_WHEEL, 0x0EB7, 0x0020, 3, 16);
+    pump();
+    CHECK(wheel_is(dead) && wheel_is(live), "both copies of the base are wheels");
+    axis(live, 0, 20000);
+    pump();
+    CHECK(g_io5649_host.steer > 15000, "the copy that moves steers, not the dead one listed first");
+    SDL_DetachVirtualJoystick(dead);
+    SDL_DetachVirtualJoystick(live);
     pump();
 
     SDL_Quit();

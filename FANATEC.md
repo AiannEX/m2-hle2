@@ -14,13 +14,20 @@ and its rev LEDs and three-digit display show the game's meters.
   `--fanatec speed`. `--fanatec off` leaves the wheel alone. The LEDs and the
   display go back to the wheel when the game has no dashboard, the window loses
   focus, or the run ends.
-- **Found as a wheel** by its vendor ID (0EB7) and a PID below 0x1000, every
-  base's (`fanatec_is_base`; pedals, shifters and handbrakes are 0x1800 and up).
-  SDL 3.4 calls only ten older bases wheels and took the rest (GT DD Pro,
-  ClubSport DD, the 0x0Fxx bases...) for plain joysticks, which then did not
-  steer and got no lights (Pinboard #1416). The console prints every joystick
-  that is not a gamepad, with its VID:PID and what it was taken for. A base still
-  missed can be picked as the wheel in the Controls window.
+- **Found as a wheel** by its vendor ID (0EB7) and a PID below 0x1000
+  (`fanatec_is_base`), as well as by SDL's wheel list. Every base PID known is
+  below 0x1000 and every pedal PID known (183B, 6204-6206) above; SDL 3.4 lists
+  ten (0001, 0004-0007, 0011, 0020 = CSL DD, GT DD Pro
+  and ClubSport DD in PC mode, 0197, 038E, 0E03), and the rule adds the SDK's
+  others (0002, 0021-002F, 0E04-0E30, 0F00-0FFF). A base stays the wheel when
+  SDL has a gamepad mapping for it, and of two copies of one base the one that
+  moves steers. The console prints every joystick that is not a gamepad, with
+  its VID:PID and what it was taken for. A base still missed can be picked as
+  the wheel in the Controls window (Pinboard #1416).
+- **The lights' HID open** lists every 0EB7 collection with SDL's
+  `SDL_HINT_HIDAPI_ENUMERATE_ONLY_CONTROLLERS` off for the call (on by default,
+  it hides a collection that is not a joystick or gamepad), and when no base
+  opens it logs once each device it saw, with its usage and path.
 - **Linux** needs the base's hidraw node to be writable, e.g.
   `/etc/udev/rules.d/60-fanatec.rules`:
   `KERNEL=="hidraw*", ATTRS{idVendor}=="0eb7", MODE="0666"` (or `TAG+="uaccess"`).

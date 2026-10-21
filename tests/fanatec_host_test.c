@@ -3,7 +3,8 @@
  * #1361): SDL's hidapi calls are this file's, so no hardware.
  *
  * A Windows-style DD1 lists three collections beside a pedal set: the base's
- * first one opens and its third takes the 0xFF reports. A race lights the rev
+ * first one opens (SDL lists it only with its only-controllers hint off)
+ * and its third takes the 0xFF reports. A race lights the rev
  * LEDs (base, rim and RGB) and takes the display for the gear; the same
  * meters again send nothing, a new rpm only the LEDs. A game with no meters
  * gives everything back, and the run's end turns the stripe translator off
@@ -59,15 +60,24 @@ SDL_hid_device_info *fake_hid_enumerate(unsigned short vid, unsigned short pid) 
     if (vid != FANATEC_VID) return NULL;
     const char *paths[4] = { PEDAL, COL02, COL01, COL03 };
     const unsigned short pids[4] = { 0x183B, 0x0006, 0x0006, 0x0006 };
+    /* Say the commands' collection is a vendor one: SDL hides it unless
+     * the only-controllers hint is off, as it does a real one. */
+    const unsigned short pages[4] = { 0x0001, 0x0001, 0xFF00, 0xFF00 };
+    bool all = SDL_GetHintBoolean(SDL_HINT_HIDAPI_ENUMERATE_ONLY_CONTROLLERS, true) == false;
+    SDL_hid_device_info *head = NULL, **tail = &head;
     for (int i = 0; i < 4; i++) {
         memset(&g_info[i], 0, sizeof g_info[i]);
         g_info[i].path = (char *)paths[i];
         g_info[i].vendor_id = FANATEC_VID;
         g_info[i].product_id = pids[i];
         g_info[i].product_string = (wchar_t *)L"Podium Wheel Base DD1";
-        g_info[i].next = i < 3 ? &g_info[i + 1] : NULL;
+        g_info[i].usage_page = pages[i];
+        g_info[i].usage = pages[i] == 0x0001 ? 0x0004 : 0x0001;
+        if (!all && pages[i] != 0x0001) continue;
+        *tail = &g_info[i];
+        tail = &g_info[i].next;
     }
-    return &g_info[0];
+    return head;
 }
 void fake_hid_free_enumeration(SDL_hid_device_info *d) { (void)d; }
 
@@ -114,6 +124,8 @@ int main(void) {
     g_meters = (game_dash_t){ .on = true, .speed = 180, .gear = 3, .rpm = 8000, .rpm_lo = 5000, .rpm_max = 8500 };
     fanatec_update(&g_bus);
     CHECK(g_open[0] == 1 && g_open[1] == 1, "the base's col01 and col03 open; the pedals and col02 do not");
+    CHECK(SDL_GetHint(SDL_HINT_HIDAPI_ENUMERATE_ONLY_CONTROLLERS) == NULL,
+          "col01 found though not a joystick collection, and SDL's only-controllers hint is left as it was");
     CHECK(g_w[0].dev == 1 && g_w[0].n == 8 && g_w[0].b[0] == 0x01, "8-byte reports, ID 1 on a DD1");
     CHECK(SENT(1, 0xF8, 0x09, 0x07, 0x01), "stripe translator on");
     CHECK(SENT(1, 0xF8, 0x13, 0xFF, 0x00), "base revs: 8000 rpm lights eight");

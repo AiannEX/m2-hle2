@@ -225,20 +225,42 @@ static int joy_rest(SDL_JoystickID id, int axis) {
     return 32767;
 }
 
-/* A racing wheel: one SDL calls a wheel, or a Fanatec base (SDL 3.4's list
- * has ten of them, not the GT DD Pro, the ClubSport DD or the newer bases,
- * which it takes for plain joysticks: Pinboard #1416). */
+/* A Fanatec wheel base by its IDs (fanatec_is_base). SDL 3.4's wheel list
+ * has the ten PIDs hid-fanatecff knows; Fanatec's SDK knows more, which SDL
+ * takes for plain joysticks (Pinboard #1416). */
+static bool joy_is_fanatec_base(SDL_JoystickID id) {
+    return SDL_GetJoystickVendorForID(id) == FANATEC_VID && fanatec_is_base(SDL_GetJoystickProductForID(id));
+}
+
+/* A racing wheel: one SDL calls a wheel, or a Fanatec base. */
 static bool joy_is_racing_wheel(SDL_JoystickID id) {
-    return SDL_GetJoystickTypeForID(id) == SDL_JOYSTICK_TYPE_WHEEL ||
-           (SDL_GetJoystickVendorForID(id) == FANATEC_VID && fanatec_is_base(SDL_GetJoystickProductForID(id)));
+    return SDL_GetJoystickTypeForID(id) == SDL_JOYSTICK_TYPE_WHEEL || joy_is_fanatec_base(id);
 }
 
 /* The wheel: the picked device, else a racing wheel (any joystick that is not
- * a gamepad, with --wheel-axes). */
+ * a gamepad, with --wheel-axes). A Fanatec base stays the wheel even when SDL
+ * has a gamepad mapping for it (Linux makes one for a device with gamepad
+ * buttons). */
 static bool wheel_is(SDL_JoystickID id) {
     if (g_wheel_opt.dev.guid[0]) return pad_pick_is(&g_wheel_opt.dev, id);
+    if (joy_is_fanatec_base(id)) return true;
     if (SDL_IsGamepad(id)) return false;
     return g_wheel_opt.forced || joy_is_racing_wheel(id);
+}
+
+/* Has this wheel's steering axis moved since it came? A base can list twice
+ * (hid-fanatecff: "only the first ID points to the real device"), and the
+ * copy that never moves must not hold the steering at the centre. */
+static struct { SDL_JoystickID id; Sint16 first; bool moved; } g_wheel_seen[8];
+static int g_wheel_seen_next;
+static bool wheel_moved(SDL_JoystickID id, Sint16 v) {
+    for (int i = 0; i < 8; i++)
+        if (g_wheel_seen[i].id == id) return g_wheel_seen[i].moved |= v != g_wheel_seen[i].first;
+    int n = g_wheel_seen_next++ & 7;
+    g_wheel_seen[n].id = id;
+    g_wheel_seen[n].first = v;
+    g_wheel_seen[n].moved = false;
+    return false;
 }
 
 /* A picked pedal device that is not the wheel itself. */
@@ -302,7 +324,7 @@ static void pad_refresh(void) {
     int count = 0, here = 0;
     /* The wheel and pedals for a driving game: a racing wheel's, else a
      * gamepad's left stick and triggers (R2 accelerator, L2 brake). */
-    bool an_on = false, an_wheel = false;
+    bool an_on = false, an_wheel = false, an_moved = false;
     int an_steer = 0, an_accel = 0, an_brake = 0;
     SDL_JoystickID *jids = pad_device_takes(true) ? SDL_GetJoysticks(&count) : NULL;
     for (int i = 0, w = 0; jids && i < count; i++) {
@@ -319,9 +341,12 @@ static void pad_refresh(void) {
         for (int k = 0; pj && k < 2; k++)
             ped[k] = wheel_host_pedal(SDL_GetJoystickAxis(pj, pax[k]),
                                       g_wheel_opt.rest_set[k] ? g_wheel_opt.rest[k] : joy_rest(pid, pax[k]));
-        int st = wheel_host_steer(SDL_GetJoystickAxis(joy, g_wheel_opt.steer), 0);
+        Sint16 raw = SDL_GetJoystickAxis(joy, g_wheel_opt.steer);
+        int st = wheel_host_steer(raw, 0);
         int ac = ped[0], br = ped[1];
-        if (!an_wheel) an_steer = st;
+        /* The first wheel steers, or the first that has moved. */
+        bool moved = wheel_moved(jids[i], raw);
+        if (!an_wheel || (moved && !an_moved)) { an_steer = st; an_moved = moved; }
         an_on = an_wheel = true;
         if (ac > an_accel) an_accel = ac;
         if (br > an_brake) an_brake = br;
