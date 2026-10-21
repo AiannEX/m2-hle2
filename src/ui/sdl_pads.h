@@ -25,6 +25,7 @@
 #include <SDL3/SDL.h>
 
 #include "input.h"
+#include "fanatec_proto.h" /* fanatec_is_base: SDL knows only some bases (Pinboard #1416) */
 #include "ffb.h"           /* the drive board's force feedback (Pinboard #1047) */
 #include "wheel_host.h"    /* analog wheel and pedals (Pinboard #1082) */
 
@@ -224,12 +225,20 @@ static int joy_rest(SDL_JoystickID id, int axis) {
     return 32767;
 }
 
-/* The wheel: the picked device, else a joystick SDL calls a wheel (any that
- * is not a gamepad, with --wheel-axes). */
+/* A racing wheel: one SDL calls a wheel, or a Fanatec base (SDL 3.4's list
+ * has ten of them, not the GT DD Pro, the ClubSport DD or the newer bases,
+ * which it takes for plain joysticks: Pinboard #1416). */
+static bool joy_is_racing_wheel(SDL_JoystickID id) {
+    return SDL_GetJoystickTypeForID(id) == SDL_JOYSTICK_TYPE_WHEEL ||
+           (SDL_GetJoystickVendorForID(id) == FANATEC_VID && fanatec_is_base(SDL_GetJoystickProductForID(id)));
+}
+
+/* The wheel: the picked device, else a racing wheel (any joystick that is not
+ * a gamepad, with --wheel-axes). */
 static bool wheel_is(SDL_JoystickID id) {
     if (g_wheel_opt.dev.guid[0]) return pad_pick_is(&g_wheel_opt.dev, id);
     if (SDL_IsGamepad(id)) return false;
-    return g_wheel_opt.forced || SDL_GetJoystickTypeForID(id) == SDL_JOYSTICK_TYPE_WHEEL;
+    return g_wheel_opt.forced || joy_is_racing_wheel(id);
 }
 
 /* A picked pedal device that is not the wheel itself. */
@@ -258,7 +267,12 @@ static void wheel_open(SDL_JoystickID id) {
             if (!SDL_GetJoystickAxisInitialState(joy, k, &g_joy_rest[s].rest[k]))
                 g_joy_rest[s].rest[k] = SDL_GetJoystickAxis(joy, k);
     }
-    if (wheel_is(id)) printf("m2hle: wheel %s\n", SDL_GetJoystickName(joy));
+    /* Every joystick that is not a gamepad, with what it was taken for: what a
+     * wheel's owner sends when it does not steer. */
+    if (!SDL_IsGamepad(id))
+        printf("m2hle: %s %s (%04X:%04X, %d axes, %d buttons)\n", wheel_is(id) ? "wheel" : "joystick",
+               SDL_GetJoystickName(joy), SDL_GetJoystickVendor(joy), SDL_GetJoystickProduct(joy),
+               SDL_GetNumJoystickAxes(joy), SDL_GetNumJoystickButtons(joy));
 }
 
 static void wheel_close(SDL_JoystickID id) {

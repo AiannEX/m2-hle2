@@ -38,12 +38,15 @@
 #define FANATEC_REPORT   8      /* a command: ID + 7 bytes */
 #define FANATEC_REPORT64 64     /* an 0xFF report */
 
-/* A wheel base (the SDK's PID -> base type table), not pedals, a shifter or a
- * handbrake, which share the vendor ID and take none of this. */
+/* A wheel base, not pedals, a shifter or a handbrake, which share the vendor
+ * ID and take none of this. Every base's PID is below 0x1000 (the SDK's PID ->
+ * base type table: 0001-0007, 0020-002F, 038E, 0E03-0E30, 0F00-0FFF, the rest
+ * "generic"; and the CSR Elite 0011, the Porsche wheels 0197, the ClubSport DD
+ * 01E9), the others' 0x1800 and up (pedals 183B, 6204-6206; shifters and
+ * handbrakes 1Axx). So any PID below 0x1000 is one: a list missed the GT DD
+ * Pro and the ClubSport DD (Pinboard #1416). */
 static inline bool fanatec_is_base(uint16_t pid) {
-    return pid == 0x0001 || pid == 0x0002 || (pid >= 0x0004 && pid <= 0x0007) ||
-           pid == 0x0020 || pid == 0x038E || (pid >= 0x0E03 && pid <= 0x0E30) ||
-           (pid >= 0x0F00 && pid <= 0x0FFF);
+    return pid >= 0x0001 && pid < 0x1000;
 }
 
 /* Several top-level collections: report ID 1, and the 0xFF reports. */
