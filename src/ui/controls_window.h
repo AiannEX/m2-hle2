@@ -407,8 +407,8 @@ static inline SDL_Joystick *controls_first_wheel(void) {
 /* What SDL takes a joystick for. */
 static inline const char *controls_joy_kind(SDL_JoystickID id) {
     if (SDL_IsGamepad(id)) return "gamepad";
+    if (joy_is_racing_wheel(id)) return "wheel";
     switch (SDL_GetJoystickTypeForID(id)) {
-        case SDL_JOYSTICK_TYPE_WHEEL:    return "wheel";
         case SDL_JOYSTICK_TYPE_THROTTLE: return "throttle";
         case SDL_JOYSTICK_TYPE_FLIGHT_STICK: return "flight stick";
         default:                         return "joystick";

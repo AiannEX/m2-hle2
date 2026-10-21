@@ -26,11 +26,12 @@ static int g_fail = 0;
 } while (0)
 
 /* A virtual device; type GAMEPAD with the standard buttons is a gamepad to SDL. */
-static SDL_JoystickID attach(const char *name, SDL_JoystickType type, Uint16 product, int naxes, int nbuttons) {
+static SDL_JoystickID attach_vid(const char *name, SDL_JoystickType type, Uint16 vendor, Uint16 product,
+                                 int naxes, int nbuttons) {
     SDL_VirtualJoystickDesc d;
     SDL_INIT_INTERFACE(&d);
     d.type = (Uint16)type;
-    d.vendor_id = 0x1234;
+    d.vendor_id = vendor;
     d.product_id = product;
     d.naxes = (Uint16)naxes;
     d.nbuttons = (Uint16)nbuttons;
@@ -40,6 +41,10 @@ static SDL_JoystickID attach(const char *name, SDL_JoystickType type, Uint16 pro
                         (1u << SDL_GAMEPAD_BUTTON_WEST) | (1u << SDL_GAMEPAD_BUTTON_NORTH) |
                         (1u << SDL_GAMEPAD_BUTTON_START) | (1u << SDL_GAMEPAD_BUTTON_BACK);
     return SDL_AttachVirtualJoystick(&d);
+}
+
+static SDL_JoystickID attach(const char *name, SDL_JoystickType type, Uint16 product, int naxes, int nbuttons) {
+    return attach_vid(name, type, 0x1234, product, naxes, nbuttons);
 }
 
 /* SDL's events into sdl_pads, as the front end does, then the presses. */
@@ -160,6 +165,36 @@ int main(void) {
     sdl_pads_default();
     CHECK(!g_pad_pick.guid[0] && !g_wheel_opt.dev.guid[0] && !g_wheel_opt.pedals.guid[0] && !g_wheel_opt.rest_set[0],
           "the defaults drop every pick");
+
+    /* A Fanatec base SDL has no word for (0EB7:0E07, in the SDK's base table,
+     * not on SDL's wheel list) is the wheel; Fanatec's pedals on their own
+     * lead (0EB7:183B) are not. */
+    SDL_DetachVirtualJoystick(base);
+    SDL_JoystickID fbase = attach_vid("FANATEC Wheel", SDL_JOYSTICK_TYPE_UNKNOWN, 0x0EB7, 0x0E07, 3, 16);
+    SDL_JoystickID fped = attach_vid("FANATEC ClubSport Pedals", SDL_JOYSTICK_TYPE_UNKNOWN, 0x0EB7, 0x183B, 3, 0);
+    pump();
+    CHECK(SDL_GetJoystickTypeForID(fbase) != SDL_JOYSTICK_TYPE_WHEEL, "SDL does not call 0EB7:0E07 a wheel");
+    CHECK(wheel_is(fbase) && !wheel_is(fped), "a Fanatec base is the wheel, its pedals are not");
+    axis(fbase, 0, -20000);
+    pump();
+    CHECK(g_io5649_host.steer < -15000, "the Fanatec base steers");
+    SDL_DetachVirtualJoystick(fbase);
+    SDL_DetachVirtualJoystick(fped);
+    pump();
+
+    /* A GT DD Pro (0EB7:0020, on SDL's list) listed twice, the copy that
+     * never moves first: the one that moves steers. */
+    SDL_JoystickID dead = attach_vid("FANATEC Wheel", SDL_JOYSTICK_TYPE_WHEEL, 0x0EB7, 0x0020, 3, 16);
+    pump();
+    SDL_JoystickID live = attach_vid("FANATEC Wheel", SDL_JOYSTICK_TYPE_WHEEL, 0x0EB7, 0x0020, 3, 16);
+    pump();
+    CHECK(wheel_is(dead) && wheel_is(live), "both copies of the base are wheels");
+    axis(live, 0, 20000);
+    pump();
+    CHECK(g_io5649_host.steer > 15000, "the copy that moves steers, not the dead one listed first");
+    SDL_DetachVirtualJoystick(dead);
+    SDL_DetachVirtualJoystick(live);
+    pump();
 
     SDL_Quit();
     printf("%s (%d failures)\n", g_fail ? "FAILED" : "ALL PASS", g_fail);
