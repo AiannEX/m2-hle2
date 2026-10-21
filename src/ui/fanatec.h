@@ -96,6 +96,13 @@ static void fanatec__open_64(const char *path) {
     g_fanatec.dev64 = SDL_hid_open_path(p);
 }
 
+/* Said when a base will not open (a macro argument cannot hold an #if). */
+#if defined(__linux__)
+#define FANATEC__OPEN_HINT " (a udev rule for 0eb7 gives hidraw to the user; FANATEC.md)"
+#else
+#define FANATEC__OPEN_HINT ""
+#endif
+
 /* The first wheel base that opens. */
 static void fanatec__find(void) {
     SDL_hid_device_info *list = SDL_hid_enumerate(FANATEC_VID, 0);
@@ -107,13 +114,7 @@ static void fanatec__find(void) {
         if (!g_fanatec.dev) {
             if (!g_fanatec.warned)
                 LOG_WARN("fanatec: %ls (%04X) would not open: %s%s", i->product_string ? i->product_string : L"base",
-                         i->product_id, SDL_GetError(),
-#if defined(__linux__)
-                         " (a udev rule for 0eb7 gives hidraw to the user; FANATEC.md)"
-#else
-                         ""
-#endif
-                         );
+                         i->product_id, SDL_GetError(), FANATEC__OPEN_HINT);
             g_fanatec.warned = true;
             continue;
         }
