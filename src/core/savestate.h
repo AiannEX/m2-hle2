@@ -536,7 +536,9 @@ static inline const char *savestate_save(const char *path, const i960_cpu_t *cpu
     char tmp[1100];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
     const char *err = savestate__write_tmp(tmp, zbuf, zlen);
-    mz_zip_writer_end(&z);   /* frees zbuf */
+    /* finalize_heap_archive hands the buffer over: writer_end leaves it be */
+    mz_zip_writer_end(&z);
+    mz_free(zbuf);
     if (!err) {
 #ifdef _WIN32
         remove(path);         /* rename does not replace on Windows */
