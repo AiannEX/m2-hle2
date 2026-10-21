@@ -1498,6 +1498,16 @@ moves x into d beside the op that makes its first guess, and with MAME's order t
 (tgp.h, `tgp_alu_d`). Over 3000 frames of attract the largest error is now 1.7e-7 for 0x58
 and under 1e-4 for every command (0x5C's worst is a difference of near-equal products).
 
+## Each TGP op's argument and reply counts (`tgp-ops.py`)
+
+`python3 tools/tgp-ops.py LOG [--names CSV]` splits det_digest's `--cop` log of any Model 2A
+game into commands where the TGP program's main loop takes a word (the loop PC is found by
+itself: the one that reads only headers, of more than one op) and prints each op's count of
+commands, arguments, replies and first frame. With a CSV of `opcode,name,ps2_args` it names
+the ops and exits 1 where a count is off the table. Run on VF2 2.1 with vf2-decomp's
+`decomp/tgp/commands.csv` (Pinboard #1393), 72 ops over 3000 attract frames all match the PS2
+port's counts; [VF2-DECOMP.md](../VF2-DECOMP.md) has the run and what it corrected there.
+
 ## `tools/mame` and `tests/`
 
 The MAME side runs under the sibling `claude_mame` checkout (its
