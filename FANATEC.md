@@ -28,6 +28,9 @@ and its rev LEDs and three-digit display show the game's meters.
   `SDL_HINT_HIDAPI_ENUMERATE_ONLY_CONTROLLERS` off for the call (on by default,
   it hides a collection that is not a joystick or gamepad), and when no base
   opens it logs once each device it saw, with its usage and path.
+- **The force** is SDL's haptics on the wheel (DirectInput through Fanatec's
+  driver; hid-fanatecff on Linux). A wheel that gets none prints why: no haptic
+  device, the open's error, or no effect it takes.
 - **Linux** needs the base's hidraw node to be writable, e.g.
   `/etc/udev/rules.d/60-fanatec.rules`:
   `KERNEL=="hidraw*", ATTRS{idVendor}=="0eb7", MODE="0666"` (or `TAG+="uaccess"`).

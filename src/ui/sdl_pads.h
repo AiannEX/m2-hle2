@@ -464,9 +464,19 @@ static void ffb_close_pad(int s) {
 
 /* A wheel's four effects, made once and updated in place. */
 static void ffb_open_haptic(int s, SDL_Joystick *joy) {
-    if (!joy || !SDL_IsJoystickHaptic(joy)) return;
+    if (!joy) return;
+    /* A wheel without its force says why (a base whose driver is missing,
+     * or a device another program holds; Pinboard #1416). */
+    bool wheel = wheel_is(SDL_GetJoystickID(joy));
+    if (!SDL_IsJoystickHaptic(joy)) {
+        if (wheel) printf("m2hle: no force feedback on %s: SDL sees no haptic device\n", SDL_GetJoystickName(joy));
+        return;
+    }
     SDL_Haptic *h = SDL_OpenHapticFromJoystick(joy);
-    if (!h) return;
+    if (!h) {
+        if (wheel) printf("m2hle: no force feedback on %s: %s\n", SDL_GetJoystickName(joy), SDL_GetError());
+        return;
+    }
     Uint32 has = SDL_GetHapticFeatures(h);
     int made = 0;
     for (int k = 0; k < 4; k++) {
@@ -474,7 +484,12 @@ static void ffb_open_haptic(int s, SDL_Joystick *joy) {
         g_ffb_pad[s].fx[k] = (has & g_ffb_type[k]) ? SDL_CreateHapticEffect(h, &e) : -1;
         if (g_ffb_pad[s].fx[k] >= 0) made++;
     }
-    if (!made) { SDL_CloseHaptic(h); return; }
+    if (!made) {
+        if (wheel) printf("m2hle: no force feedback on %s: no effect it takes (features %08X)\n",
+                          SDL_GetJoystickName(joy), (unsigned)has);
+        SDL_CloseHaptic(h);
+        return;
+    }
     if (has & SDL_HAPTIC_AUTOCENTER) SDL_SetHapticAutocenter(h, 0);   /* the game's spring centres it */
     g_ffb_pad[s].haptic = h;
     printf("m2hle: force feedback on %s\n", SDL_GetJoystickName(joy));
