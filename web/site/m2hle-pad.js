@@ -583,7 +583,9 @@ const m2hlePad = (() => {
         chip.type = 'button';
         chip.title = m2hleLang.t('pad.remove');
         chip.setAttribute('aria-label', m2hleLang.t('pad.remove.from', { button: bindName(x, standard, layout), action: a.label }));
-        chip.textContent = bindName(x, standard, layout) + ' ×';
+        /* the pad's own faces (m2hle-prompts.js); a Bliss-Box's Saturn names stay words */
+        const icon = standard && layout === 'std' && m2hlePrompts.pad(x, list[0]);
+        m2hlePrompts.chip(chip, icon, bindName(x, standard, layout));
         chip.addEventListener('click', () => { binds[a.id].splice(i, 1); save(); render(); });
         chips.appendChild(chip);
       });

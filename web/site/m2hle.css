@@ -728,6 +728,9 @@ li.np-me { margin: 0; background: rgba(0, 186, 255, 0.2); color: #fff; }
   cursor: pointer;
 }
 .pad-chip:hover { border-color: var(--bad); color: var(--bad); }
+/* an input prompt in a chip (m2hle-prompts.js): Kenney's white icons, a line tall */
+.pad-chip .prompt { width: 2em; height: 2em; margin: -0.45em -0.2em; vertical-align: middle; }
+.pad-chip:hover .prompt { filter: drop-shadow(0 0 2px var(--bad)); }
 .pad-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .pad-add { flex: 0 0 auto; font-size: 0.8125rem; }
 .pad-add[aria-pressed="true"] { background-color: var(--sel); box-shadow: 0 0 0 1px var(--sel-line); }
