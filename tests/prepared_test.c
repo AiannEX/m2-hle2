@@ -32,6 +32,9 @@
 #include "daytona.h"
 #include "hotd.h"
 #include "schamp.h"
+#include "srallyc.h"
+#include "airwlkrs.h"
+#include "dynamcop.h"
 #include "geo3d.h"
 
 #include "test_rom_dir.h"
@@ -67,7 +70,7 @@ typedef struct {
      * points at +0..+20, attribute at +24 and normal at +28..+36): the meshes
      * found, the ones past the ROM, FNV-1a over each one's index, offset and
      * ten record words, and three of them. Polygon-RAM entries are skipped.
-     * Taken with node from noclip's master (aefb324). */
+     * Taken with node from noclip's master (629adcd; tools/noclip-reads.mjs). */
     uint32_t      mesh_rom, mesh_past, mesh_fnv;
     noclip_mesh_t mesh[3];
     /* decodeModel on each of those meshes (js/model.js), with the polygon and
@@ -76,27 +79,29 @@ typedef struct {
      * faces summed, and FNV-1a, per mesh, over its index, offset, records, the
      * count and indices of the textures-ROM bytes read, then 0xFFFFFFFF for
      * null or faceCount, texturedFaces, paletteMax, the triangle count and
-     * each triangle's face. Taken with node from noclip's master (aefb324). */
+     * each triangle's face. Taken with node from noclip's master (629adcd). */
     uint32_t      dec_n, dec_null, dec_records, dec_faces, dec_textured, dec_fnv;
     /* What decodeModel derives from each header it reads (the end of its
      * haveMat block, probed in an exported copy of js/model.js): the headers
      * read, the textured ones, and FNV-1a, per mesh, over its index and header
      * count, then per header the face index, textured, faceFlags, texw, texh,
-     * lumaBase, tx, sheet, ty, matidx, tw and th. noclip master (aefb324). */
+     * lumaBase, tx, sheet, ty, matidx, tw and th. The explorer's faceFlags
+     * carry the microtexture in bits 10-15 since its PR #145; the test
+     * mixes geo3d_texhdr_t.micro in that shape. noclip master (629adcd). */
     uint32_t      hdr_n, hdr_textured, hdr_fnv;
     /* What decodeModel hands emitTri (a probe at its top, in the same exported
      * copy): the triangles, and FNV-1a, per mesh, over its index and, after
      * its triangles, their count, then per triangle the three corners, the
      * three UV pairs, the material slot, attribute bit 17, the record's ROM
      * normal, the z mode, the four z-source corners and the facing point,
-     * floats as their bits (NaN 0x7fc00000). noclip master (aefb324). */
+     * floats as their bits (NaN 0x7fc00000). noclip master (629adcd). */
     uint32_t      tri_n, tri_fnv;
     /* What decodeModel lights and culls each triangle by (its normals and
      * flags arrays): whether the game takes the plane of A, B and C for the
      * normal (js/games.js lighting.planeNormals), the triangles with bit 128,
      * and FNV-1a, per mesh, over its index, then per triangle the emitted
      * normal's three floats and bit 128, then the triangle count. noclip
-     * master (aefb324). */
+     * master (629adcd). */
     uint32_t      plane, lit_b128, lit_fnv;
     /* Where the board's rule (MAME geo_parse, geo3d_board_normal and
      * geo3d_board_cull at an identity matrix) parts from it, as this test
@@ -113,8 +118,9 @@ typedef struct {
     uint32_t from, at, words;
 } texram_run_t;
 
-/* What the test reads a profile with: its recipe, the layout its quirks must
- * name (model_table.h), noclip's reads, and the texture RAM they assume. */
+/* What the test reads a profile with: its recipe (NULL for a set loaded by
+ * hand, srallyc), the layout its quirks must name (model_table.h), noclip's
+ * reads, and the texture RAM they assume. */
 typedef struct {
     const game_profile_t *p;
     const rom_recipe_t   *recipe;
@@ -144,8 +150,29 @@ static const prepared_case_t k_cases[] = {
       { 7477, 0xac1eb34fu, 7465, 0, { 0, 1, 7476 },
         { { 0x0, 0x6, 0x800000 }, { 0x0, 0x6, 0x800000 }, { 0x6c7ffa, 0x6c821a, 0xef296a } },
         7465, 0, 0xf2dfe35cu, { { 0, 0x0, 0x1000a02 }, { 1, 0x0, 0x1000a02 }, { 7476, 0x1bca5a8, 0x1000601 } },
-        7465, 0, 466634, 378760, 367185, 0xdc922fa1u, 459169, 446049, 0xcd3e0d51u,
+        7465, 0, 466634, 378760, 367185, 0xdc922fa1u, 459169, 446049, 0x8ce537bdu,
         664370, 0xc855317au, 1, 182983, 0x03eaf696u, 2263, 0, 10297, 0 } },
+    /* The three tables noclip reads that m2-hle2 had not (Pinboard #1458):
+     * Sega Rally, Dynamite Cop (one table for its five builds) and Air
+     * Walkers. Air Walkers' model 555 is the longest mesh here, 5441 records. */
+    { &srallyc_profile, NULL, MODEL_LAYOUT_1995,
+      { 1508, 0xba1a635eu, 1508, 0, { 0, 1, 1507 },
+        { { 0xc, 0x8, 0x800000 }, { 0x54, 0x50, 0x800000 }, { 0x1360ec, 0x1360f4, 0x9b168e } },
+        1508, 0, 0x8886ef6cu, { { 0, 0x0, 0x1001601 }, { 1, 0x0, 0x1001601 }, { 1507, 0x6c5a38, 0x61020601 } },
+        1508, 0, 168296, 146558, 129983, 0xce867b5fu, 166788, 147947, 0xae267f15u,
+        260544, 0x6ef08b15u, 0, 112809, 0x80da59bau, 0, 0, 78, 0 } },
+    { &dynamcop_profile, &dynamcop_recipe, MODEL_LAYOUT_1995,
+      { 19432, 0x599ec591u, 19382, 0, { 0, 1, 19430 },
+        { { 0x0, 0x6, 0x800000 }, { 0x0, 0x6, 0x800000 }, { 0x1ac450, 0x1acab2, 0xffc226 } },
+        19382, 0, 0xead7585fu, { { 0, 0x0, 0x1000a02 }, { 1, 0x0, 0x1000a02 }, { 19430, 0x1ff0898, 0x1000a01 } },
+        19382, 0, 1481842, 1273870, 884550, 0xd336ebbbu, 1462460, 1038708, 0x828800acu,
+        2230574, 0xa42e979bu, 1, 980578, 0x212b56b3u, 1608, 0, 74846, 0 } },
+    { &airwlkrs_profile, &airwlkrs_recipe, MODEL_LAYOUT_1995,
+      { 2026, 0xc60d4955u, 2026, 0, { 0, 1, 2025 },
+        { { 0x0, 0x6, 0x800000 }, { 0xa, 0x12, 0x800011 }, { 0xbd9c6, 0xbdd26, 0x8feefa } },
+        2026, 0, 0xd9635a7au, { { 0, 0x0, 0x1000a02 }, { 1, 0x44, 0x1020a01 }, { 2025, 0x3fbbe8, 0x59080601 } },
+        2026, 0, 105146, 94376, 82711, 0xdcb9782au, 103120, 90359, 0xcc667541u,
+        166248, 0x5bd7f383u, 0, 48053, 0xe6ddc98du, 0, 0, 128, 0 } },
 };
 
 static uint32_t rd32(const uint8_t *b, size_t at) {
@@ -179,7 +206,7 @@ static void check_profile(const prepared_case_t *c) {
         CHECK(profile_prepared_message(p->id, msg, sizeof msg) && strstr(msg, p->display_name),
               "%s: the front ends' message names it", p->id);
     }
-    check_recipe(c->recipe);
+    if (c->recipe) check_recipe(c->recipe);
     const model_table_t t = profile_model_table(&p->quirks);
     CHECK(!memcmp(&t.layout, &c->layout, sizeof t.layout),
           "%s: model table entries are %u bytes, mesh +%u uv +%u mat +%u", p->id,
@@ -378,7 +405,10 @@ static void decode_mix_headers(decode_totals_t *d, uint32_t i, const geo3d_mesh_
     uint32_t h = fnv_word(fnv_word(d->hdr_fnv, i), (uint32_t)r->n_hdrs);
     for (int k = 0; k < r->n_hdrs && k < r->hdrs_cap; k++) {
         const geo3d_reads_hdr_t *x = &r->hdrs[k];
-        const uint32_t v[12] = { (uint32_t)x->face, x->h.textured, x->h.fflags, x->h.texw, x->h.texh,
+        /* noclip's faceFlags: 1024 for a microtexture, its minimum LOD at
+         * bits 11-12, its column at 13 and row at 14-15 (js/model.js). */
+        const uint32_t micro = x->h.micro ? 1024u | (((x->h.micro >> GEO3D_FACE_MICRO_SHIFT) & 31u) << 11) : 0;
+        const uint32_t v[12] = { (uint32_t)x->face, x->h.textured, x->h.fflags | micro, x->h.texw, x->h.texh,
                                  x->h.lumabase, (uint32_t)x->tx, x->h.sheet, (uint32_t)x->ty, x->h.matidx,
                                  (uint32_t)x->tw, (uint32_t)x->th };
         for (int j = 0; j < 12; j++) h = fnv_word(h, v[j]);
@@ -435,6 +465,9 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
         ram.texram[tr->from + k] = (uint16_t)(rs->main_data[tr->at + k * 2u] | rs->main_data[tr->at + k * 2u + 1u] << 8);
     const geo_raster_state_t *was = g_geo_rs;
     g_geo_rs = &ram;
+    /* PREPARED_DUMP=1: one line per mesh, to diff against
+     * `tools/noclip-reads.mjs --per-model` when a total disagrees. */
+    const bool dump = getenv("PREPARED_DUMP") && getenv("PREPARED_DUMP")[0];
     int over = 0;
     model_entry_t e;
     uint32_t off;
@@ -444,6 +477,7 @@ static void check_noclip_decode(const char *id, const model_table_t *t, const ga
             continue;
         if (!geo3d_mesh_reads(&md, (int)i, &r)) continue;
         if (r.n_reads > READS || r.n_tris > TRIS || r.n_hdrs > FACES) over++;
+        if (dump) printf("dump: %s %u 0x%X %d %d %d %d\n", id, i, off, r.records, r.faces, r.textured, r.n_tris);
         decode_mix(&d, i, off, &r);
         decode_mix_headers(&d, i, &r);
         decode_mix_tris(&d, i, &r);
@@ -524,13 +558,13 @@ static void check_set(const prepared_case_t *c) {
     int rc = c->p->load_fn(&rs, path, parent[0] ? parent : NULL);
     CHECK(rc == 0 && rs.loaded, "%s: the set loads", id);
     if (rc != 0) return;
-    for (int r = 0; r < ROM_REGION_COUNT; r++) {
+    for (int r = 0; c->recipe && r < ROM_REGION_COUNT; r++) {
         size_t *sz;
         rom_recipe_region(&rs, (rom_region_id_t)r, &sz);
         if (*sz != c->recipe->size[r]) CHECK(0, "%s: region %d is 0x%zX, not 0x%X", id, r, *sz, c->recipe->size[r]);
     }
     check_program(id, &rs);
-    check_mirrors(id, c->recipe, &rs);
+    if (c->recipe) check_mirrors(id, c->recipe, &rs);
     check_model_table(c, &rs);
     romset_free(&rs);
 }
@@ -554,7 +588,29 @@ static const clone_case_t k_clones[] = {
     { &daytonat_profile,   &daytonat_recipe,   "daytonat"   },
     { &daytonata_profile,  &daytonata_recipe,  "daytonata"  },
     { &daytonagtx_profile, &daytonagtx_recipe, "daytonagtx" },
+    { &dyndeka2_profile,   &dyndeka2_recipe,   "dyndeka2"   },
+    { &dynamcopb_profile,  &dynamcopb_recipe,  "dynmcopb"   },
+    { &dyndeka2b_profile,  &dyndeka2b_recipe,  "dyndek2b"   },
+    { &dynamcopc_profile,  &dynamcopc_recipe,  "dynmcopc"   },
 };
+
+/* Dynamite Cop's five builds share their data ROMs, so one model table: the
+ * clones' quirks must name the one k_cases holds to noclip's reads. */
+static void check_dynamcop_tables(void) {
+    static const game_profile_t *const builds[] = {
+        &dyndeka2_profile, &dynamcopb_profile, &dyndeka2b_profile, &dynamcopc_profile,
+    };
+    const game_quirks_t *a = &dynamcop_profile.quirks;
+    const model_table_t t = profile_model_table(a);
+    for (size_t i = 0; i < sizeof builds / sizeof builds[0]; i++) {
+        const game_quirks_t *b = &builds[i]->quirks;
+        const model_table_t u = profile_model_table(b);
+        CHECK(t.off == u.off && t.count == u.count && t.past_from == u.past_from && t.past_off == u.past_off &&
+              !memcmp(&t.layout, &u.layout, sizeof t.layout) &&
+              a->mesh_ptr_subtract == b->mesh_ptr_subtract && a->mesh_ptr_add == b->mesh_ptr_add,
+              "%s: the model table is dynamcop's", builds[i]->id);
+    }
+}
 
 static void check_clone(const clone_case_t *c) {
     const char *id = c->p->id;
@@ -620,6 +676,7 @@ int main(void) {
           "a runnable set is not a prepared one");
     for (size_t i = 0; i < sizeof k_cases / sizeof k_cases[0]; i++) check_set(&k_cases[i]);
     for (size_t i = 0; i < sizeof k_clones / sizeof k_clones[0]; i++) check_clone(&k_clones[i]);
+    check_dynamcop_tables();
     check_schamp_hooks();
     printf(g_fail ? "\nFAILED (%d)\n" : "\nPASSED\n", g_fail);
     return g_fail ? 1 : 0;

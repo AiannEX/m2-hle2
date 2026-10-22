@@ -139,6 +139,16 @@ static const game_profile_t airwlkrs_profile = {
          * Japan, and the test menu's COIN and GAME OPTIONS have no country. */
         .region           = { .kind = REGION_PROGRAM_ROM,
                               .why  = "the program ROM is Japan's AOU show build, with no country setting" },
+        /* The model table: 2026 entries of 16 bytes at data 0x58DD50, the
+         * 1995 layout, read by the draw routine at 0x1E8D8 as
+         * 0x258DD50[n*16] (mesh at +8). Every mesh is in the polygon ROM;
+         * the intro city (model 555) is 5441 records in one mesh, the longest
+         * of any set here (GEO3D_IA_MAX_VPS). prepared_test holds it to the
+         * explorer's reads (NOCLIP-SYNC.md §8.2). */
+        .model_table_offset = 0x58DD50,
+        .model_table_count  = 2026,
+        .mesh_ptr_subtract  = 0x02000010,
+        .mesh_ptr_add       = 0x10,
     },
 };
 

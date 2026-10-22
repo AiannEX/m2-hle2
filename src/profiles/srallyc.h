@@ -347,6 +347,15 @@ static const game_profile_t srallyc_profile = {
          * path, as on the board and in the PS2 port (FUN_0012bf70 picks row
          * 7). Pinboard #667, #744. */
         .i960_board_timing = true,
+        /* The model table: 1508 entries of 16 bytes at data 0x864B40, the
+         * 1995 layout (uv, mat, mesh, polygon count), read by the draw
+         * routines as 0x2864B40[n*16]; the "CGM 1.0 " block at 0x86A980
+         * ends it. Every entry's mesh is in the polygon ROM. prepared_test
+         * holds it to the explorer's reads (NOCLIP-SYNC.md §8.2). */
+        .model_table_offset = 0x864B40,
+        .model_table_count  = 1508,
+        .mesh_ptr_subtract  = 0x02000010,
+        .mesh_ptr_add       = 0x10,
         .wheel = { .left = 0x8000, .right = 0x4000, .accel = 0x0100, .brake = 0x0200,
                    .shift_up = 0x2000, .shift_down = 0x1000, .view = { 0x0020 } },
     },

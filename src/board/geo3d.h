@@ -42,8 +42,10 @@
 /* Index-array decoder buffers.  Sized for the largest meshes across games:
  * sfight's longest is ~700 vertex pairs, but Fighting Vipers' "FIGHTING VIPERS"
  * logo (model 2411) is ~2527 pairs (5054 verts) — at 2001 the decoder truncated
- * it mid-mesh and the "rs" was cut off.  Bumped to 4096 with headroom. */
-#define GEO3D_IA_MAX_VPS   4096
+ * it mid-mesh and the "rs" was cut off.  Air Walkers' intro city (model 555)
+ * is 5441 records in one mesh, so 4096 cut it too (Pinboard #1458); the board
+ * has no such cap, it walks to the end record. 8192, with headroom. */
+#define GEO3D_IA_MAX_VPS   8192
 #define GEO3D_IA_MAX_VERTS (GEO3D_IA_MAX_VPS * 2)
 #define GEO3D_IA_MAX_IDX   (4 + GEO3D_IA_MAX_VPS * 4)
 
@@ -594,11 +596,12 @@ static inline void geo3d_zsort_step(geo3d_zsort_t *z, uint32_t at, bool is_tri, 
  *                x 128, its y th2 bits 14-15 x 128, its minimum LOD th0 bits
  *                10-11 (MAME model2_v.cpp, model2rd.ipp draw_scanline_tex).
  *                The fill reads the square at uv << (1 << minlod) and blends
- *                min(-mml >> minlod, 127) / 256 of it. Not in fflags (the
- *                explorer's decode, which prepared_test hashes, has no such
- *                bit at the commit it was taken from): geo3d_texhdr_t.micro
- *                carries it, and geo3d_texhdr_fill adds it to the face's fill
- *                flags, with the square at GEO3D_FACE_MICRO_SHIFT. */
+ *                min(-mml >> minlod, 127) / 256 of it. Not in fflags:
+ *                geo3d_texhdr_t.micro carries it, and geo3d_texhdr_fill adds
+ *                it to the face's fill flags, with the square at
+ *                GEO3D_FACE_MICRO_SHIFT. The explorer packs the same bits
+ *                into its faceFlags as 1024 | minlod << 11 | square << 13
+ *                (js/model.js), the shape prepared_test mixes micro into. */
 #define GEO3D_FACE_TRANSPARENT 1u
 #define GEO3D_FACE_CHECKER     2u
 #define GEO3D_FACE_SHEET1      4u
@@ -2320,8 +2323,12 @@ static inline void geo3d_reads_hdr(geo3d_mesh_reads_t *r, int fi, const geo3d_te
     r->n_hdrs++;
 }
 
-/* A face's header, the stream moved on past it; false for untextured or none. */
-static inline bool geo3d_reads_header(geo3d_decode_walk_t *w, int fi, uint32_t at, geo3d_mesh_reads_t *r) {
+/* A face's header, the stream moved on past it; false for untextured or none.
+ * *untex_trans: the header is untextured and transparent, which the board
+ * draws nothing for (geo3d_decode_model skips it; so does noclip). */
+static inline bool geo3d_reads_header(geo3d_decode_walk_t *w, int fi, uint32_t at, geo3d_mesh_reads_t *r,
+                                      bool *untex_trans) {
+    *untex_trans = false;
     if (!w->have_mat) return false;
     uint32_t hw = w->mat_rec;
     w->mat_rec += geo3d_tho_step(at);
@@ -2331,6 +2338,7 @@ static inline bool geo3d_reads_header(geo3d_decode_walk_t *w, int fi, uint32_t a
     geo3d_texhdr_t h = geo3d_texhdr_decode(th);
     if ((int)h.matidx > r->palette_max) r->palette_max = (int)h.matidx;
     geo3d_reads_hdr(r, fi, &h);
+    *untex_trans = h.untex_trans;
     return h.textured;
 }
 
@@ -2378,11 +2386,17 @@ static inline void geo3d_reads_face(geo3d_decode_walk_t *w, int i, geo3d_mesh_re
     bool tri_cnt = (fi < ia->n_qt && ia->qt[fi] == 2);
 
     geo3d_reads_face_t f = { .uvu = {0,0,0,0}, .uvv = {0,0,0,0} };
-    bool textured = geo3d_reads_header(w, fi, geo3d_ia_attr(ia, fi), r);
+    bool untex_trans;
+    bool textured = geo3d_reads_header(w, fi, geo3d_ia_attr(ia, fi), r, &untex_trans);
     geo3d_reads_uv(w, tri_cnt, textured, r, f.uvu, f.uvv);
 
     if (c[0] < 0 || c[0] >= n_sv || c[1] < 0 || c[1] >= n_sv) return;
     geo3d_reads_corners(w, fi, c, tri_cnt, &f);
+    /* After the corners: the z-sort state steps on every face, drawn or not.
+     * The untextured transparent face is no face (geo3d_decode_model, and
+     * noclip's untexTrans); Dynamite Cop's model 18017 has 40 of them, the
+     * first in any table here (Pinboard #1458). */
+    if (untex_trans) return;
     geo3d_reads_tris(r, &f);
     if (textured) r->textured++;
     r->faces++;
