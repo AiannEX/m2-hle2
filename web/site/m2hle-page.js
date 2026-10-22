@@ -35,7 +35,10 @@ m2hleLang.add({
     'page.link.title': 'No other cabinet on the link',
     'page.link.text': 'This cabinet is set to be the link\'s MASTER, but no other cabinet is linked to it. ' +
                       'It will wait for one, give up and restart, over and over.\n' +
-                      'Set it to SINGLE in the test menu\'s game settings (Daytona USA: GAME ASSIGNMENTS, LINK ID).',
+                      'Set it to play alone in the test menu: {setting}.',
+    'page.link.text.any': 'This cabinet is set to be the link\'s MASTER, but no other cabinet is linked to it. ' +
+                          'It will wait for one, give up and restart, over and over.\n' +
+                          'Set it to play alone in the test menu\'s game settings.',
     'page.link.test': 'Back to the test menu',
     'page.link.continue': 'Continue anyway',
     'page.link.cable': 'Insert a virtual TOSlink cable',
@@ -66,7 +69,10 @@ m2hleLang.add({
     'page.link.title': '通信相手の筐体がありません',
     'page.link.text': 'この筐体は通信の MASTER に設定されていますが、ほかの筐体がつながっていません。' +
                       '相手を待ち、あきらめて再起動することを繰り返します。\n' +
-                      'テストモードのゲーム設定で SINGLE にしてください（デイトナUSA：GAME ASSIGNMENTS の LINK ID）。',
+                      'テストモードで 1 台でのプレイに設定してください：{setting}。',
+    'page.link.text.any': 'この筐体は通信の MASTER に設定されていますが、ほかの筐体がつながっていません。' +
+                          '相手を待ち、あきらめて再起動することを繰り返します。\n' +
+                          'テストモードのゲーム設定で 1 台でのプレイに設定してください。',
     'page.link.test': 'テストモードに戻る',
     'page.link.continue': 'このまま続ける',
     'page.link.cable': '仮想 TOSlink ケーブルを挿す',
@@ -608,22 +614,26 @@ function pauseToggle() {
  * first of those waits (main_web.c, web_link_check; core/link_check.h) and this
  * asks the player: back to the test menu (Test held for a moment), carry on, or
  * plug in a virtual TOSlink cable, the comm board's output into its own input.
- * The cable is offered here and nowhere else. */
+ * The cable is offered here and nowhere else, and only to a game that plays on a
+ * ring of one (Daytona; not Virtual-On). */
 function linkCheck() {
   const box = $('link-check');
-  const ask = Module._web_link_check();   /* 0 nothing, 1 ask, 2 ask, no Test button */
+  const ask = Module._web_link_check();   /* 0 nothing; else 1, | 2 a Test button, | 4 the cable */
   if (!ask) { box.hidden = true; return; }
   if (!box.hidden) return;
   $('lc-title').textContent = m2hleLang.t('page.link.title');
-  $('lc-text').textContent = m2hleLang.t('page.link.text');
+  const setting = Module.UTF8ToString(Module._web_link_setting());
+  $('lc-text').textContent = setting ? m2hleLang.t('page.link.text', { setting })
+                                     : m2hleLang.t('page.link.text.any');
   $('lc-test').textContent = m2hleLang.t('page.link.test');
   $('lc-continue').textContent = m2hleLang.t('page.link.continue');
   $('lc-cable').textContent = m2hleLang.t('page.link.cable');
   $('lc-cable').title = m2hleLang.t('page.link.cable.tip');
-  $('lc-test').hidden = ask !== 1;
+  $('lc-test').hidden = !(ask & 2);
+  $('lc-cable').hidden = !(ask & 4);
   box.hidden = false;
   m2hleTools.add('link: MASTER with no other cabinet, asking', 'warning');
-  (ask === 1 ? $('lc-test') : $('lc-continue')).focus();
+  ((ask & 2) ? $('lc-test') : $('lc-continue')).focus();
 }
 
 function linkCheckOnGame() {

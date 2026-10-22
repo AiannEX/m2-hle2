@@ -295,6 +295,7 @@ static inline void vonj_match_info(memory_bus_t *bus, game_match_info_t *out) {
 #define VON_PROFILE_COMMON \
     .link_role       = vonj_link_role, \
     .link_twin       = true, \
+    .link_setting    = "GAME ASSIGNMENTS, NETWORK LINK ATTRIBUTE: NOLINK", \
     .match_info      = vonj_match_info, \
     .in_play         = vonj_in_play, \
     .input = { \

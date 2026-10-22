@@ -33,7 +33,7 @@ static inline void link_check_prompt(emu_thread_ctx_t *emu) {
     }
     igTextColored((ImVec4){ 1.0f, 0.8f, 0.3f, 1.0f }, LINK_CHECK_TITLE);
     igSeparator();
-    igTextUnformatted(LINK_CHECK_TEXT);
+    igTextUnformatted(link_check_text());
     igSpacing();
     int pick = -1;
     if (link_check_has_test(g_active_profile)) {
@@ -41,12 +41,14 @@ static inline void link_check_prompt(emu_thread_ctx_t *emu) {
         igSameLine();
     }
     if (igButton(LINK_ANSWER_LABEL[LINK_ANSWER_CONTINUE])) pick = LINK_ANSWER_CONTINUE;
-    igSameLine();
-    if (igButton(LINK_ANSWER_LABEL[LINK_ANSWER_CABLE])) pick = LINK_ANSWER_CABLE;
-    if (igIsItemHovered(0))
-        igSetTooltip("Wires this comm board's output to its own input: a link of one\n"
-                     "cabinet, so the MASTER finds itself and the game goes on.\n"
-                     "Until another game is loaded.");
+    if (link_check_has_cable(g_active_profile)) {
+        igSameLine();
+        if (igButton(LINK_ANSWER_LABEL[LINK_ANSWER_CABLE])) pick = LINK_ANSWER_CABLE;
+        if (igIsItemHovered(0))
+            igSetTooltip("Wires this comm board's output to its own input: a link of one\n"
+                         "cabinet, so the MASTER finds itself and the game goes on.\n"
+                         "Until another game is loaded.");
+    }
     if (pick >= 0) {
         link_check_answer((link_answer_t)pick, g_emu_frames);
         igCloseCurrentPopup();

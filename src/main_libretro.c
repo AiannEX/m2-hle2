@@ -2606,7 +2606,7 @@ RETRO_API void retro_run(void) {
     link_ask_state_t link = in_session ? LINK_ASK_NONE : link_check_pad_frame(lr_lobby_pad(), g_emu_frames);
     if (link != LINK_ASK_NONE) held = g_input.far_held = 0;
     static link_ask_state_t link_was;
-    if (link == LINK_ASK_ASKING && link_was != LINK_ASK_ASKING) lr_log(RETRO_LOG_WARN, "%s", LINK_CHECK_LINE);
+    if (link == LINK_ASK_ASKING && link_was != LINK_ASK_ASKING) lr_log(RETRO_LOG_WARN, "%s", link_check_line());
     link_was = link;
     if (link == LINK_ASK_ASKING) board_paused = true;
     held |= link_check_test_bits();

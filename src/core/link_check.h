@@ -3,9 +3,10 @@
  * (Pinboard #1449).
  *
  * Daytona USA, Virtual-On, Power Sled and the other linked sets keep their
- * cabinet's role on the link in the test menu (Daytona: GAME ASSIGNMENTS, LINK
- * ID). A board set to MASTER starts its comm board as the master and waits for
- * the other cabinets; alone, it waits for nobody. Daytona shows NETWORK
+ * cabinet's role on the link in the test menu (Daytona: GAME SYSTEM, LINK ID;
+ * Virtual-On: GAME ASSIGNMENTS, NETWORK LINK ATTRIBUTE). A board set to MASTER
+ * starts its comm board as the master and waits for the other cabinets; alone,
+ * it waits for nobody. Daytona shows NETWORK
  * CHECKING, then CANCELLED, reboots and does it again, forever, and only the
  * test menu gets out of it. The board counts each start of its comm board as a
  * master alone (m2comm_lone_masters, board/m2comm.h); the host pauses the game
@@ -17,7 +18,11 @@
  *   LINK_ANSWER_CONTINUE   go on as it is; not asked again for this set
  *   LINK_ANSWER_CABLE      plug in a virtual TOSlink cable: the comm board's
  *                          output into its own input, a ring of one cabinet
- *                          (m2comm_set_cable). Offered only here.
+ *                          (m2comm_set_cable). Offered only here, and only
+ *                          to a game that plays on a ring of one
+ *                          (game_profile_t link_cable): Daytona does;
+ *                          Virtual-On counts one node as "Illegal Nodes: 1"
+ *                          and checks again, for ever.
  *
  * Not asked of a board that is not the player's: a netplay session's or a
  * replay's (backup RAM detached), which boots blank, so SINGLE, anyway; a
@@ -34,6 +39,7 @@
 #define CORE_LINK_CHECK_H
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdint.h>
 
 #include "backup_ram.h"
@@ -65,7 +71,8 @@ typedef enum {
 typedef struct {
     link_ask_state_t state;
     int  sel;           /* the row picked */
-    bool test;          /* the profile has a Test button: three answers */
+    bool test;          /* the profile has a Test button: the test menu row */
+    bool cable;         /* the game plays on a ring of one: the cable row */
 } link_ask_t;
 
 static link_ask_t g_link_ask;
@@ -83,6 +90,11 @@ static inline void link_check_reset(void) {
 /* Whether the profile has a Test button to go back to the test menu with. */
 static inline bool link_check_has_test(const game_profile_t *p) {
     return p && p->input.bits[GAME_INPUT_TEST] != 0;
+}
+
+/* Whether the question offers the profile's game the virtual TOSlink cable. */
+static inline bool link_check_has_cable(const game_profile_t *p) {
+    return p && p->link_cable;
 }
 
 /* True while a start of the board as a master alone waits for an answer. */
@@ -130,13 +142,39 @@ static inline void link_check_frame(uint32_t board_frame) {
 
 /* The question, for every frontend that asks it. */
 #define LINK_CHECK_TITLE "No other cabinet on the link"
+
+/* Where the loaded game's test menu sets it to play alone (game_profile_t
+ * link_setting), or NULL. */
+static inline const char *link_check_setting(void) {
+    return g_active_profile ? g_active_profile->link_setting : NULL;
+}
+
+/* The question's text, for the loaded game. */
+static inline const char *link_check_text(void) {
+    static char text[384];
+    const char *where = link_check_setting();
+    if (where)
+        snprintf(text, sizeof text,
+                 "This cabinet is set to be the link's MASTER, but no other cabinet is linked to it.\n"
+                 "It will wait for one, give up and restart, over and over.\n"
+                 "Set it to play alone in the test menu: %s.", where);
+    else
+        snprintf(text, sizeof text, "%s",
+                 "This cabinet is set to be the link's MASTER, but no other cabinet is linked to it.\n"
+                 "It will wait for one, give up and restart, over and over.\n"
+                 "Set it to play alone in the test menu's game settings.");
+    return text;
+}
+
 /* The question in one line, for a log. */
-#define LINK_CHECK_LINE \
-    "No other cabinet on the link: this MASTER waits for nobody. Set LINK ID to SINGLE in the test menu."
-#define LINK_CHECK_TEXT \
-    "This cabinet is set to be the link's MASTER, but no other cabinet is linked to it.\n" \
-    "It will wait for one, give up and restart, over and over.\n" \
-    "Set it to SINGLE in the test menu's game settings (Daytona USA: GAME ASSIGNMENTS, LINK ID)."
+static inline const char *link_check_line(void) {
+    static char line[256];
+    const char *where = link_check_setting();
+    snprintf(line, sizeof line, "No other cabinet on the link: this MASTER waits for nobody. %s%s%s",
+             where ? "Set it to play alone in the test menu: " : "Set it to play alone in the test menu.",
+             where ? where : "", where ? "." : "");
+    return line;
+}
 
 /* The answers' names, by link_answer_t, and what the cable is. */
 static const char *const LINK_ANSWER_LABEL[] = { "Back to the test menu", "Continue anyway",
@@ -150,7 +188,7 @@ static inline int link_ask_rows(link_answer_t rows[3]) {
     int n = 0;
     if (g_link_ask.test) rows[n++] = LINK_ANSWER_TEST_MENU;
     rows[n++] = LINK_ANSWER_CONTINUE;
-    rows[n++] = LINK_ANSWER_CABLE;
+    if (g_link_ask.cable) rows[n++] = LINK_ANSWER_CABLE;
     return n;
 }
 
@@ -172,6 +210,7 @@ static inline link_ask_state_t link_ask_frame(uint32_t held, uint32_t hit, uint3
         a->state = LINK_ASK_ASKING;
         a->sel   = 0;
         a->test  = link_check_has_test(g_active_profile);
+        a->cable = link_check_has_cable(g_active_profile);
         LOG_WARN("link: this cabinet is the link's MASTER and no other cabinet is linked; asking");
         return a->state;   /* a button down now was not pressed at the question */
     }

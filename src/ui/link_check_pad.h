@@ -44,7 +44,7 @@ static inline bool link_check_pad_draw(ps3ui_canvas_t *cv) {
     ps3ui_text_left(cv, &title, win.x0 + 50.0f, win.y0 + 30.0f, LINK_CHECK_TITLE, 1.0f);
     ps3ui_text_style_t body = ps3ui_style_text(30.0f);
     ps3ui_text_box(cv, &body, (ps3ui_box_t){ win.x0 + 50.0f, win.y0 + 110.0f, win.x1 - 50.0f, win.y0 + 400.0f },
-                   LINK_CHECK_TEXT, 1.0f, 0);
+                   link_check_text(), 1.0f, 0);
 
     link_answer_t rows[3];
     int n = link_ask_rows(rows);

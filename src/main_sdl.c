@@ -1135,7 +1135,7 @@ static void link_pump(bool *pad_changed) {
     link_ask_state_t now = link_ask_frame(g_link_keys, g_link_hit, g_emu_frames);
     g_link_hit = 0;
     if (now == LINK_ASK_ASKING && was != LINK_ASK_ASKING) {
-        printf("m2hle: %s\n", LINK_CHECK_LINE);
+        printf("m2hle: %s\n", link_check_line());
         g_link_keys = 0;
         lobby_pad_release();   /* what the game held stays held no longer */
         input_release_all();
@@ -1178,7 +1178,7 @@ static void link_draw(int fb_w, int fb_h) {
     sdtx_origin(0.0f, 0.0f);
 
     float y = link_text(2.0f, 2.0f, cols - 1, 255, 204, 77, LINK_CHECK_TITLE) + 1.0f;
-    y = link_text(2.0f, y, cols - 1, 230, 230, 230, LINK_CHECK_TEXT) + 1.0f;
+    y = link_text(2.0f, y, cols - 1, 230, 230, 230, link_check_text()) + 1.0f;
     link_answer_t rows[3];
     int n = link_ask_rows(rows);
     float row0 = y;

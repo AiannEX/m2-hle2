@@ -432,10 +432,17 @@ EMSCRIPTEN_KEEPALIVE int web_set_paused(int on) {
 
 /* A linked game set to MASTER with no other cabinet on the link (core/link_check.h,
  * #1449): the board stands still while the page asks what to do. 0 nothing to
- * ask, 1 ask with "Back to the test menu", 2 ask without it (no Test button). */
+ * ask; else 1, | 2 with "Back to the test menu" (a Test button), | 4 with the
+ * virtual TOSlink cable (a game that plays on a ring of one). */
 EMSCRIPTEN_KEEPALIVE int web_link_check(void) {
     if (!state.romset.loaded || !link_check_due()) return 0;
-    return link_check_has_test(g_active_profile) ? 1 : 2;
+    return 1 | (link_check_has_test(g_active_profile) ? 2 : 0) | (link_check_has_cable(g_active_profile) ? 4 : 0);
+}
+/* Where the loaded game's test menu sets it to play alone, in the menu's
+ * words, or "" (game_profile_t link_setting). */
+EMSCRIPTEN_KEEPALIVE const char *web_link_setting(void) {
+    const char *s = link_check_setting();
+    return s ? s : "";
 }
 /* The page's answer: 0 back to the test menu, 1 continue anyway, 2 the virtual
  * TOSlink cable (link_answer_t). */

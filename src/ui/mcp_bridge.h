@@ -2717,8 +2717,9 @@ static void mcp_cmd_state(const char *req, char *resp, int cap, int load) {
  * {"cmd":"link_check","answer":"cable"} -- the question a MASTER with nobody
  * on the link gets (core/link_check.h, #1449), answered for a script:
  * "test" (back to the test menu: Test held 20 frames), "continue", "cable"
- * (the virtual TOSlink cable in). No "answer" only reads: "due" is whether
- * the windowed build would be asking now, "lone_masters" the starts counted.
+ * (the virtual TOSlink cable in, even for a game the question does not offer
+ * it to: "cable_offered"). No "answer" only reads: "due" is whether the
+ * windowed build would be asking now, "lone_masters" the starts counted.
  */
 static void mcp_cmd_link_check(const char *req, char *resp, int cap) {
     char a[16];
@@ -2738,9 +2739,10 @@ static void mcp_cmd_link_check(const char *req, char *resp, int cap) {
         if (locked) emu_mutex_unlock(&g_mcp.emu->mutex);
     }
     snprintf(resp, (size_t)cap,
-             "{\"ok\":true,\"due\":%s,\"lone_masters\":%u,\"cable\":%s}",
+             "{\"ok\":true,\"due\":%s,\"lone_masters\":%u,\"cable\":%s,\"cable_offered\":%s}",
              link_check_due() ? "true" : "false", (unsigned)m2comm_lone_masters(),
-             m2comm_cable() ? "true" : "false");
+             m2comm_cable() ? "true" : "false",
+             link_check_has_cable(g_active_profile) ? "true" : "false");
 }
 
 /*
