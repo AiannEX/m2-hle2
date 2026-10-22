@@ -419,6 +419,16 @@ typedef struct game_profile {
      * board. */
     bool                link_twin;
 
+    /* Where the test menu sets the cabinet to play alone, in the menu's own
+     * words, for the question a MASTER alone on the link asks
+     * (core/link_check.h). NULL: the question says it in general. */
+    const char         *link_setting;
+
+    /* The game plays on a ring of one cabinet, so that question offers the
+     * virtual TOSlink cable. Daytona does; Virtual-On wants two nodes and
+     * calls one illegal. */
+    bool                link_cable;
+
     /* A linked game one board cannot play (Power Sled's ride needs a Main):
      * with nothing else on the board it runs both cabinets, the player's live
      * and this working the other's controls (emu_ggpo.h, SOLO). Returns the

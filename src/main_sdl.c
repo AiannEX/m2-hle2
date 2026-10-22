@@ -138,6 +138,7 @@
 #include "video_window.h"
 #include "game_frame.h"
 #include "input.h"
+#include "link_check.h"   /* a MASTER alone on the link (#1449): asked over the game */
 #include "audio_out.h"   /* audio_out_cb: drains g_sound's ring (only its callback is used here) */
 #include "miniz.h"
 #include "net/comm_local.h"   /* --versus: the two cabinets' link over 127.0.0.1 */
@@ -214,7 +215,7 @@ static struct {
     const char *script_opt[MAX_SCRIPT_OPTS];   /* --script-option codes */
 } opt = { .render_fps = 30.0, .render_scale = 1, .linear = true, .pad = -1 };
 
-static bool g_sdtx_on;              /* sokol's debug text is set up: --osd, the lobby or a script's text */
+static bool g_sdtx_on;              /* sokol's debug text is set up: --osd, the lobby, a script's text or the link question (link_draw) */
 static bool g_sound_on;             /* the sound board is attached (sound_start succeeded) */
 
 /* Keyboard, for desktop runs: the debugger's layout (input.h), which is
@@ -347,6 +348,7 @@ static bool load_rom(const char *zip) {
     /* The model lookup is built from the ROM's model table: a new set needs a new one. */
     geo3d_lookup_invalidate();
     g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    link_check_reset();   /* a MASTER alone on the link is asked about once per start */
     input_reset();
     input_attach(&state.bus);
     return true;
@@ -1080,6 +1082,140 @@ static void lobby_pad_settle(bool *pad_changed) {
     if (g_lobby.open) *pad_changed = false;   /* the lobby has the pad */
 }
 
+/* ---- A MASTER alone on the link (core/link_check.h, Pinboard #1449) ----------
+ *
+ * Asked over the paused game: up and down pick, South, Start or Return answers.
+ * While it is up the emu thread is stopped and every key and pad button is the
+ * question's (Escape still quits); the answering one is kept from the game
+ * until it is let go. Drawn with sokol_gl's box under sdtx's text. */
+
+static uint32_t g_link_keys, g_link_hit;   /* LINK_KEY_* down, pressed since the last pump */
+static bool     g_link_resume;             /* the board ran when it was asked */
+
+/* An event while the question is up or being let go of: true when it was the
+ * question's, and the game must not see it. */
+static bool link_event(const SDL_Event *ev) {
+    if (g_link_ask.state == LINK_ASK_NONE) return false;
+    uint32_t k = 0;
+    bool down;
+    switch (ev->type) {
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_KEY_UP:
+            if (ev->key.scancode == SDL_SCANCODE_ESCAPE) return false;
+            down = ev->type == SDL_EVENT_KEY_DOWN;
+            if (down && ev->key.repeat) return true;
+            if (ev->key.scancode == SDL_SCANCODE_UP)   k = LINK_KEY_UP;
+            if (ev->key.scancode == SDL_SCANCODE_DOWN) k = LINK_KEY_DOWN;
+            if (ev->key.scancode == SDL_SCANCODE_RETURN || ev->key.scancode == SDL_SCANCODE_KP_ENTER)
+                k = LINK_KEY_ANSWER;
+            break;
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+            down = ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+            if (ev->gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP)   k = LINK_KEY_UP;
+            if (ev->gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN) k = LINK_KEY_DOWN;
+            if (ev->gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH || ev->gbutton.button == SDL_GAMEPAD_BUTTON_START)
+                k = LINK_KEY_ANSWER;
+            break;
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+            return true;
+        default:
+            return false;
+    }
+    if (down) { g_link_keys |= k; g_link_hit |= k; }
+    else      g_link_keys &= ~k;
+    return true;
+}
+
+/* After a round of events: ask, take the answer, stop and restart the board,
+ * and say who has the pad. */
+static void link_pump(bool *pad_changed) {
+    link_check_frame(g_emu_frames);
+    link_ask_state_t was = g_link_ask.state;
+    link_ask_state_t now = link_ask_frame(g_link_keys, g_link_hit, g_emu_frames);
+    g_link_hit = 0;
+    if (now == LINK_ASK_ASKING && was != LINK_ASK_ASKING) {
+        printf("m2hle: %s\n", link_check_line());
+        g_link_keys = 0;
+        lobby_pad_release();   /* what the game held stays held no longer */
+        input_release_all();
+        g_link_resume = emu_is_running(&state.emu);
+        if (g_link_resume) emu_stop(&state.emu);
+    }
+    if (was == LINK_ASK_ASKING && now != LINK_ASK_ASKING && g_link_resume) emu_run(&state.emu);
+    if (was != LINK_ASK_NONE && now == LINK_ASK_NONE) *pad_changed = true;
+    if (now != LINK_ASK_NONE) *pad_changed = false;   /* the question has the pad */
+}
+
+/* Text from cell (x, y) wrapped at cols, a line per '\n'. The row after it. */
+static float link_text(float x, float y, int cols, uint8_t r, uint8_t g, uint8_t b, const char *s) {
+    char line[256];
+    while (*s) {
+        size_t n = strcspn(s, "\n");
+        if (n >= sizeof line) n = sizeof line - 1;
+        memcpy(line, s, n);
+        line[n] = '\0';
+        y = lobby_text(x, y, cols, r, g, b, line);
+        s += n;
+        if (*s == '\n') s++;
+    }
+    return y;
+}
+
+/* The question over the picture, if it is up; before the frame's sdtx_draw. */
+static void link_draw(int fb_w, int fb_h) {
+    if (!link_ask_up()) return;
+    if (!g_sdtx_on) {   /* the first time: no OSD, lobby or script set it up */
+        sdtx_setup(&(sdtx_desc_t){ .fonts[0] = sdtx_font_cpc(), .logger.func = slog_func });
+        g_sdtx_on = true;
+    }
+    float scale = fb_h >= 720 ? 3.0f : 2.0f;    /* the OSD's and the lobby's cells */
+    int   cols  = (int)((float)fb_w / scale / 8.0f);
+    float cell  = scale * 8.0f;
+    sg_apply_viewport(0, 0, fb_w, fb_h, true);
+    sg_apply_scissor_rect(0, 0, fb_w, fb_h, true);
+    sdtx_canvas((float)fb_w / scale, (float)fb_h / scale);
+    sdtx_origin(0.0f, 0.0f);
+
+    float y = link_text(2.0f, 2.0f, cols - 1, 255, 204, 77, LINK_CHECK_TITLE) + 1.0f;
+    y = link_text(2.0f, y, cols - 1, 230, 230, 230, link_check_text()) + 1.0f;
+    link_answer_t rows[3];
+    int n = link_ask_rows(rows);
+    float row0 = y;
+    for (int i = 0; i < n; i++) {
+        bool on = i == g_link_ask.sel;
+        char buf[96];
+        snprintf(buf, sizeof buf, "%s %s", on ? ">" : " ", LINK_ANSWER_LABEL[rows[i]]);
+        y = lobby_text(2.0f, y, cols - 1, on ? 255 : 160, on ? 255 : 180, on ? 255 : 200, buf);
+    }
+    y += 1.0f;
+    if (rows[g_link_ask.sel] == LINK_ANSWER_CABLE)
+        y = link_text(4.0f, y, cols - 1, 160, 180, 200, LINK_CHECK_CABLE_HINT) + 1.0f;
+    y = lobby_text(2.0f, y, cols - 1, 150, 150, 150, "Up/Down, then A/Start/Return") + 1.0f;
+
+    /* The box under the text: the screen dimmed, the box, the picked row's bar. */
+    if (!g_script_img.ready) scripts_images_setup();   /* sgl_setup */
+    sgl_defaults();
+    sgl_load_pipeline(g_script_img.pip);
+    sgl_matrix_mode_projection();
+    sgl_ortho(0.0f, (float)fb_w, (float)fb_h, 0.0f, -1.0f, 1.0f);
+    sgl_begin_quads();
+    const float boxes[3][4] = {
+        { 0.0f, 0.0f, (float)fb_w, (float)fb_h },
+        { cell, cell, (float)fb_w - cell, y * cell },
+        { 1.5f * cell, (row0 + (float)g_link_ask.sel) * cell - 0.15f * cell, (float)fb_w - 1.5f * cell,
+          (row0 + (float)g_link_ask.sel + 1.0f) * cell + 0.05f * cell },
+    };
+    const uint8_t rgba[3][4] = { { 0, 0, 0, 150 }, { 11, 26, 51, 240 }, { 77, 210, 255, 70 } };
+    for (int i = 0; i < 3; i++) {
+        const float *q = boxes[i];
+        sgl_c4b(rgba[i][0], rgba[i][1], rgba[i][2], rgba[i][3]);
+        sgl_v2f(q[0], q[1]); sgl_v2f(q[2], q[1]); sgl_v2f(q[2], q[3]); sgl_v2f(q[0], q[3]);
+    }
+    sgl_end();
+    sgl_draw();
+}
+
 /* Player 1's light gun on the mouse or a finger (Pinboard #1040), as on the
  * web page (main_web.c, web_gun_event): the mouse aims, its left button fires
  * and its right one reloads; a finger fires where it lands, or reloads when it
@@ -1152,6 +1288,7 @@ static bool poll_events(void) {
     SDL_Event ev;
     bool running = true, pad_changed = false;
     while (SDL_PollEvent(&ev)) {
+        if (link_event(&ev)) continue;
         if (opt.netplay && lobby_event(&ev, &pad_changed)) continue;
         gun_event(&ev);
         sdl_pads_event(&ev, &pad_changed);
@@ -1169,6 +1306,7 @@ static bool poll_events(void) {
     }
     pad_resync(&pad_changed);
     if (opt.netplay) lobby_pad_settle(&pad_changed);
+    link_pump(&pad_changed);
     if (pad_changed) pad_refresh();
     return running;
 }
@@ -1603,6 +1741,7 @@ static void render_screen(int fb_w, int fb_h, int ox, int oy, int w, int h, floa
         osd_draw(fb_w, fb_h);
     }
     if (opt.netplay) lobby_draw(fb_w, fb_h, SDL_GetTicksNS());
+    link_draw(fb_w, fb_h);
     if (g_sdtx_on) sdtx_draw();
 }
 

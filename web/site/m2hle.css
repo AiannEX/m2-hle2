@@ -541,6 +541,24 @@ a.tool.github { color: var(--text); }
 }
 .paused-label[hidden] { display: none; }
 
+/* A MASTER cabinet alone on the link (#1449): the question, over the picture,
+ * which is dimmed so the game's own text does not show through the window. */
+.link-check {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+.link-check[hidden] { display: none; }
+.lc-win { width: min(32rem, calc(100vw - 1rem)); font-size: 0.9rem; }
+.lc-title { margin: 0 0 0.5rem; font-size: 1.1rem; color: var(--cyan); }
+.lc-text { margin: 0 0 0.4rem; white-space: pre-line; }
+.lc-row { display: flex; flex-wrap: wrap; gap: 0.4rem 0.6rem; margin-top: 0.8rem; }
+.lc-row button[hidden] { display: none; }
+
 /* The menu: a PS3 window of rows under the two tiles, the row under the pointer
  * or the keyboard lit the way the game lights its own. */
 .menu {

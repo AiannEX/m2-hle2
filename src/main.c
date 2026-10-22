@@ -67,6 +67,7 @@
 #include "m2lua_mcp.h"       /* ...and the bridge's script_* commands */
 #include "lightgun_ui.h"      /* the mouse as a light gun, and its crosshairs */
 #include "net/comm_local.h"   /* --comm-master / --comm-slave: two boards linked on 127.0.0.1 */
+#include "link_check_prompt.h" /* a MASTER cabinet with nobody on the link (#1449) */
 #if M2HLE_PADS
 #include "sdl_pads.h"         /* gamepads, racing wheels and force feedback through SDL3 (#1082) */
 #include "fanatec.h"          /* a Fanatec base's rev LEDs and display (#1361) */
@@ -353,6 +354,7 @@ static void load_active_profile(const char *primary_zip) {
         /* The model lookup is built from the ROM's model table: a new set needs a new one. */
         geo3d_lookup_invalidate();
         g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+        link_check_reset();   /* a new set: nothing asked, the TOSlink cable out */
         gems_apply(profile_rom_set(g_active_profile));
         ages_apply(profile_rom_set(g_active_profile));   /* after gems_apply: they share the extra-hook slot */
         load_sound_board();
@@ -1444,6 +1446,7 @@ static void headless_loop(bool av_on) {
         netplay_ggpo_announce();
         tray_headless_pump();
         tray_headless_tick(g_emu_frames);
+        link_check_frame(g_emu_frames);   /* the bridge's link_check "test" answer */
         if (av_on) {
             headless_av_frame();
             headless_sleep_ms(1);
@@ -1737,6 +1740,7 @@ static void frame(void) {
     }
 
     if (draw_ui) draw_windows();
+    if (draw_ui) link_check_prompt(&state.emu);
 
     av_stream_pass();
 

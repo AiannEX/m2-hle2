@@ -670,6 +670,20 @@
      panel for what that lobby leaves to a keyboard. -->
 <p id="paused" class="paused-label" hidden data-i18n="ui.paused">Paused</p>
 
+<!-- A linked game set to MASTER with no other cabinet on the link (m2hle-page.js,
+     linkCheck; Pinboard #1449): the board stands still until one is picked. -->
+<div id="link-check" class="link-check" hidden>
+  <div class="lc-win ps-win" role="alertdialog" aria-labelledby="lc-title" aria-describedby="lc-text">
+    <p id="lc-title" class="lc-title"></p>
+    <p id="lc-text" class="lc-text"></p>
+    <div class="lc-row">
+      <button id="lc-test" class="tool primary"></button>
+      <button id="lc-continue" class="tool"></button>
+      <button id="lc-cable" class="tool"></button>
+    </div>
+  </div>
+</div>
+
 <footer class="bar">
   <div class="bar-tools">
     <a id="github" class="tool github" href="https://github.com/biggestsonicfan/m2-hle2" target="_blank" rel="noopener noreferrer"

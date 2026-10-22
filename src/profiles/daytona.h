@@ -425,6 +425,9 @@ static void daytona_dash(memory_bus_t *bus, game_dash_t *out) {
     if (out->gear > 4) out->gear = -1;
 }
 
+/* The test menu's GAME SYSTEM screen (seen on the board's own menu). */
+#define DAYTONA_LINK_SETTING "GAME SYSTEM, LINK ID: SINGLE"
+
 static const game_profile_t daytona_profile = {
     .id           = "daytona",
     .display_name = "Daytona USA (Japan, Rev A)",
@@ -437,6 +440,8 @@ static const game_profile_t daytona_profile = {
     .cabinet_count   = 2,
     .cabinet_xlat_fn = daytona_cabinet_xlat,
     .dash         = daytona_dash,
+    .link_setting = DAYTONA_LINK_SETTING,
+    .link_cable   = true,   /* a ring of one: 1人まで対戦できます */
     .input        = DAYTONA_INPUT,
     .quirks       = DAYTONA_QUIRKS(0x83fbb4, 3190),
 };
@@ -451,7 +456,8 @@ static const game_profile_t daytona_profile = {
     static const game_profile_t name##_profile = { \
         .id = #name, .display_name = title, .parent_zip_name = "daytona.zip", \
         .board = BOARD_MODEL2, .load_fn = load, .install_fn = name##_install, \
-        .backup_fn = name##_backup, \
+        .backup_fn = name##_backup, .link_setting = DAYTONA_LINK_SETTING, \
+        .link_cable = true, \
         .input = DAYTONA_INPUT, .quirks = DAYTONA_QUIRKS(table, count), \
     };
 /* noclip games.js `daytona93`: its own table, 2822 entries. */

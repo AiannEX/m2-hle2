@@ -81,6 +81,7 @@
 #include "ps3ui_gpu.h"
 #include "ps3ui_shell.h"
 #include "ps3ui_ggpo.h"
+#include "link_check_pad.h"   /* a MASTER alone on the link (#1449): asked over the game */
 #include "gems.h"          /* the Gems options: Sega's own C from Sonic Gems Collection */
 
 /* registry.h is the single TU that defines g_profiles[] / g_active_profile. */
@@ -507,6 +508,7 @@ static void lr_attach_sound(void) {
  * web_install_board). With no slice in progress -- there is one thread. */
 static void lr_install_board(void) {
     g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    link_check_reset();   /* a MASTER alone on the link: asked again for the new set */
     irqt_reset();
     if (g_sound_on) lr_attach_sound();
     input_reset();
@@ -1252,7 +1254,15 @@ static uint32_t lr_port_held_shell(unsigned port) {
 static bool lr_shell_input(bool *board_paused) {
     bool session = pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_match();
     if (emu_ggpo_match() && g_ps3ui_shell.scr != PS3UI_SH_GAME) ps3ui_shell_go(&g_ps3ui_shell, PS3UI_SH_GAME);
-    ps3ui_shell_frame(&g_ps3ui_shell, lr_lobby_pad(), lr_lobby_pad_port(1), session);
+    /* The link question (#1449) has the pad: the button that answers it must
+     * not also leave the title for MAIN MENU. What is held while it is up stays
+     * the question's until let go, or the shell sees it pressed a frame later. */
+    static uint32_t ask_held, ask_held2;
+    uint32_t pad = lr_lobby_pad(), pad2 = lr_lobby_pad_port(1);
+    if (link_ask_up()) ask_held = pad, ask_held2 = pad2;
+    ask_held &= pad;
+    ask_held2 &= pad2;
+    ps3ui_shell_frame(&g_ps3ui_shell, pad & ~ask_held, pad2 & ~ask_held2, session);
     /* Online Battle in RetroArch's own netplay mode: say where it lives */
     if (g_ps3ui_shell.scr == PS3UI_SH_ONLINE && opt.online != LR_ONLINE_RPCN) {
         ps3ui_shell_go(&g_ps3ui_shell, PS3UI_SH_MAIN);
@@ -1815,7 +1825,7 @@ static void lr_draw(bool ran) {
     bool lobby = view == PS3UI_VIEW_FULL, overlay = view == PS3UI_VIEW_OVERLAY;
     if (lobby) lr_lobby_size(&w, &h);
     else       lr_render_size(&w, &h);
-    if (lr_draw_dupe(ran, lobby, overlay, w, h)) return;
+    if (lr_draw_dupe(ran, lobby, overlay || link_ask_up(), w, h)) return;
     lr_draw_geometry(w, h, lobby);
     if (!g_gfx_ready) { video_cb(NULL, (unsigned)w, (unsigned)h, 0); return; }
     sg_reset_state_cache();   /* the context is shared: RetroArch drew with it since */
@@ -1825,6 +1835,7 @@ static void lr_draw(bool ran) {
     ps3ui_gpu_record(&lobby_cv, w, h);
     bool text = !lobby && lr_lua_draw(&lobby_cv, w, h);
     if (!lobby && lr_gun_draw(&lobby_cv, w, h)) text = true;
+    if (!lobby && link_check_pad_draw(&lobby_cv)) text = true;
     if (lobby || overlay) lr_draw_record_lobby(&lobby_cv);
 
     lr_draw_pass(w, h, lobby, overlay || text, &lobby_cv);
@@ -2597,6 +2608,16 @@ RETRO_API void retro_run(void) {
 
     hprof_phase(0);   /* the frame log's phases: 0 input, 1 board, 2 audio, 3-5 lr_draw, 6 sound wait */
     int64_t snd_wait0 = g_emu_times.sound_wait_us;
+    /* A MASTER alone on the link (#1449): the question has the pad, and the
+     * board waits for the answer. Then Test, if that was the answer. */
+    link_check_frame(g_emu_frames);
+    link_ask_state_t link = in_session ? LINK_ASK_NONE : link_check_pad_frame(lr_lobby_pad(), g_emu_frames);
+    if (link != LINK_ASK_NONE) held = g_input.far_held = 0;
+    static link_ask_state_t link_was;
+    if (link == LINK_ASK_ASKING && link_was != LINK_ASK_ASKING) lr_log(RETRO_LOG_WARN, "%s", link_check_line());
+    link_was = link;
+    if (link == LINK_ASK_ASKING) board_paused = true;
+    held |= link_check_test_bits();
     bool ran = lr_run_frame(held, board_paused);
 
     g_lr_runs++;

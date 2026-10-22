@@ -73,6 +73,7 @@
 #include "ffb.h"            /* the drive board's force feedback, for the page to rumble */
 #include "cabinet_picture.h" /* the Picture tab's cabinet: another cabinet's colours, live */
 #include "wheel_host.h"     /* the page's analog wheel and pedals (Pinboard #1082) */
+#include "link_check.h"     /* a MASTER cabinet with nobody on the link (#1449) */
 
 /* The single TU that defines g_profiles[] / g_active_profile. Under M2HLE_WEB it
  * registers sfight alone. */
@@ -204,6 +205,7 @@ EM_JS(void, web_gpu_renderer, (char *out, int cap), {
 
 static void web_install_board(void) {
     g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    link_check_reset();   /* a new set: nothing asked, the TOSlink cable out */
     irqt_reset();
     if (g_active_profile->quirks.enable_68k_sound) {
         sound_select_board(g_active_profile->quirks.model1_sound);
@@ -428,6 +430,27 @@ EMSCRIPTEN_KEEPALIVE int web_set_paused(int on) {
     return web_paused();
 }
 
+/* A linked game set to MASTER with no other cabinet on the link (core/link_check.h,
+ * #1449): the board stands still while the page asks what to do. 0 nothing to
+ * ask; else 1, | 2 with "Back to the test menu" (a Test button), | 4 with the
+ * virtual TOSlink cable (a game that plays on a ring of one). */
+EMSCRIPTEN_KEEPALIVE int web_link_check(void) {
+    if (!state.romset.loaded || !link_check_due()) return 0;
+    return 1 | (link_check_has_test(g_active_profile) ? 2 : 0) | (link_check_has_cable(g_active_profile) ? 4 : 0);
+}
+/* Where the loaded game's test menu sets it to play alone, in the menu's
+ * words, or "" (game_profile_t link_setting). */
+EMSCRIPTEN_KEEPALIVE const char *web_link_setting(void) {
+    const char *s = link_check_setting();
+    return s ? s : "";
+}
+/* The page's answer: 0 back to the test menu, 1 continue anyway, 2 the virtual
+ * TOSlink cable (link_answer_t). */
+EMSCRIPTEN_KEEPALIVE void web_link_answer(int a) {
+    if (a < LINK_ANSWER_TEST_MENU || a > LINK_ANSWER_CABLE) return;
+    link_check_answer((link_answer_t)a, g_emu_frames);
+}
+
 /* A machine that cannot run much faster than the board would rush for ever, in
  * silence: one that gains less than WEB_FOLLOW_GAIN frames in WEB_FOLLOW_TRIAL_US
  * stays behind the leader and plays at the board's rate instead. */
@@ -504,7 +527,8 @@ static void web_run_owed_slices(void) {
 
     emu_ggpo_lobby_pump();   /* the GGPO lobby, running or not */
     if (g_web_paused && web_pause_refused()) g_web_paused = false;   /* a room or a match took over */
-    if (state.emu.run_state != EMU_RUNNING || g_web_hold || g_web_paused) {
+    link_check_frame(g_emu_frames);   /* lets go of the answer's Test */
+    if (state.emu.run_state != EMU_RUNNING || g_web_hold || g_web_paused || link_check_due()) {
         /* Not running yet (or held under the shell's menus, or paused), and netplay still
          * has to breathe: the login and the room happen before the match
          * starts (emu_thread.h, STOPPED branch). */
