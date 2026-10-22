@@ -31,11 +31,11 @@ static ffb_out_t play(uint8_t cmd) {
 
 int main(void) {
     drive_effect_t e = drive_board_decode(0x27);
-    CHECK(e.kind == DRIVE_FRICTION && e.level == 7, "0x27: friction 7 (standing)");
+    CHECK(e.kind == DRIVE_CLUTCH && e.level == 7, "0x27: clutch 7 (standing)");
     e = drive_board_decode(0x3B);
     CHECK(e.kind == DRIVE_CENTER && e.level == 3, "0x3B: centring 3 (at speed)");
     e = drive_board_decode(0x42);
-    CHECK(e.kind == DRIVE_VIBRATE && e.level == 2, "0x42: shake 2 (rough ground)");
+    CHECK(e.kind == DRIVE_UNCENTER && e.level == 2, "0x42: uncentring 2 (the grass)");
     e = drive_board_decode(0x57);
     CHECK(e.kind == DRIVE_PUSH && e.dir == +1 && e.level == 7, "0x57: push right 7 (a crash)");
     e = drive_board_decode(0x63);
@@ -54,13 +54,15 @@ int main(void) {
     prof.quirks.model1_io = true;
 
     ffb_out_t o = play(0x27);
-    CHECK(!o.strong && !o.weak && o.friction > 0x6000, "friction: a wheel feels it, a pad does not");
+    CHECK(!o.strong && !o.weak && o.damper > 0x6000 && !o.spring, "clutch: a wheel's damper, a pad feels nothing");
     o = play(0x38);
     CHECK(!o.strong && !o.weak && o.spring == 0, "centring 0: nothing");
     o = play(0x3F);
     CHECK(!o.strong && o.spring == 0x7FFF, "centring 7: a wheel's full spring");
     o = play(0x42);
-    CHECK(o.weak > o.strong && o.shake > 0, "shake: the weak motor");
+    CHECK(o.weak > o.strong && o.spring == -0x2FFF && !o.push && !o.damper,
+          "uncentring 2: a spring the wrong way round, the weak motor");
+    CHECK(play(0x40).spring < 0 && play(0x47).spring == -0x7FFF, "uncentring 0 still pushes, 7 the most");
     ffb_out_t lo = play(0x60), hi = play(0x67);
     CHECK(hi.strong > lo.strong && lo.strong > 0 && hi.push < lo.push && lo.push < 0,
           "push left: stronger with the level, negative force");

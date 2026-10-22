@@ -117,26 +117,32 @@ int main(void) {
     CHECK(g_nw == 1 && SENT(1, 0xF8, 0x81, 0x0E, 0x01), "...its range 270, and no force");
 
     g_nw = 0;
-    ffb_out_t race = { .push = 0x7FFF, .spring = 0x4000, .friction = 0x2000 };
+    ffb_out_t race = { .push = 0x7FFF, .spring = 0x4000, .damper = 0x2000 };
     lg4ff_update(&race, false);
     CHECK(SENT(1, 0x11, 0x08, 0xFF, 0x80), "a push: the constant force");
     CHECK(SENT(1, 0xF5) && SENT(1, 0xFE, 0x0D, 0x04, 0x04, 0x60) && SENT(1, 0x14), "the centring: the wheel's spring");
-    CHECK(SENT(1, 0x81, 0x0E, 0x40, 0x40, 0xFF), "the friction slot started");
+    CHECK(SENT(1, 0x81, 0x0C, 0x04, 0x00, 0x04, 0x00, 0x40), "the damper slot started");
     CHECK(g_nw == 5, "...five reports");
 
     g_nw = 0;
     lg4ff_update(&race, false);
     CHECK(g_nw == 0, "the same force: nothing");
 
-    race.friction = 0x4000;
+    race.damper = 0x4000;
     lg4ff_update(&race, false);
-    CHECK(g_nw == 1 && SENT(1, 0x8C, 0x0E, 0x80, 0x80, 0xFF), "a new friction: only that, as a change");
+    CHECK(g_nw == 1 && SENT(1, 0x8C, 0x0C, 0x08, 0x00, 0x08, 0x00, 0x80), "a new damper: only that, as a change");
 
     g_nw = 0;
-    ffb_out_t shake = { .shake = 0x2000 };
-    lg4ff_update(&shake, false);
-    CHECK(SENT(1, 0x11, 0x08, 0x80 + 31, 0x80) || SENT(1, 0x11, 0x08, 0x80 - 31, 0x80), "the shake: the push either way");
-    CHECK(SENT(1, 0xF5) && SENT(1, 0x83), "...the spring and the friction off");
+    ffb_out_t grass = { .spring = -0x2FFF };
+    lg4ff_update(&grass, false);
+    CHECK(SENT(1, 0x13, 0x00) && SENT(1, 0xF5) && SENT(1, 0x83), "the grass: no push, the centring and the damper off");
+    CHECK(SENT(1, 0x41, 0x0B, 0x80, 0x80, 0x44, 0x11, 0x5F) && g_nw == 4, "...the uncentring started in its slot");
+    g_nw = 0;
+    grass.spring = 0x2FFF;
+    lg4ff_update(&grass, false);
+    CHECK(SENT(1, 0x43) && SENT(1, 0xFE, 0x0D, 0x03, 0x03, 0x47) && g_nw == 4, "the centring back: the slot stopped, the spring on");
+    ffb_out_t kick = { .push = 0x7FFF };
+    lg4ff_update(&kick, false);
 
     g_nw = 0;
     lg4ff_update(&race, true);

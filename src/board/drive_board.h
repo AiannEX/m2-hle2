@@ -15,7 +15,7 @@
  *   0x20-0x27  standing or slow (car +0x18 < 64): 0x27 at rest, falling to 0x20
  *   0x38-0x3F  faster: 0x38 | (speed - 63) >> 6, rising with speed
  *   0x42 for 20 frames, then 0x32 for 12, over and over, while the car moves
- *              with surface bits 2-3 of +0x1BE / +0x1C0 set
+ *              with surface bits 2-3 of +0x1BE / +0x1C0 set (the grass)
  *   0x50, 0x60 bit 8 of +0x1C0 / +0x1BE (at most one a 32 frames)
  *   0x53, 0x63 contact (+0x9D 0x10 or 0x0A; which of the two is +0xF1 bit 1)
  *   0x57, 0x67 a crash (+0xF0 0x20 or 0x0A; which is +0x00 bits 23 / 25)
@@ -26,10 +26,13 @@
  * The high nibble is the effect and the low three bits its strength (0-7).
  * Sega's later drive boards keep the families (Supermodel's DriveBoard.cpp,
  * Scud Race: 0x1x centring, 0x2x friction, 0x5x / 0x6x turn the wheel right /
- * left). 0x3x and 0x4x are read from how Daytona uses them: friction that
- * fades as the car speeds up hands over to 0x3x, which grows from there, so
- * 0x3x is the centring at speed; 0x4x pulses on and off, a shake. The side of
- * 0x5x / 0x6x is Supermodel's; the game alone does not tell it.
+ * left). 0x2x is the clutch: the motor held, the wheel heavy, a steady
+ * resistance on the owner's cabinets (Pinboard #1447), strongest standing.
+ * 0x3x takes over from it as the car speeds up and grows from there: the
+ * centring at speed. 0x4x is the uncentering (Boomslangnz's FFB plugin names
+ * it so, and the owner's cabinets do it on the grass): the wheel is pushed on
+ * the way it is already turned, as round a banked corner. The side of 0x5x /
+ * 0x6x is Supermodel's; the game alone does not tell it.
  *
  * Sega Rally speaks another language to its drive board: drive_board_decode_srally.
  *
@@ -45,9 +48,9 @@
 typedef enum {
     DRIVE_NONE = 0,      /* set-up, test or unknown: the motor is free */
     DRIVE_SPRING,        /* 0x1x: centring, standing (0x10: none) */
-    DRIVE_FRICTION,      /* 0x2x: heavy wheel */
+    DRIVE_CLUTCH,        /* 0x2x: heavy wheel, the motor held */
     DRIVE_CENTER,        /* 0x3x: centring that grows with speed */
-    DRIVE_VIBRATE,       /* 0x4x: shake */
+    DRIVE_UNCENTER,      /* 0x4x: pushed on the way it is turned */
     DRIVE_PUSH,          /* 0x5x right, 0x6x left */
     DRIVE_TORQUE,        /* Sega Rally: a steady turning force, 1-32 */
 } drive_kind_t;
@@ -63,9 +66,9 @@ static inline drive_effect_t drive_board_decode(uint8_t cmd) {
     drive_effect_t e = { cmd, DRIVE_NONE, (uint8_t)(cmd & 7u), 0 };
     switch (cmd >> 4) {
         case 0x1: e.kind = DRIVE_SPRING;   break;
-        case 0x2: e.kind = DRIVE_FRICTION; break;
+        case 0x2: e.kind = DRIVE_CLUTCH;   break;
         case 0x3: e.kind = DRIVE_CENTER;   break;
-        case 0x4: e.kind = DRIVE_VIBRATE;  break;
+        case 0x4: e.kind = DRIVE_UNCENTER; break;
         case 0x5: e.kind = DRIVE_PUSH; e.dir = +1; break;
         case 0x6: e.kind = DRIVE_PUSH; e.dir = -1; break;
         default:  e.level = 0; break;

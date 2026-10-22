@@ -482,23 +482,24 @@ static void lobby_pad_release(void) {
 /* ---- Force feedback (ffb.h, Pinboard #1047) ------------------------------- */
 
 /* The drive board's force on the pads that play here: a wheel SDL can drive
- * gets the push, the spring, the friction and the shake as haptic effects,
- * set when the command changes; every other pad rumbles, renewed each
- * rendered frame while it does. */
+ * gets the push, the spring (its coefficient negative for the uncentring) and
+ * the damper (the clutch) as haptic effects, set when the command changes;
+ * every other pad rumbles, renewed each rendered frame while it does. */
 #define FFB_PADS 4
 
 static struct {
     SDL_JoystickID id;              /* 0: a free slot */
     SDL_Haptic    *haptic;          /* NULL: rumble only */
-    int            fx[4];           /* constant, spring, friction, sine; -1 if none */
-    bool           on[4];
+    int            fx[3];           /* constant, spring, damper; -1 if none */
+    bool           on[3];
 } g_ffb_pad[FFB_PADS];
 static int  g_ffb_last = -1;        /* the command last played; -1: play it again */
 static bool g_ffb_rumbling;
 
-static const Uint32 g_ffb_type[4] = { SDL_HAPTIC_CONSTANT, SDL_HAPTIC_SPRING, SDL_HAPTIC_FRICTION, SDL_HAPTIC_SINE };
+static const Uint32 g_ffb_type[3] = { SDL_HAPTIC_CONSTANT, SDL_HAPTIC_SPRING, SDL_HAPTIC_DAMPER };
 
-/* Effect k (g_ffb_type) at strength v, along the wheel. */
+/* Effect k (g_ffb_type) at strength v, along the wheel; a spring's v < 0
+ * pushes away from the centre. */
 static SDL_HapticEffect ffb_effect(int k, int v) {
     SDL_HapticEffect e;
     SDL_zero(e);
@@ -507,15 +508,11 @@ static SDL_HapticEffect ffb_effect(int k, int v) {
         e.constant.direction.type = SDL_HAPTIC_STEERING_AXIS;
         e.constant.length = SDL_HAPTIC_INFINITY;
         e.constant.level = (Sint16)v;
-    } else if (k == 3) {
-        e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
-        e.periodic.length = SDL_HAPTIC_INFINITY;
-        e.periodic.period = 60;   /* ms */
-        e.periodic.magnitude = (Sint16)v;
     } else {
         e.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
         e.condition.length = SDL_HAPTIC_INFINITY;
-        e.condition.right_sat[0] = e.condition.left_sat[0] = 0xFFFF;
+        /* The uncentring stops at its own strength, not at the wheel's lock. */
+        e.condition.right_sat[0] = e.condition.left_sat[0] = (Uint16)(v < 0 ? -v * 2 + 1 : 0xFFFF);
         e.condition.right_coeff[0] = e.condition.left_coeff[0] = (Sint16)v;
     }
     return e;
@@ -543,7 +540,7 @@ static void ffb_open_haptic(int s, SDL_Joystick *joy) {
     }
     Uint32 has = SDL_GetHapticFeatures(h);
     int made = 0;
-    for (int k = 0; k < 4; k++) {
+    for (int k = 0; k < 3; k++) {
         SDL_HapticEffect e = ffb_effect(k, 0);
         g_ffb_pad[s].fx[k] = (has & g_ffb_type[k]) ? SDL_CreateHapticEffect(h, &e) : -1;
         if (g_ffb_pad[s].fx[k] >= 0) made++;
@@ -561,8 +558,8 @@ static void ffb_open_haptic(int s, SDL_Joystick *joy) {
 
 static void ffb_haptic_play(int s, const ffb_out_t *o) {
     SDL_Haptic *h = g_ffb_pad[s].haptic;
-    const int v[4] = { o->push, o->spring, o->friction, o->shake };
-    for (int k = 0; k < 4; k++) {
+    const int v[3] = { o->push, o->spring, o->damper };
+    for (int k = 0; k < 3; k++) {
         int id = g_ffb_pad[s].fx[k];
         if (id < 0) continue;
         if (!v[k]) {
@@ -628,6 +625,28 @@ static void ffb_stop_all(void) {
         if (joy) SDL_RumbleJoystick(joy, 0, 0, 0);
     }
     SDL_free(ids);
+    g_ffb_last = -1;
+    g_ffb_rumbling = false;
+}
+
+/* Every force off while the window is in the background, the haptics kept
+ * open: the next ffb_update starts the effects again. Closing and opening a
+ * wheel's haptic is slow where a driver stands behind it (DirectInput with
+ * Logitech's software), and alt-tab must not wait on it (Pinboard #1447). */
+static void ffb_pause(void) {
+    for (int s = 0; s < FFB_PADS; s++) {
+        if (!g_ffb_pad[s].haptic) continue;
+        for (int k = 0; k < 3; k++) {
+            if (g_ffb_pad[s].on[k]) SDL_StopHapticEffect(g_ffb_pad[s].haptic, g_ffb_pad[s].fx[k]);
+            g_ffb_pad[s].on[k] = false;
+        }
+    }
+    if (g_ffb_rumbling) {
+        for (int s = 0; s < FFB_PADS; s++) {
+            SDL_Joystick *joy = g_ffb_pad[s].id ? SDL_GetJoystickFromID(g_ffb_pad[s].id) : NULL;
+            if (joy && !g_ffb_pad[s].haptic) SDL_RumbleJoystick(joy, 0, 0, 0);
+        }
+    }
     g_ffb_last = -1;
     g_ffb_rumbling = false;
 }

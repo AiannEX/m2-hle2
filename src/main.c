@@ -1009,7 +1009,7 @@ static void pads_focus(bool focused) {
     if (!g_pads_on || focused == g_pads_focused) return;
     g_pads_focused = focused;
     if (focused) pad_refresh();
-    else { lobby_pad_release(); ffb_stop_all(); lg4ff_release(); fanatec_release(); }
+    else { lobby_pad_release(); ffb_pause(); lg4ff_release(); fanatec_release(); }
 }
 #endif
 
