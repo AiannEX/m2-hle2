@@ -47,8 +47,14 @@ function resolveNoclip() {
 
 export const NOCLIP = resolveNoclip();
 
-/** Import one of the explorer's modules by file name, e.g. `nc('model.js')`. */
-export const nc = (name) => import(pathToFileURL(path.join(NOCLIP, 'js', name)).href);
+/** Import one of the explorer's modules by file name, e.g. `nc('model.js')`.
+ *
+ * romset.js goes first, as in the explorer's app.js: it imports powsled.js,
+ * which imports display.js, which imports romset.js. Entering that cycle at
+ * display.js (as grade-pose does through characters.js) evaluates powsled.js
+ * before display.js's AT_EYE exists (noclip 629adcd, Pinboard #1458). */
+const ncFile = (name) => pathToFileURL(path.join(NOCLIP, 'js', name)).href;
+export const nc = async (name) => { await import(ncFile('romset.js')); return import(ncFile(name)); };
 
 /** The commit the grade was measured against, for a report to name. */
 export function noclipVersion() {
