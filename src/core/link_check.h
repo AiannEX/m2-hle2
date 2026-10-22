@@ -23,9 +23,9 @@
  * replay's (backup RAM detached), which boots blank, so SINGLE, anyway; a
  * session's own link takes the cable's place. A headless run never asks:
  * get_status's link_pace reports the count and the cable, and the bridge's
- * link_check answers. The desktop, the web page and libretro ask
- * (ui/link_check_prompt.h, web_link_check, ui/link_check_pad.h); SDL3 only
- * says it, once (link_check_tell).
+ * link_check answers. Every frontend asks: the desktop in ImGui
+ * (ui/link_check_prompt.h), the web page in HTML (web_link_check), libretro and
+ * SDL3 with the pad, through link_ask_frame below (ui/link_check_pad.h, main_sdl.c).
  *
  * UI thread. The count is the emu thread's, read without the mutex: a new
  * start shows up a frame later at worst.
@@ -55,12 +55,28 @@ typedef struct {
 
 static link_check_t g_link_check;
 
+/* The question on a frontend that draws it itself (libretro, SDL3). */
+typedef enum {
+    LINK_ASK_NONE,      /* nothing asked: the game runs and has the pad */
+    LINK_ASK_ASKING,    /* the question is up: the board waits, the game gets no pad */
+    LINK_ASK_RELEASE,   /* answered, button still down: the board runs, no pad yet */
+} link_ask_state_t;
+
+typedef struct {
+    link_ask_state_t state;
+    int  sel;           /* the row picked */
+    bool test;          /* the profile has a Test button: three answers */
+} link_ask_t;
+
+static link_ask_t g_link_ask;
+
 /* A set was loaded: nothing asked yet, the cable out. */
 static inline void link_check_reset(void) {
     if (g_link_check.test_held) input_action_up(GAME_INPUT_TEST);
     g_link_check.handled   = m2comm_lone_masters();
     g_link_check.quiet     = false;
     g_link_check.test_held = false;
+    g_link_ask.state       = LINK_ASK_NONE;
     m2comm_set_cable(false);
 }
 
@@ -94,16 +110,6 @@ static inline void link_check_answer(link_answer_t a, uint32_t board_frame) {
     }
 }
 
-/* A frontend with no way to ask (SDL3): true once per set, at the
- * first lone start, to say so on screen; never asked again for the set. */
-static inline bool link_check_tell(void) {
-    if (!link_check_due()) return false;
-    link_check_answer(LINK_ANSWER_CONTINUE, 0);
-    LOG_WARN("link: this cabinet is the link's MASTER and no other cabinet is linked; "
-             "set it to SINGLE in the test menu");
-    return true;
-}
-
 /* The Test bits a frontend that sets the board's held bits itself each frame
  * (libretro) adds to them while Test is held for the answer. */
 static inline uint32_t link_check_test_bits(void) {
@@ -124,12 +130,63 @@ static inline void link_check_frame(uint32_t board_frame) {
 
 /* The question, for every frontend that asks it. */
 #define LINK_CHECK_TITLE "No other cabinet on the link"
-/* The one line a frontend with no way to ask shows (link_check_tell). */
+/* The question in one line, for a log. */
 #define LINK_CHECK_LINE \
     "No other cabinet on the link: this MASTER waits for nobody. Set LINK ID to SINGLE in the test menu."
 #define LINK_CHECK_TEXT \
     "This cabinet is set to be the link's MASTER, but no other cabinet is linked to it.\n" \
     "It will wait for one, give up and restart, over and over.\n" \
     "Set it to SINGLE in the test menu's game settings (Daytona USA: GAME ASSIGNMENTS, LINK ID)."
+
+/* The answers' names, by link_answer_t, and what the cable is. */
+static const char *const LINK_ANSWER_LABEL[] = { "Back to the test menu", "Continue anyway",
+                                                 "Insert a virtual TOSlink cable" };
+#define LINK_CHECK_CABLE_HINT \
+    "Wires this comm board's output to its own input: a link of one cabinet, " \
+    "so the MASTER finds itself. Until another game is loaded."
+
+/* The rows a frontend that draws the question shows, top to bottom. */
+static inline int link_ask_rows(link_answer_t rows[3]) {
+    int n = 0;
+    if (g_link_ask.test) rows[n++] = LINK_ANSWER_TEST_MENU;
+    rows[n++] = LINK_ANSWER_CONTINUE;
+    rows[n++] = LINK_ANSWER_CABLE;
+    return n;
+}
+
+/* Buttons for link_ask_frame, from whatever the frontend reads. */
+#define LINK_KEY_UP     1u
+#define LINK_KEY_DOWN   2u
+#define LINK_KEY_ANSWER 4u
+
+/* Once a host frame, on the frontend's thread: held, the LINK_KEY_* bits down
+ * now; hit, those pressed since the last call. While it says ASKING the board
+ * must not run and the game gets none of the input; after an answer
+ * (RELEASE) the game still gets none until the answering button is let go,
+ * so its press does not reach the game. */
+static inline link_ask_state_t link_ask_frame(uint32_t held, uint32_t hit, uint32_t board_frame) {
+    link_ask_t *a = &g_link_ask;
+    if (a->state == LINK_ASK_RELEASE && !(held & LINK_KEY_ANSWER)) a->state = LINK_ASK_NONE;
+    if (a->state == LINK_ASK_NONE) {
+        if (!link_check_due()) return LINK_ASK_NONE;
+        a->state = LINK_ASK_ASKING;
+        a->sel   = 0;
+        a->test  = link_check_has_test(g_active_profile);
+        LOG_WARN("link: this cabinet is the link's MASTER and no other cabinet is linked; asking");
+        return a->state;   /* a button down now was not pressed at the question */
+    }
+    if (a->state != LINK_ASK_ASKING) return a->state;
+    link_answer_t rows[3];
+    int n = link_ask_rows(rows);
+    if ((hit & LINK_KEY_UP) && a->sel > 0) a->sel--;
+    if ((hit & LINK_KEY_DOWN) && a->sel < n - 1) a->sel++;
+    if (hit & LINK_KEY_ANSWER) {
+        link_check_answer(rows[a->sel], board_frame);
+        a->state = LINK_ASK_RELEASE;
+    }
+    return a->state;
+}
+
+static inline bool link_ask_up(void) { return g_link_ask.state == LINK_ASK_ASKING; }
 
 #endif /* CORE_LINK_CHECK_H */

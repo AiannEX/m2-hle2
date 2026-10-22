@@ -37,12 +37,12 @@ static inline void link_check_prompt(emu_thread_ctx_t *emu) {
     igSpacing();
     int pick = -1;
     if (link_check_has_test(g_active_profile)) {
-        if (igButton("Back to the test menu")) pick = LINK_ANSWER_TEST_MENU;
+        if (igButton(LINK_ANSWER_LABEL[LINK_ANSWER_TEST_MENU])) pick = LINK_ANSWER_TEST_MENU;
         igSameLine();
     }
-    if (igButton("Continue anyway")) pick = LINK_ANSWER_CONTINUE;
+    if (igButton(LINK_ANSWER_LABEL[LINK_ANSWER_CONTINUE])) pick = LINK_ANSWER_CONTINUE;
     igSameLine();
-    if (igButton("Insert a virtual TOSlink cable")) pick = LINK_ANSWER_CABLE;
+    if (igButton(LINK_ANSWER_LABEL[LINK_ANSWER_CABLE])) pick = LINK_ANSWER_CABLE;
     if (igIsItemHovered(0))
         igSetTooltip("Wires this comm board's output to its own input: a link of one\n"
                      "cabinet, so the MASTER finds itself and the game goes on.\n"
