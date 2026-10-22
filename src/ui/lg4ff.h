@@ -16,7 +16,11 @@
  *     sdl_pads.h plays like any other). A G29 is switched from either of its
  *     modes, PS3 or PS4.
  *   - The native wheel is given its turning range (--g25-range N degrees, 270
- *     by default as the cabinets' wheels turn; 0 leaves it as it is).
+ *     by default as the cabinets' wheels turn; 0 leaves it as it is), and the
+ *     Controls window's (lg4ff_set_range). SDL's own lg4ff driver, which takes
+ *     the wheel on Linux once its hidraw node can be read, sets 900 degrees on
+ *     the wheel's first report: it is told ours first (lg4ff_sdl_env, before
+ *     SDL_Init; Pinboard #1439).
  *   - When SDL has no haptic for the wheel (Windows without Logitech's driver),
  *     the drive board's force (ffb.h) goes to it: the push as its constant
  *     force, with the shake on top; the centring as the wheel's own spring;
@@ -26,7 +30,8 @@
  *
  * Linux's kernel driver already switches the mode and gives the force; there
  * the wheel's hidraw node needs a udev rule to open (LOGITECH.md), and without
- * one this says so once and does nothing else.
+ * one this says so once, and gives the range through the driver's sysfs
+ * `range` file if a udev rule lets us write it (lg4ff__sysfs_range).
  *
  * The force is let go (none, no spring, no friction) when the window loses the
  * focus or the run ends (lg4ff_release, lg4ff_shutdown).
@@ -44,6 +49,10 @@
 #include <string.h>
 
 #include <SDL3/SDL.h>
+#ifdef __linux__
+#include <dirent.h>
+#include <unistd.h>
+#endif
 
 #include "ffb.h"
 #include "lg4ff_proto.h"
@@ -81,6 +90,16 @@ static inline bool lg4ff_option(const char *opt, const char *val) {
         return true;
     }
     return false;
+}
+
+/* SDL's lg4ff driver sets the range it finds in SDL_HIDAPI_LG4FF_RANGE when it
+ * opens the wheel, 900 without one; ours for it. Before SDL_Init, and again
+ * when the range changes (the wheel may be plugged in again). */
+static inline void lg4ff_sdl_env(void) {
+    char v[16];
+    if (!g_lg4ff_on || !g_lg4ff_range) return;
+    snprintf(v, sizeof v, "%d", g_lg4ff_range);
+    SDL_SetEnvironmentVariable(SDL_GetEnvironment(), "SDL_HIDAPI_LG4FF_RANGE", v, true);
 }
 
 static void lg4ff__close(void) {
@@ -136,6 +155,38 @@ static void lg4ff__switch(const SDL_hid_device_info *i, lg4ff_id_t id) {
     else    LOG_WARN("lg4ff: the %s's mode switch failed: %s", lg4ff_name(m), SDL_GetError());
 }
 
+/* Linux, the wheel left to hid-logitech (no hidraw for us): the range through
+ * each bound wheel's /sys/bus/hid/drivers/logitech/<dev>/range, root's unless
+ * a udev rule opens it (LOGITECH.md); the number of wheels it took. */
+static int lg4ff__sysfs_range(int deg) {
+    int n = 0;
+#ifdef __linux__
+    static bool warned;
+    const char *dir = "/sys/bus/hid/drivers/logitech";
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    for (struct dirent *e; (e = readdir(d)) != NULL;) {
+        char path[320];
+        if (e->d_name[0] == '.') continue;
+        snprintf(path, sizeof path, "%s/%s/range", dir, e->d_name);
+        FILE *f = fopen(path, "w");
+        if (!f) {
+            if (!warned && access(path, F_OK) == 0)
+                LOG_WARN("lg4ff: cannot write %s (the udev rule in LOGITECH.md opens it)", path);
+            warned |= access(path, F_OK) == 0;
+            continue;
+        }
+        bool ok = fprintf(f, "%d\n", deg) > 0;
+        ok &= fclose(f) == 0;
+        if (ok) { n++; LOG_INFO("lg4ff: range %d degrees (%s)", deg, path); }
+    }
+    closedir(d);
+#else
+    (void)deg;
+#endif
+    return n;
+}
+
 /* Every Logitech wheel: the compat ones switched, the first native one opened. */
 static void lg4ff__find(void) {
     SDL_hid_device_info *list = SDL_hid_enumerate(LOGITECH_VID, 0);
@@ -146,9 +197,11 @@ static void lg4ff__find(void) {
         if (g_lg4ff.dev) continue;
         g_lg4ff.dev = SDL_hid_open_path(i->path);
         if (!g_lg4ff.dev) {
-            if (!g_lg4ff.warned)
+            if (!g_lg4ff.warned) {
                 LOG_WARN("lg4ff: the %s (%04X) would not open: %s%s", lg4ff_name(id.model), i->product_id,
                          SDL_GetError(), LG4FF__OPEN_HINT);
+                if (g_lg4ff_range && lg4ff_has_range(id.model)) lg4ff__sysfs_range(g_lg4ff_range);
+            }
             g_lg4ff.warned = true;
             continue;
         }
@@ -163,6 +216,34 @@ static void lg4ff__find(void) {
         }
     }
     SDL_hid_free_enumeration(list);
+}
+
+/* The open wheel takes a range command (a G25, a G27, a G29, a DFGT). */
+static inline bool lg4ff_range_ok(void) {
+    return g_lg4ff.dev && lg4ff_has_range(g_lg4ff.model);
+}
+
+/* The open wheel's name; NULL when none is open. */
+static inline const char *lg4ff_open_name(void) {
+    return g_lg4ff.dev ? lg4ff_name(g_lg4ff.model) : NULL;
+}
+
+/* A Logitech wheel was seen that its hidraw node keeps us from (no udev rule). */
+static inline bool lg4ff_locked_out(void) { return g_lg4ff.warned && !g_lg4ff.dev; }
+
+/* The turning range, `deg` degrees (40..900): kept for the next wheel, and
+ * sent to the open one now (or through Linux's driver); false when there is
+ * none to send it to. */
+static bool lg4ff_set_range(int deg) {
+    g_lg4ff_range = lg4ff_clamp_range(deg);
+    if (!g_lg4ff_on) return false;
+    lg4ff_sdl_env();
+    if (!lg4ff_range_ok()) return lg4ff__sysfs_range(g_lg4ff_range) > 0;
+    uint8_t r[LG4FF_REPORT];
+    lg4ff_range(r, g_lg4ff_range);
+    if (!lg4ff__send(r)) return false;
+    LOG_INFO("lg4ff: range %d degrees", g_lg4ff_range);
+    return true;
 }
 
 /* The force to `push`, `spring`, `friction`, each only when it changed. */

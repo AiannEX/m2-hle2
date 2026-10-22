@@ -982,6 +982,7 @@ static void pads_init(void) {
     /* SDL would turn SIGINT/SIGTERM into a quit event that only it sees: the
      * window then outlives Ctrl+C and `timeout`. */
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+    lg4ff_sdl_env();   /* SDL's lg4ff driver sets our range, not 900 (#1439) */
     if (!SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_HAPTIC)) {
         LOG_WARN("pads: SDL_Init: %s; no gamepads or wheels", SDL_GetError());
         return;

@@ -41,6 +41,12 @@ int main(void) {
           "steer: inside the dead zone is the centre");
     CHECK(wheel_host_steer(32767, WHEEL_HOST_STICK_DEAD) == 32767 && wheel_host_steer(-32768, WHEEL_HOST_STICK_DEAD) == -32767,
           "steer: full lock both ways");
+    CHECK(wheel_host_steer_centred(3000, 3000) == 0 && wheel_host_steer_centred(32767, 3000) == 32767 &&
+          wheel_host_steer_centred(-32768, 3000) == -32767,
+          "a wheel straight at 3000: 0 there, the full turn either side (#1439)");
+    CHECK(wheel_host_steer_centred(-14884, 3000) > -16384 - 2 && wheel_host_steer_centred(-14884, 3000) < -16384 + 2,
+          "half way to the left end from 3000: half the turn");
+    CHECK(wheel_host_steer_centred(1234, 0) == wheel_host_steer(1234, 0), "straight at 0: as without a centre");
     CHECK(wheel_host_pedal(32767, 32767) == 0 && wheel_host_pedal(-32768, 32767) == 32767,
           "pedal resting high: up 0, down full");
     CHECK(wheel_host_pedal(-32768, -32768) == 0 && wheel_host_pedal(0, -32768) > 16000 && wheel_host_pedal(0, -32768) < 16500,

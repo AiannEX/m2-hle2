@@ -17,10 +17,14 @@
  *   wheel.pedals=<guid> <name>         (pedals on their own lead; absent: the wheel's)
  *   wheel.axes=<steer>,<accel>,<brake> (joystick axis numbers)
  *   wheel.rest=<accel>,<brake>         (pedals released, -32768..32767 or auto)
+ *   wheel.center=<n>                   (the wheel axis held straight; absent: 0)
+ *   wheel.range=<degrees>              (a Logitech wheel's turn, lg4ff.h; absent:
+ *                                       --g25-range's, 270)
  *   wheel.<n>=<actions>                (joystick button n, 0-31)
  *
  * The map is the host's only (input.h, sdl_pads.h): the board sees actions, so
- * nothing here changes what a session or a replay sends. --pad-map,
+ * nothing here changes what a session or a replay sends (the range and the
+ * centre included: the board reads where the wheel is). --pad-map,
  * --wheel-axes and --wheel-buttons apply over the file for that run; the first
  * change made here drops them. --headless reads no file.
  */
@@ -40,6 +44,7 @@
 #include "log.h"
 #if M2HLE_PADS
 #include "sdl_pads.h"
+#include "lg4ff.h"
 #endif
 
 #define CONTROLS_CLI_MAX 8
@@ -54,7 +59,13 @@ static struct {
     int  det_role;                  /* the wheel axis a Detect button waits for (0 steer, 1 accel, 2 brake); -1: none */
     uint32_t det_id;                /* the device it watches */
     int  det_start[16];             /* its axes when Detect was clicked */
-} g_ctl = { .cap_action = -1, .det_role = -1 };
+    int  learn_act;                 /* the action a wheel button is being set for; -1: none */
+    uint32_t learn_held;            /* the wheel's buttons held then, which do not count */
+    int  range_default;             /* the turn without a wheel.range line (--g25-range's) */
+    bool range_known;
+    int  range_drag;                /* the rotation slider's value while it is held */
+    bool range_held;
+} g_ctl = { .cap_action = -1, .det_role = -1, .learn_act = -1 };
 
 /* The words the window shows for the actions. */
 static const char *const g_ctl_action_label[GAME_INPUT_COUNT] = {
@@ -87,6 +98,8 @@ static inline void controls_defaults(const game_profile_t *p) {
     input_keys_default(p);
 #if M2HLE_PADS
     sdl_pads_default();
+    if (!g_ctl.range_known) { g_ctl.range_default = g_lg4ff_range; g_ctl.range_known = true; }
+    g_lg4ff_range = g_ctl.range_default;
 #endif
 }
 
@@ -138,6 +151,12 @@ static inline void controls_apply_line(char *line) {
         if (sscanf(v, "%d,%d,%d", &st, &ac, &br) == 3 && st >= 0 && ac >= 0 && br >= 0) {
             g_wheel_opt.steer = st; g_wheel_opt.accel = ac; g_wheel_opt.brake = br;
         }
+    } else if (!strcmp(k, "wheel.center")) {
+        g_wheel_opt.center = atoi(v);
+        g_wheel_opt.center_set = true;
+    } else if (!strcmp(k, "wheel.range")) {
+        int r = atoi(v);
+        g_lg4ff_range = r <= 0 ? 0 : lg4ff_clamp_range(r);
     } else if (!strncmp(k, "wheel.", 6)) {
         uint32_t acts;
         int b = atoi(k + 6);
@@ -149,6 +168,9 @@ static inline void controls_apply_line(char *line) {
 /* Profile p's controls in: the built-in map, its file over that, the command
  * line over both. */
 static inline void controls_load(const game_profile_t *p) {
+#if M2HLE_PADS
+    int range = g_lg4ff_range;
+#endif
     controls_defaults(p);
     g_ctl.loaded = p;
     char path[640], line[320];
@@ -163,6 +185,7 @@ static inline void controls_load(const game_profile_t *p) {
     }
 #if M2HLE_PADS
     for (int i = 0; i < g_ctl.cli_n; i++) sdl_pads_option(g_ctl.cli[i].opt, g_ctl.cli[i].val);
+    if (g_lg4ff_range && g_lg4ff_range != range) lg4ff_set_range(g_lg4ff_range);   /* this profile's turn */
 #endif
 }
 
@@ -201,6 +224,8 @@ static inline void controls_save(void) {
             else                         fprintf(f, "%sauto", i ? "," : "");
         fprintf(f, "\n");
     }
+    if (g_wheel_opt.center_set) fprintf(f, "wheel.center=%d\n", g_wheel_opt.center);
+    if (g_lg4ff_range != g_ctl.range_default) fprintf(f, "wheel.range=%d\n", g_lg4ff_range);
     for (int b = 0; b < WHEEL_BUTTONS; b++)
         if (g_wheel_opt.button[b])
             fprintf(f, "wheel.%d=%s\n", b, input_combo_format(g_wheel_opt.button[b], acts, sizeof acts));
@@ -317,7 +342,8 @@ static inline void controls_keys_rows(int first, int last) {
 }
 
 static inline void controls_tab_keyboard(void) {
-    igTextWrapped("Click a key, then press the one you want (Esc cancels). Right-click clears it.");
+    igTextWrapped("Click a key, then press the one you want (Esc cancels). Right-click clears it. "
+                  "A gamepad's or a wheel's buttons are set in their own tabs.");
     if (!igBeginTableEx("keys", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV, (ImVec2){ 0, 0 }, 0.0f)) return;
     igTableSetupColumnEx("Action", ImGuiTableColumnFlags_WidthStretch, 1.4f, 0);
     igTableSetupColumnEx("Key", ImGuiTableColumnFlags_WidthStretch, 1.0f, 0);
@@ -533,9 +559,142 @@ static inline void controls_detect_poll(bool pads_on) {
     controls_save();
 }
 
+/* A Logitech wheel's rotation (lg4ff.h), sent to the wheel when it changes
+ * and kept per profile. On Linux SDL's own driver gives it 900 degrees unless
+ * m2hle can reach the wheel (Pinboard #1439). */
+static inline void controls_wheel_range(SDL_Joystick *joy) {
+    bool logi = (joy && SDL_GetJoystickVendor(joy) == LOGITECH_VID) || lg4ff_open_name() || lg4ff_locked_out();
+    if (!logi) return;
+    if (!g_lg4ff_on) { igTextDisabled("Logitech wheels are left alone this run (--g25 off)."); return; }
+    if (!g_ctl.range_held) g_ctl.range_drag = g_lg4ff_range ? g_lg4ff_range : LG4FF_RANGE_MAX;
+    igSetNextItemWidth(200.0f);
+    igSliderInt("Rotation (degrees)", &g_ctl.range_drag, LG4FF_RANGE_MIN, LG4FF_RANGE_MAX);
+    g_ctl.range_held = igIsItemActive();
+    if (igIsItemDeactivatedAfterEdit()) {
+        controls_edit_begin();
+        if (lg4ff_set_range(g_ctl.range_drag))     snprintf(g_ctl.status, sizeof g_ctl.status, "The wheel turns %d degrees now.", g_lg4ff_range);
+        else if (lg4ff_locked_out())  snprintf(g_ctl.status, sizeof g_ctl.status, "Kept, but m2hle cannot reach the wheel (see below).");
+        else                          snprintf(g_ctl.status, sizeof g_ctl.status, "Kept: the wheel gets it when it comes.");
+        controls_save();
+    }
+    igSameLine();
+    igTextDisabled("the cabinets': 270");
+    if (lg4ff_locked_out())
+        igTextColored((ImVec4){ 1, 0.8f, 0.3f, 1 }, "m2hle cannot open the wheel's hidraw node, so its rotation stays\n"
+                      "Linux's (900). Add the udev rule in LOGITECH.md, plug the wheel in\nagain and restart m2hle.");
+}
+
+/* What the board reads from the wheel and pedals now, and what can steer it
+ * besides the wheel. */
+static inline void controls_wheel_readout(void) {
+    if (!wheel_host_on()) {
+        igTextDisabled("This game has no analog wheel: turned past half way, the wheel presses Left or Right.");
+        return;
+    }
+    if (!io5649_host_live()) { igTextDisabled("A session, a replay or a follow drives the board's wheel now."); return; }
+    io5649_wheel_t w = io5649_wheel();
+    int steer = g_io5649.steer;
+    igTextWrapped("The game reads: wheel 0x%02X (straight 0x%02X, %+d), accelerator %d%%, brake %d%%", steer, w.center,
+           steer - w.center, g_io5649_host.accel * 100 / IO5649_AXIS_MAX, g_io5649_host.brake * 100 / IO5649_AXIS_MAX);
+    if (g_pad_held[GAME_INPUT_P1_LEFT] || g_pad_held[GAME_INPUT_P1_RIGHT])
+        igTextColored((ImVec4){ 1, 0.8f, 0.3f, 1 }, "A pad or wheel button holds %s: with the wheel straight, that turns it.",
+                      g_pad_held[GAME_INPUT_P1_LEFT] ? "Left" : "Right");
+}
+
+/* The actions a wheel's buttons are set for, one row each. */
+static const int g_ctl_wheel_acts[] = {
+    GAME_INPUT_P1_START, GAME_INPUT_P1_COIN, GAME_INPUT_P1_B1, GAME_INPUT_P1_B2, GAME_INPUT_P1_B3, GAME_INPUT_P1_B4,
+    GAME_INPUT_P1_UP, GAME_INPUT_P1_DOWN, GAME_INPUT_P1_LEFT, GAME_INPUT_P1_RIGHT, GAME_INPUT_SERVICE, GAME_INPUT_TEST,
+    GAME_INPUT_GEAR_N, GAME_INPUT_GEAR_1, GAME_INPUT_GEAR_2, GAME_INPUT_GEAR_3, GAME_INPUT_GEAR_4,
+};
+
+static inline uint32_t controls_wheel_held(SDL_Joystick *joy, int nbut) {
+    uint32_t m = 0;
+    for (int b = 0; joy && b < nbut && b < WHEEL_BUTTONS; b++) if (SDL_GetJoystickButton(joy, b)) m |= 1u << b;
+    return m;
+}
+
+/* A Set button's wait: the first wheel button pressed after it was clicked
+ * plays its action, and only that. */
+static inline void controls_wheel_learn_poll(SDL_Joystick *joy, int nbut, bool pads_on) {
+    if (g_ctl.learn_act < 0) return;
+    if (!joy) { g_ctl.learn_act = -1; return; }
+    uint32_t held = controls_wheel_held(joy, nbut), fresh = held & ~g_ctl.learn_held;
+    g_ctl.learn_held &= held;   /* let go: it counts when pressed again */
+    if (!fresh) return;
+    int b = 0, a = g_ctl.learn_act;
+    while (!(fresh & (1u << b))) b++;
+    char lab[48], was[96];
+    controls_edit_begin();
+    uint32_t old = g_wheel_opt.button[b];
+    g_wheel_opt.button[b] = ACT(a);
+    controls_action_label(a, lab, sizeof lab);
+    if (old && old != ACT(a)) snprintf(g_ctl.status, sizeof g_ctl.status, "Button %d is %s now (it was %s).", b, lab,
+                                       controls_acts_text(old, was, sizeof was));
+    else                      snprintf(g_ctl.status, sizeof g_ctl.status, "Button %d is %s now.", b, lab);
+    g_ctl.learn_act = -1;
+    controls_pads_changed(pads_on);
+    controls_save();
+}
+
+static inline void controls_wheel_actions(SDL_Joystick *joy, int nbut, bool pads_on) {
+    controls_wheel_learn_poll(joy, nbut, pads_on);
+    igSeparatorText("Buttons");
+    igTextWrapped("Set: click it, then press the wheel's button. Right-click clears the action's buttons.");
+    if (!igBeginTableEx("wheelacts", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV, (ImVec2){ 0, 0 }, 0.0f)) return;
+    igTableSetupColumnEx("Action", ImGuiTableColumnFlags_WidthStretch, 1.4f, 0);
+    igTableSetupColumnEx("Wheel buttons", ImGuiTableColumnFlags_WidthStretch, 1.0f, 0);
+    igTableSetupColumnEx("##set", ImGuiTableColumnFlags_WidthFixed, 150.0f, 0);
+    igTableHeadersRow();
+    uint32_t held = controls_wheel_held(joy, nbut);
+    bool gears = g_active_profile && g_active_profile->input.bits[GAME_INPUT_GEAR_N];
+    for (int i = 0; i < (int)(sizeof g_ctl_wheel_acts / sizeof g_ctl_wheel_acts[0]); i++) {
+        int a = g_ctl_wheel_acts[i];
+        if (a >= GAME_INPUT_GEAR_N && !gears) continue;
+        char label[48], list[96];
+        size_t n = 0;
+        bool lit = false;
+        list[0] = '\0';
+        for (int b = 0; b < WHEEL_BUTTONS && n < sizeof list; b++)
+            if (g_wheel_opt.button[b] & ACT(a)) {
+                n += (size_t)snprintf(list + n, sizeof list - n, "%s%d", n ? ", " : "", b);
+                lit |= (held >> b) & 1;
+            }
+        igTableNextRow();
+        if (lit) igTableSetBgColor(ImGuiTableBgTarget_RowBg1, 0x6000C000u, -1);
+        igTableSetColumnIndex(0);
+        controls_action_label(a, label, sizeof label);
+        if (g_active_profile && !g_active_profile->input.bits[a]) igTextDisabled("%s", label);
+        else igTextUnformatted(label);
+        igTableSetColumnIndex(1);
+        igTextUnformatted(n ? list : "-");
+        igTableSetColumnIndex(2);
+        igPushIDInt(a);
+        if (g_ctl.learn_act == a) {
+            if (igButtonEx("Press a button...", (ImVec2){ -1.0f, 0.0f })) g_ctl.learn_act = -1;
+        } else if (igButtonEx("Set", (ImVec2){ -1.0f, 0.0f })) {
+            if (joy) {
+                g_ctl.learn_act = a;
+                g_ctl.learn_held = held;
+                g_ctl.det_role = -1;
+                snprintf(g_ctl.status, sizeof g_ctl.status, "Press the wheel's button for %s.", label);
+            } else snprintf(g_ctl.status, sizeof g_ctl.status, "No wheel is connected.");
+        }
+        if (igIsItemClickedEx(ImGuiMouseButton_Right) && n) {
+            controls_edit_begin();
+            for (int b = 0; b < WHEEL_BUTTONS; b++) g_wheel_opt.button[b] &= ~ACT(a);
+            controls_pads_changed(pads_on);
+            controls_save();
+        }
+        igPopID();
+    }
+    igEndTable();
+}
+
 static inline void controls_tab_wheel(bool pads_on) {
     igTextWrapped("Pick the wheel, and the pedals if they have their own USB lead (they are a second "
-                  "device then). Detect: click it, then turn the wheel or press the pedal all the way.");
+                  "device then). Detect: click it, then turn the wheel or press the pedal all the way. "
+                  "Centre: hold the wheel straight and click it.");
     if (!pads_on) { igTextDisabled("No wheels this run."); return; }
     if (controls_pick_combo("Wheel", &g_wheel_opt.dev, "Any device SDL calls a wheel", false)) {
         g_ctl.det_role = -1;
@@ -586,15 +745,45 @@ static inline void controls_tab_wheel(bool pads_on) {
             igSameLine();
             int raw = SDL_GetJoystickAxis(dj, *ax[k]);
             float f;
-            if (k == 0) f = (raw + 32768.0f) / 65535.0f;
+            if (k == 0)
+                f = ((g_wheel_opt.center_set ? wheel_host_steer_centred(raw, g_wheel_opt.center)
+                                             : wheel_host_steer(raw, 0)) + 32767.0f) / 65534.0f;
             else {
                 int rest = g_wheel_opt.rest_set[k - 1] ? g_wheel_opt.rest[k - 1] : joy_rest(did, *ax[k]);
                 f = wheel_host_pedal(raw, rest) / (float)IO5649_AXIS_MAX;
             }
             igProgressBar(f, (ImVec2){ 140.0f, 0 }, "");
+            /* The wheel's straight: where it reads held straight, if that is
+             * not the axis's middle (the car steers by itself otherwise). */
+            if (k == 0) {
+                igSameLine();
+                if (igButton(g_wheel_opt.center_set ? "Centre*" : "Centre")) {
+                    controls_edit_begin();
+                    g_wheel_opt.center = raw;
+                    g_wheel_opt.center_set = true;
+                    snprintf(g_ctl.status, sizeof g_ctl.status, "The wheel is straight at %d.", raw);
+                    controls_pads_changed(pads_on);
+                    controls_save();
+                }
+                if (igIsItemClickedEx(ImGuiMouseButton_Right) && g_wheel_opt.center_set) {
+                    controls_edit_begin();
+                    g_wheel_opt.center_set = false;
+                    g_wheel_opt.center = 0;
+                    controls_pads_changed(pads_on);
+                    controls_save();
+                }
+                if (igIsItemHovered(0))
+                    igSetTooltip("Hold the wheel straight and click: that is where it steers straight.\n"
+                                 "Right-click: back to the axis's middle.");
+            }
         }
         igPopID();
     }
+    controls_wheel_range(joy);
+    controls_wheel_readout();
+    controls_wheel_actions(joy, nbut, pads_on);
+    igSpacing();
+    if (!igCollapsingHeader("Each button's actions (combos)", 0)) return;
     int rows = nbut > 12 ? nbut : 12;
     if (rows > WHEEL_BUTTONS) rows = WHEEL_BUTTONS;
     if (!igBeginTableEx("wheelbinds", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY,
@@ -618,7 +807,7 @@ static inline void controls_tab_wheel(bool pads_on) {
 #endif
 
 static inline void controls_window_draw(bool *open, bool pads_on) {
-    if (!*open) { g_ctl.cap_action = -1; return; }
+    if (!*open) { g_ctl.cap_action = -1; g_ctl.learn_act = -1; return; }
     igSetNextWindowSize((ImVec2){ 520.0f, 620.0f }, ImGuiCond_FirstUseEver);
     if (!igBegin("Controls", open, 0)) { igEnd(); return; }
     const game_profile_t *p = g_ctl.loaded;
@@ -646,6 +835,7 @@ static inline void controls_window_draw(bool *open, bool pads_on) {
     if (igButton("Reset to defaults") && p) {
         g_ctl.cli_n = 0;
         g_ctl.det_role = -1;
+        g_ctl.learn_act = -1;
         if (controls_path(p, path, sizeof path)) remove(path);
         controls_load(p);
         controls_pads_changed(pads_on);

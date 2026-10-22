@@ -44,6 +44,16 @@ static inline int wheel_host_steer(int v, int dead) {
     return v < 0 ? -m : m;
 }
 
+/* A wheel axis (-32768..32767) that reads `center` held straight: each side
+ * of it spread over its half of the turn, -32767..32767 (Pinboard #1439: a
+ * wheel whose straight is not its axis's middle steers by itself). */
+static inline int wheel_host_steer_centred(int v, int center) {
+    if (center <= -IO5649_AXIS_MAX || center >= IO5649_AXIS_MAX) return wheel_host_steer(v, 0);
+    if (v < -IO5649_AXIS_MAX) v = -IO5649_AXIS_MAX;
+    if (v >= center) return (int)((long)(v - center) * IO5649_AXIS_MAX / (IO5649_AXIS_MAX - center));
+    return -(int)((long)(center - v) * IO5649_AXIS_MAX / (center + IO5649_AXIS_MAX));
+}
+
 /* A pedal axis (-32768..32767) that reads `rest` released and the far end
  * from it pressed (a wheel's pedals rest at either end, or in the middle), as
  * 0..32767. */

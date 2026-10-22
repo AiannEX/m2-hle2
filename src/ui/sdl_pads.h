@@ -167,7 +167,8 @@ static bool pad_plays_here(int i) {
 /* The Controls window can pick the wheel's device (any joystick, gamepads
  * too: a wheel SDL took for something else) and a second device for the
  * pedals (pedals on their own USB lead, as Fanatec's and others' are), and
- * set each pedal's released position, which its Detect button reads. */
+ * set each pedal's released position, which its Detect button reads, and
+ * the wheel's straight, which its Centre button reads. */
 typedef struct {
     int  steer, accel, brake;          /* axis indices; accel and brake on the pedals' device */
     bool forced;                       /* --wheel-axes given: any joystick */
@@ -175,6 +176,8 @@ typedef struct {
     pad_pick_t dev, pedals;            /* "" = a joystick SDL calls a wheel; the wheel's own pedals */
     int  rest[2];                      /* accelerator, brake released */
     bool rest_set[2];                  /* false: where it was when the device came */
+    int  center;                       /* the wheel axis held straight */
+    bool center_set;                   /* false: the axis's middle */
 } wheel_opt_t;
 #define WHEEL_OPT_DEFAULT { 0, 1, 2, false,                                                                 \
                   { [0] = ACT(GAME_INPUT_P1_B3), [4] = ACT(GAME_INPUT_P1_UP), [5] = ACT(GAME_INPUT_P1_DOWN), \
@@ -342,7 +345,7 @@ static void pad_refresh(void) {
             ped[k] = wheel_host_pedal(SDL_GetJoystickAxis(pj, pax[k]),
                                       g_wheel_opt.rest_set[k] ? g_wheel_opt.rest[k] : joy_rest(pid, pax[k]));
         Sint16 raw = SDL_GetJoystickAxis(joy, g_wheel_opt.steer);
-        int st = wheel_host_steer(raw, 0);
+        int st = g_wheel_opt.center_set ? wheel_host_steer_centred(raw, g_wheel_opt.center) : wheel_host_steer(raw, 0);
         int ac = ped[0], br = ped[1];
         /* The first wheel steers, or the first that has moved. */
         bool moved = wheel_moved(jids[i], raw);
