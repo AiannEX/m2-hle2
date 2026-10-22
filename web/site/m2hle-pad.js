@@ -235,6 +235,7 @@ const m2hlePad = (() => {
   let touchMask = 0;          /* what the touch buttons hold (m2hle-touch.js, setTouch) */
   let keyMask = 0;            /* what the keyboard holds (m2hle-keys.js, setKeys) */
   let pauseHeld = false;      /* a pad held Pause at the last poll */
+  let claim = null;           /* shown the pads each poll; true takes them from the game (setClaim) */
   const PAUSE_ROW = 1 << ACTIONS.findIndex((a) => a.id === 'pause');
   /* The cabinet rows' action bits: only the first pad presses them. */
   const CAB_BITS = ACTIONS.reduce((m, a) => (a.cab ? m | a.mask : m), 0);
@@ -336,6 +337,12 @@ const m2hlePad = (() => {
     requestAnimationFrame(poll);
     const list = pads();
     if (listening) { capture(list); return; }
+    if (claim && claim(list)) {
+      padMask = 0; pauseHeld = false; showHeld(0);
+      if (ready && Module._web_pad_far_set) Module._web_pad_far_set(0);
+      send();
+      return;
+    }
 
     let mask = 0, far = 0, pause = false;
     list.forEach((pad, i) => {
@@ -689,6 +696,10 @@ const m2hlePad = (() => {
   }
 
   /* Called from Module.onM2hleReady. */
+  /* A page menu the pads drive (m2hle-cardboard.js): fn(pads) sees them every
+   * poll, and while it returns true the game gets nothing from them. */
+  function setClaim(fn) { claim = fn; }
+
   function onReady() {
     ready = true;
     if (GUN) Module._web_set_gun_flash(gunFlash ? GUN_FLASH_FRAMES : 0);
@@ -696,5 +707,5 @@ const m2hlePad = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { onReady, toggle, setTouch, setKeys, get binds() { return clone(sets.std); }, get sets() { return clone(sets); } };
+  return { onReady, toggle, setTouch, setKeys, setClaim, get binds() { return clone(sets.std); }, get sets() { return clone(sets); } };
 })();

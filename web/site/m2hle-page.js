@@ -449,6 +449,7 @@ var Module = {
     m2hleNetplay.onReady(Module);
     m2hleGgpo.onReady(Module);
     m2hlePad.onReady();
+    m2hleCardboard.onReady();
     /* A light-gun game reloads on the right button (main_web.c, web_gun_event):
      * no context menu over the canvas then. */
     const canvas = document.getElementById('canvas');

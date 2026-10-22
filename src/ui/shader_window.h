@@ -28,6 +28,7 @@
 #include "cimgui.h"
 #include "ImGuiFileDialog.h"
 #include "post_shader.h"
+#include "stereo.h"
 #include "cabinet_picture.h"
 #include "log.h"
 
@@ -141,6 +142,25 @@ static inline void shader_ui_open_dialog(ImGuiFileDialog *fd) {
     IGFD_OpenDialog(fd, "OpenShader", "Load a libretro GLSL shader", "Libretro GLSL{.glslp,.glsl}", cfg);
 }
 
+/* Side-by-side 3D (stereo.h): the switch, and its settings while it is on. */
+static inline void shader_ui_stereo_items(void) {
+    if (igMenuItemEx("Side-by-side 3D (Cardboard)", NULL, g_stereo.on != 0, true))
+        stereo_set(!g_stereo.on, g_stereo.depth, g_stereo.focus, g_stereo.spacing, g_stereo.size, g_stereo.swap);
+    igSetItemTooltip("The 3D drawn twice, once for each eye, side by side, for a phone in a Cardboard "
+                     "viewer or for crossing your eyes (Swap). Only the picture changes; the board is the same.");
+    if (!g_stereo.on) return;
+    float depth = g_stereo.depth * 1000.0f, focus = g_stereo.focus, spacing = g_stereo.spacing, size = g_stereo.size;
+    bool swap = g_stereo.swap != 0, moved = false;
+    igPushItemWidth(160.0f);
+    moved |= igSliderFloatEx("Depth", &depth, 0.0f, STEREO_DEPTH_MAX * 1000.0f, "%.0f", 0);
+    moved |= igSliderFloatEx("Focus", &focus, STEREO_FOCUS_MIN, STEREO_FOCUS_MAX, "%.2f", ImGuiSliderFlags_Logarithmic);
+    moved |= igSliderFloatEx("Eye spacing", &spacing, STEREO_SPACING_MIN, STEREO_SPACING_MAX, "%.2f", 0);
+    moved |= igSliderFloatEx("Picture size", &size, STEREO_SIZE_MIN, 1.0f, "%.2f", 0);
+    moved |= igCheckbox("Swap eyes", &swap);
+    igPopItemWidth();
+    if (moved) stereo_set(1, depth / 1000.0f, focus, spacing, size, swap);
+}
+
 /* The Video menu's Arcade switch, then the built-in filters: none, the CRT. */
 static inline void shader_ui_builtin_items(post_shader_mode_t m) {
     if (igMenuItemEx("Arcade (the real board's picture)", NULL, post_shader_arcade(), true)) {
@@ -158,6 +178,7 @@ static inline void shader_ui_builtin_items(post_shader_mode_t m) {
                      "camera covers what stands on it (the Tornado's wing hides the backs of Sonic's shoes "
                      "in the attract intro, on the real board too). This sorts every pixel by its own depth "
                      "instead. Off is the board.");
+    shader_ui_stereo_items();
     /* A game whose colour tables follow its cabinet (Daytona: Twin, Deluxe). */
     const game_profile_t *p = g_active_profile;
     if (p && p->cabinets && p->cabinet_xlat_fn) {
