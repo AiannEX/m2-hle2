@@ -196,6 +196,47 @@ int main(void) {
     SDL_DetachVirtualJoystick(live);
     pump();
 
+    /* A G25 (046D:C299: 4 axes, 19 buttons, the shifter's d-pad as a hat)
+     * gets its own layout while the built-in one is untouched (Pinboard
+     * #1446), and its d-pad is four more buttons. */
+    sdl_pads_default();
+    SDL_VirtualJoystickDesc g;
+    SDL_INIT_INTERFACE(&g);
+    g.type = SDL_JOYSTICK_TYPE_WHEEL;
+    g.vendor_id = 0x046D;
+    g.product_id = 0xC299;
+    g.naxes = 4;
+    g.nbuttons = 19;
+    g.nhats = 1;
+    g.name = "G25 Racing Wheel";
+    SDL_JoystickID g25 = SDL_AttachVirtualJoystick(&g);
+    pump();
+    CHECK(g_wheel_opt.steer == 0 && g_wheel_opt.accel == 2 && g_wheel_opt.brake == 3, "G25: axes 0, 2, 3");
+    CHECK(g_wheel_opt.button[6] == ACT(GAME_INPUT_P1_START) && g_wheel_opt.button[7] == ACT(GAME_INPUT_P1_COIN) &&
+          g_wheel_opt.button[12] == ACT(GAME_INPUT_GEAR_1) && g_wheel_opt.button[15] == ACT(GAME_INPUT_GEAR_4) &&
+          g_wheel_opt.button[9] == ACT(GAME_INPUT_P2_B3) && !g_wheel_opt.button[16],
+          "G25: start 6, coin 7, gears 12-15, VR3 on 9");
+    button(g25, 6, true);
+    pump();
+    CHECK(g_pad_held[GAME_INPUT_P1_START], "G25: button 6 presses Start");
+    button(g25, 6, false);
+    g_wheel_opt.button[WHEEL_HAT + 2] = ACT(GAME_INPUT_P1_DOWN);
+    SDL_SetJoystickVirtualHat(SDL_GetJoystickFromID(g25), 0, SDL_HAT_RIGHTDOWN);
+    pump();
+    CHECK(g_pad_held[GAME_INPUT_P1_DOWN] && !g_pad_held[GAME_INPUT_P1_START], "G25: the d-pad's down presses");
+    SDL_SetJoystickVirtualHat(SDL_GetJoystickFromID(g25), 0, SDL_HAT_CENTERED);
+    pump();
+    CHECK(!g_pad_held[GAME_INPUT_P1_DOWN], "G25: the d-pad let go");
+    uint32_t acts = 0;
+    CHECK(actions_by_name("p2:b3", &acts) && acts == ACT(GAME_INPUT_P2_B3) && !actions_by_name("p3:b1", &acts),
+          "a wheel button can be P2's B3 (VR3), not player 3's");
+    sdl_pads_default();
+    g_wheel_opt.button[1] = ACT(GAME_INPUT_P1_B1);   /* a controls file's own layout */
+    wheel_preset_apply();
+    CHECK(g_wheel_opt.accel == 1 && !g_wheel_opt.button[6], "G25: a changed layout stays as it is");
+    SDL_DetachVirtualJoystick(g25);
+    pump();
+
     SDL_Quit();
     printf("%s (%d failures)\n", g_fail ? "FAILED" : "ALL PASS", g_fail);
     return g_fail ? 1 : 0;

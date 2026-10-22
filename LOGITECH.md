@@ -76,6 +76,32 @@ window. No G29 is here; what was found:
   not count). Right-click clears the action's buttons. The per-button combos, for
   combinations, are under "Each button's actions".
 
+## The G25's own layout (Pinboard #1446)
+
+The built-in wheel layout (axes `0,1,2`, paddles for the lever) is wrong for a
+G25: SDL lists its axes as wheel `0`, clutch `1`, accelerator `2`, brake `3`
+(`SDL_hidapi_lg4ff.c`, and the same on Windows without it). While the built-in
+layout is untouched (no controls file changed the axes or buttons, no
+`--wheel-axes` / `--wheel-buttons`), a connected G25 (`046D:C299`) gets its own,
+the owner's (`g_wheel_presets` in `sdl_pads.h`):
+
+| G25 | Plays |
+|---|---|
+| axes 0, 2, 3 | wheel, accelerator, brake |
+| 6 / 7 (the wheel's two buttons) | Start / Coin |
+| 3 / 0 (shifter, black) | Service / Test |
+| 4 / 5 (paddles) | lever up / down |
+| 12-15 (H-gate 1-4) | Gear 1-4 (the lever stays in a gear until the next, io_5649.h) |
+| 11, 8, 9, 10 (shifter, red row) | the view buttons VR1-VR4 (Daytona); 11 is Sega Rally's VIEW |
+
+Daytona's VR3 and VR4 are player 2's B3 / B4 (`daytona.h`), so a wheel or pad
+button may now press P2's actions (`p2:b3` in the controls file); the Controls
+window lists them only where they are view buttons (`quirks.wheel.view`), and
+names every view button "view N". The wheel's d-pad (its first hat) was never
+read: it is four more buttons, `wheel.32`-`wheel.35` (up, right, down, left),
+"D-pad up" etc. in the Wheel tab, unbound by default. Checked on a virtual G25
+(`tests/pads_test.c`); no G25 here.
+
 ## Where it was read
 
 Taken from LGS 5.10.127 x64 (`lgs510_x64.exe` from download01.logi.com, sha256

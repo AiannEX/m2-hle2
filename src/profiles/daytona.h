@@ -393,7 +393,7 @@ static inline void daytonagtx_install(const romset_t *rs, i960_cpu_t *cpu, memor
     .region            = { .kind = REGION_TODO, \
                            .why  = "country setting not looked for yet" }, \
     .wheel = { .left = 0x8000, .right = 0x4000, .accel = 0x0100, .brake = 0x0200, \
-               .shift_up = 0x2000, .shift_down = 0x1000 }, \
+               .shift_up = 0x2000, .shift_down = 0x1000, .view = { 0x0020, 0x0040, 0x0080, 0x0400 } }, \
     .model_table_offset = table, \
     .model_table_count  = count, \
     .model_layout       = MODEL_LAYOUT_DAYTONA, \

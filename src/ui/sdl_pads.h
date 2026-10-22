@@ -111,13 +111,15 @@ static void pad_pick_parse(pad_pick_t *p, const char *v) {
     snprintf(p->name, sizeof p->name, "%s", v[n] ? v + n + 1 : "?");
 }
 
-/* An action, or a combo of player-1 actions ("b1+b2") and the cabinet's own
- * (service, test, gearn, gear1-gear4); false if neither. */
+/* An action, or a combo of one player's actions ("b1+b2", "p2:b3") or the
+ * cabinet's own (service, test, gearn, gear1-gear4); false if neither. A
+ * pad plays player 1, but Daytona's view buttons VR3 / VR4 are player 2's
+ * B3 / B4, as on the keyboard (Pinboard #1446). Players 3 and 4 are the
+ * third and fourth pads (pad_refresh). */
 static bool actions_by_name(const char *s, uint32_t *acts) {
     if (!strcmp(s, "none"))    { *acts = 0; return true; }
     *acts = input_combo_parse(s);
-    uint32_t p2 = ((1u << (GAME_INPUT_P2_COIN + 1)) - 1) & ~((1u << GAME_INPUT_P2_UP) - 1);
-    return *acts && !(*acts & p2);   /* the pad plays player 1 */
+    return *acts && !(*acts & INPUT_COMBO_FAR);
 }
 
 static bool apply_pad_map(const char *list) {
@@ -161,8 +163,10 @@ static bool pad_plays_here(int i) {
  * the lever, 9=start, 8=coin, 0=b3 for VIEW). A joystick SDL calls a wheel
  * is one; with --wheel-axes, any joystick that is not a gamepad is. A pedal's
  * released position is where it was when the wheel came, so a pedal that rests
- * at either end of its axis reads the right way round. */
-#define WHEEL_BUTTONS 32
+ * at either end of its axis reads the right way round. A wheel's d-pad (its
+ * first hat) is four more buttons after its own 32 (Pinboard #1446). */
+#define WHEEL_BUTTONS 36
+#define WHEEL_HAT     32               /* hat 0's up, right, down, left: 32-35 */
 
 /* The Controls window can pick the wheel's device (any joystick, gamepads
  * too: a wheel SDL took for something else) and a second device for the
@@ -184,6 +188,26 @@ typedef struct {
                     [8] = ACT(GAME_INPUT_P1_COIN), [9] = ACT(GAME_INPUT_P1_START) } }
 static wheel_opt_t g_wheel_opt = WHEEL_OPT_DEFAULT;
 
+/* A wheel's own layout, which replaces the one above while that is untouched
+ * (no controls file, --wheel-axes or --wheel-buttons changed it). The G25 as
+ * SDL lists it (Pinboard #1446, the owner's): axes 0 wheel, 1 clutch, 2
+ * accelerator, 3 brake (SDL_hidapi_lg4ff.c; the same on Windows without it);
+ * buttons 0-3 the shifter's black ones, 4 / 5 the paddles, 6 / 7 the two on
+ * the wheel, 8-11 the shifter's red row, 12-17 gears 1-6, 18 reverse. The
+ * red row is the four view buttons (Daytona's VR1-4: P1 B3 / B4, P2 B3 / B4),
+ * so the pedals' own buttons stay off. */
+typedef struct { uint16_t vid, pid; const char *name; wheel_opt_t opt; } wheel_preset_t;
+static const wheel_preset_t g_wheel_presets[] = {
+    { 0x046D, 0xC299, "Logitech G25", { 0, 2, 3, false,
+        { [0] = ACT(GAME_INPUT_TEST), [3] = ACT(GAME_INPUT_SERVICE),
+          [4] = ACT(GAME_INPUT_P1_UP), [5] = ACT(GAME_INPUT_P1_DOWN),
+          [6] = ACT(GAME_INPUT_P1_START), [7] = ACT(GAME_INPUT_P1_COIN),
+          [11] = ACT(GAME_INPUT_P1_B3), [8] = ACT(GAME_INPUT_P1_B4),
+          [9] = ACT(GAME_INPUT_P2_B3), [10] = ACT(GAME_INPUT_P2_B4),
+          [12] = ACT(GAME_INPUT_GEAR_1), [13] = ACT(GAME_INPUT_GEAR_2),
+          [14] = ACT(GAME_INPUT_GEAR_3), [15] = ACT(GAME_INPUT_GEAR_4) } } },
+};
+
 /* The gamepad's and the wheel's binds as they are without --pad-map,
  * --wheel-axes, --wheel-buttons or a controls file; every device plays. */
 static void sdl_pads_default(void) {
@@ -193,6 +217,13 @@ static void sdl_pads_default(void) {
     g_wheel_opt = wheel;
     memset(&g_pad_pick, 0, sizeof g_pad_pick);
     g_pad_device = PAD_DEVICE_ANY;
+}
+
+/* Is the wheel's layout (axes, buttons) the built-in one? */
+static bool wheel_layout_default(void) {
+    static const wheel_opt_t d = WHEEL_OPT_DEFAULT;
+    return !g_wheel_opt.forced && g_wheel_opt.steer == d.steer && g_wheel_opt.accel == d.accel &&
+           g_wheel_opt.brake == d.brake && !memcmp(g_wheel_opt.button, d.button, sizeof d.button);
 }
 
 static bool wheel_axes_option(const char *val) {
@@ -264,6 +295,37 @@ static bool wheel_moved(SDL_JoystickID id, Sint16 v) {
     g_wheel_seen[n].first = v;
     g_wheel_seen[n].moved = false;
     return false;
+}
+
+/* The built-in layout, while it is untouched, becomes the connected wheel's
+ * own (g_wheel_presets): when a wheel comes, and when a game's controls load. */
+static void wheel_preset_apply(void) {
+    if (!wheel_layout_default()) return;
+    int count = 0;
+    SDL_JoystickID *ids = SDL_GetJoysticks(&count);
+    for (int i = 0; ids && i < count; i++) {
+        if (!wheel_is(ids[i])) continue;
+        Uint16 vid = SDL_GetJoystickVendorForID(ids[i]), pid = SDL_GetJoystickProductForID(ids[i]);
+        for (size_t k = 0; k < sizeof g_wheel_presets / sizeof g_wheel_presets[0]; k++) {
+            const wheel_preset_t *w = &g_wheel_presets[k];
+            if (w->vid != vid || w->pid != pid) continue;
+            g_wheel_opt.steer = w->opt.steer;
+            g_wheel_opt.accel = w->opt.accel;
+            g_wheel_opt.brake = w->opt.brake;
+            memcpy(g_wheel_opt.button, w->opt.button, sizeof g_wheel_opt.button);
+            printf("m2hle: wheel layout: %s's\n", w->name);
+            SDL_free(ids);
+            return;
+        }
+    }
+    SDL_free(ids);
+}
+
+/* A wheel button held: one of its own, or (WHEEL_HAT up) a direction of its d-pad. */
+static bool wheel_button_down(SDL_Joystick *joy, int b) {
+    if (b < WHEEL_HAT) return b < SDL_GetNumJoystickButtons(joy) && SDL_GetJoystickButton(joy, b);
+    static const Uint8 dir[4] = { SDL_HAT_UP, SDL_HAT_RIGHT, SDL_HAT_DOWN, SDL_HAT_LEFT };
+    return b < WHEEL_BUTTONS && SDL_GetNumJoystickHats(joy) > 0 && (SDL_GetJoystickHat(joy, 0) & dir[b - WHEEL_HAT]);
 }
 
 /* A picked pedal device that is not the wheel itself. */
@@ -358,9 +420,8 @@ static void pad_refresh(void) {
         now[GAME_INPUT_P1_RIGHT] |= st >  16000;
         now[GAME_INPUT_P1_B1]    |= ac >  16000;
         now[GAME_INPUT_P1_B2]    |= br >  16000;
-        int nb = SDL_GetNumJoystickButtons(joy);
-        for (int b = 0; b < nb && b < WHEEL_BUTTONS; b++) {
-            if (!g_wheel_opt.button[b] || !SDL_GetJoystickButton(joy, b)) continue;
+        for (int b = 0; b < WHEEL_BUTTONS; b++) {
+            if (!g_wheel_opt.button[b] || !wheel_button_down(joy, b)) continue;
             for (int a = 0; a < GAME_INPUT_COUNT; a++)
                 if (g_wheel_opt.button[b] & ACT(a)) now[a] = true;
         }
@@ -593,6 +654,7 @@ static void sdl_pads_event(const SDL_Event *ev, bool *changed) {
         case SDL_EVENT_JOYSTICK_ADDED:      /* every joystick: any can be the wheel or the pedals */
             g_ffb_last = -1;
             wheel_open(ev->jdevice.which);
+            wheel_preset_apply();
             *changed = true;
             break;
         case SDL_EVENT_JOYSTICK_REMOVED:
@@ -602,6 +664,7 @@ static void sdl_pads_event(const SDL_Event *ev, bool *changed) {
         case SDL_EVENT_JOYSTICK_AXIS_MOTION:
         case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
         case SDL_EVENT_JOYSTICK_BUTTON_UP:
+        case SDL_EVENT_JOYSTICK_HAT_MOTION:
             if (wheel_is(ev->jdevice.which) || pedals_is(ev->jdevice.which)) *changed = true;
             break;
         default: break;
