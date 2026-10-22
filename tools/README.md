@@ -129,7 +129,8 @@ its built-in `WebSocket`.
 | `lib/report.mjs` | the PASS / FAIL / SKIP report and exit code every grader ends with; a skip is not a pass |
 | `lib/dl.mjs` | the display list off a running emulator (`capture_dl`), in the layouts the explorer toolkit's checks expect: the fight a capture is taken in, `captureStage`, and the probes |
 | `lib/capture.mjs` | pinning a scene, verifying the game actually loaded it, waiting for the upload to settle |
-| `lib/noclip.mjs` | locates the explorer; `$M2_NOCLIP` overrides the submodule |
+| `noclip-reads.mjs` | not a grader: the explorer's reads of one set's model table (entries, first records, `decodeModel`'s headers, triangles and lighting), printed as the `noclip_reads_t` initializer `tests/prepared_test.c` holds a profile to. `node tools/noclip-reads.mjs dynmcopb dynamcop` takes names from `$ROMS_DIR` (the parent zip second for a split set). It probes a temporary copy of the submodule's `model.js`, so a new table costs one run, and a bumped submodule that changes a hash is found by running it on the sets the test has. Its first line names the longest mesh, which `GEO3D_IA_MAX_VPS` must cover |
+| `lib/noclip.mjs` | locates the explorer; `$M2_NOCLIP` overrides the submodule. `nc()` imports `romset.js` first, the order `app.js` uses: entering noclip's `romset.js` → `powsled.js` → `display.js` cycle elsewhere trips `powsled.js`'s load-time `AT_EYE` (noclip `629adcd`) |
 | `lib/texref.mjs` | the board digests and the exact slices they are cut at |
 | `lib/cop-replay.mjs` | the coprocessor's current matrix replayed from the FIFO words, every matrix-writing command and the three matrix banks included, in the chip's float32 or in double; and a capture walked into per-frame draws |
 | `lib/matrix.mjs` | row-major 4x4s in the board's convention, and an explorer op list turned into one |
