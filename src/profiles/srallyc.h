@@ -348,7 +348,7 @@ static const game_profile_t srallyc_profile = {
          * 7). Pinboard #667, #744. */
         .i960_board_timing = true,
         .wheel = { .left = 0x8000, .right = 0x4000, .accel = 0x0100, .brake = 0x0200,
-                   .shift_up = 0x2000, .shift_down = 0x1000 },
+                   .shift_up = 0x2000, .shift_down = 0x1000, .view = { 0x0020 } },
     },
 };
 

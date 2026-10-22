@@ -92,12 +92,20 @@ int main(void) {
     lg4ff_autocenter(r, 0x4000);
     CHECK(r[1][3] == 0x04 && r[1][5] == 0x60, "half spring: fe 0d 04 04 60");
 
-    lg4ff_friction(r[0], 0x4000, false);
-    CHECK(IS(r[0], 0x00, 0x81, 0x0E, 0x80, 0x80, 0xFF), "friction starts: 81 0e 80 80 ff");
-    lg4ff_friction(r[0], 0x7FFF, true);
-    CHECK(IS(r[0], 0x00, 0x8C, 0x0E, 0xFF, 0xFF, 0xFF), "friction changes: 8c 0e ff ff ff");
-    lg4ff_friction(r[0], 0, true);
-    CHECK(IS(r[0], 0x00, 0x83), "friction stops: 83");
+    lg4ff_damper(r[0], 0x4000, false);
+    CHECK(IS(r[0], 0x00, 0x81, 0x0C, 0x08, 0x00, 0x08, 0x00, 0x80), "damper starts: 81 0c 08 00 08 00 80");
+    lg4ff_damper(r[0], 0x7FFF, true);
+    CHECK(IS(r[0], 0x00, 0x8C, 0x0C, 0x0F, 0x00, 0x0F, 0x00, 0xFF), "damper changes: 8c 0c 0f 00 0f 00 ff");
+    lg4ff_damper(r[0], 0, true);
+    CHECK(IS(r[0], 0x00, 0x83), "damper stops: 83");
+
+    lg4ff_uncenter(r[0], 0x2FFF, false);
+    CHECK(IS(r[0], 0x00, 0x41, 0x0B, 0x80, 0x80, 0x44, 0x11, 0x5F),
+          "uncentring 2 starts: 41 0b, the centre, k 4 both sides negative, clip 5f");
+    lg4ff_uncenter(r[0], 0x7FFF, true);
+    CHECK(IS(r[0], 0x00, 0x4C, 0x0B, 0x80, 0x80, 0xEE, 0x11, 0xFF), "uncentring 7 changes: 4c 0b 80 80 ee 11 ff");
+    lg4ff_uncenter(r[0], 0, true);
+    CHECK(IS(r[0], 0x00, 0x43), "uncentring stops: 43");
 
     printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED", g_fail, g_fail == 1 ? "" : "s");
     return g_fail ? 1 : 0;

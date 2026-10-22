@@ -21,15 +21,17 @@ use the same commands and get the same treatment.
   (Rotation; `wheel.range` in the controls file), and sends it at once.
 - **Force.** Only when SDL has no haptic for the wheel, which means Windows without
   Logitech's driver. The drive board's force (`ffb.h`) goes to the wheel this way:
-  - the push becomes its constant force, with the shake added on top as a
-    60 ms square wave;
+  - the push becomes its constant force;
   - the centring uses the wheel's own spring;
-  - the friction uses its friction slot.
+  - the uncentring (Daytona's grass) is a reversed spring in slot 3: it pushes
+    the wheel on the way it is turned;
+  - the clutch (Daytona standing, slow) uses the damper slot. It used to be the
+    friction slot, which buzzes on a G25 held against it (Pinboard #1447).
 
   A report is sent only when something changes. Where SDL has the haptic (Linux's
   `hid-lg4ff`, or Windows with LGS installed), `sdl_pads.h` keeps the force, and we
   only switch the mode and set the range. `--ffb-gain` scales the force either way.
-- **Letting go.** No push, no spring, no friction when the window loses focus or the
+- **Letting go.** No push, no spring, no damper when the window loses focus or the
   run ends. `--g25 off` leaves every Logitech wheel alone.
 - **Linux.** The kernel's `hid-lg4ff` already switches the mode and gives the force.
   To set the range from here, the wheel's hidraw node has to be writable, e.g.
@@ -75,6 +77,32 @@ window. No G29 is here; what was found:
   button: click it, then press the wheel's button (one that was already held does
   not count). Right-click clears the action's buttons. The per-button combos, for
   combinations, are under "Each button's actions".
+
+## The G25's own layout (Pinboard #1446)
+
+The built-in wheel layout (axes `0,1,2`, paddles for the lever) is wrong for a
+G25: SDL lists its axes as wheel `0`, clutch `1`, accelerator `2`, brake `3`
+(`SDL_hidapi_lg4ff.c`, and the same on Windows without it). While the built-in
+layout is untouched (no controls file changed the axes or buttons, no
+`--wheel-axes` / `--wheel-buttons`), a connected G25 (`046D:C299`) gets its own,
+the owner's (`g_wheel_presets` in `sdl_pads.h`):
+
+| G25 | Plays |
+|---|---|
+| axes 0, 2, 3 | wheel, accelerator, brake |
+| 6 / 7 (the wheel's two buttons) | Start / Coin |
+| 3 / 0 (shifter, black) | Service / Test |
+| 4 / 5 (paddles) | lever up / down |
+| 12-15 (H-gate 1-4) | Gear 1-4 (the lever stays in a gear until the next, io_5649.h) |
+| 11, 8, 9, 10 (shifter, red row) | the view buttons VR1-VR4 (Daytona); 11 is Sega Rally's VIEW |
+
+Daytona's VR3 and VR4 are player 2's B3 / B4 (`daytona.h`), so a wheel or pad
+button may now press P2's actions (`p2:b3` in the controls file); the Controls
+window lists them only where they are view buttons (`quirks.wheel.view`), and
+names every view button "view N". The wheel's d-pad (its first hat) was never
+read: it is four more buttons, `wheel.32`-`wheel.35` (up, right, down, left),
+"D-pad up" etc. in the Wheel tab, unbound by default. Checked on a virtual G25
+(`tests/pads_test.c`); no G25 here.
 
 ## Where it was read
 
@@ -160,9 +188,11 @@ it differently.
 - **I** That per-device table is not in the DLL. `lg4ff_autocenter` uses Linux's
   curve instead (halved for every wheel but the MOMO, as Linux and SDL do):
   `f5` (off), then `fe 0d a a b`, then `14` (on).
-- **I** Friction is not a wheel command in the DLL (it works friction out on the
-  host). `lg4ff_friction` uses new-lg4ff's slot 4: `81 0e k k ff 00` to start it,
-  `8c` to change it, `83` to stop it.
+- **I** Conditions are not wheel commands in the DLL (it works them out on the
+  host). From new-lg4ff instead: `lg4ff_damper` is slot 4, `81 0c k s k s clip` to
+  start it, `8c` to change it, `83` to stop it; `lg4ff_uncenter` is slot 3's spring,
+  `41 0b d1 d2 kk ss clip` with both signs set (`4c`, `43`). The friction slot
+  (`0e`) is not used: it sticks and slips, a buzz, when the wheel is held.
 - **C** Also seen and not used here:
   - G27 rev LEDs `f8 12 <mask>` (masks 1, 3, 7, f, 1f);
   - `fa fe` and `f3` (`FUN_180017a90`, `FUN_180017a20`);

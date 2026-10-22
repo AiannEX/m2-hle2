@@ -26,9 +26,10 @@
  *   - Constant force, slot 1: 11 08 f 80, f = 0x80 + the force (-127..127);
  *     0x80 is none, sent as 13 00 (slot 1 stopped).
  *   - The wheel's own centring spring: f5 off; fe 0d a a b, then 14 on.
- *   - Friction, slot 4: 81 0e k k clip, then 8c to change it, 83 to stop.
- *     Not in Logitech's DLL (it plays friction on the host); from the Linux
- *     and SDL driver (new-lg4ff), which drive these wheels.
+ *   - Damper, slot 4: 81 0c k s k s clip, then 8c to change it, 83 to stop;
+ *     a spring the wrong way round (uncentring), slot 3: 41 0b d d kk ss clip,
+ *     4c, 43. Not in Logitech's DLL (it plays conditions on the host); from
+ *     the Linux and SDL driver (new-lg4ff), which drive these wheels.
  */
 #ifndef M2HLE_LG4FF_PROTO_H
 #define M2HLE_LG4FF_PROTO_H
@@ -182,15 +183,32 @@ static inline int lg4ff_autocenter(uint8_t out[3][LG4FF_REPORT], int k) {
     return 3;
 }
 
-/* Slot 4's friction at `k` (ffb_out_t.friction, 0-0x7FFF), the same both
- * ways, saturating at full strength. `playing`: the slot already runs (8c
- * changes it; 81 starts it). None stops it (83). */
-static inline void lg4ff_friction(uint8_t out[LG4FF_REPORT], int k, bool playing) {
+/* Slot 4's damper at `k` (ffb_out_t.damper, 0-0x7FFF), the same both ways:
+ * a 4-bit coefficient and a clip that grow together. `playing`: the slot
+ * already runs (8c changes it; 81 starts it). None stops it (83). */
+static inline void lg4ff_damper(uint8_t out[LG4FF_REPORT], int k, bool playing) {
     if (k <= 0) { const uint8_t b[] = { 0x83 }; lg4ff_cmd(out, b, 1); return; }
-    uint32_t c = (uint32_t)(k > 0x7FFF ? 0x7FFF : k) * 2u;
-    if (c > 0xFFFF) c = 0xFFFF;
-    const uint8_t b[] = { (uint8_t)(playing ? 0x8C : 0x81), 0x0E, (uint8_t)(c >> 8), (uint8_t)(c >> 8), 0xFF, 0x00 };
-    lg4ff_cmd(out, b, 6);
+    uint32_t c = (uint32_t)(k > 0x7FFF ? 0x7FFF : k) * 2u + 1u;   /* 0x0003..0xFFFF */
+    const uint8_t b[] = { (uint8_t)(playing ? 0x8C : 0x81), 0x0C, (uint8_t)(c >> 12), 0x00,
+                          (uint8_t)(c >> 12), 0x00, (uint8_t)(c >> 8) };
+    lg4ff_cmd(out, b, 7);
+}
+
+/* Slot 3's uncentring at `k` (-ffb_out_t.spring, 0-0x7FFF): a spring from the
+ * centre with both coefficients negative, so it pushes the wheel on the way
+ * it is turned, up to a clip that grows with it. new-lg4ff's encoding: the
+ * dead band's edges d1 = d2 = the centre (11 bits), the coefficients less
+ * 2048 in 4 bits each, their signs in bits 0 and 4. `playing` and none as
+ * lg4ff_damper (4c, 41, 43). */
+static inline void lg4ff_uncenter(uint8_t out[LG4FF_REPORT], int k, bool playing) {
+    if (k <= 0) { const uint8_t b[] = { 0x43 }; lg4ff_cmd(out, b, 1); return; }
+    uint32_t m = (uint32_t)(k > 0x7FFF ? 0x7FFF : k);
+    uint32_t c = (m < 2048u ? 0u : m - 2048u) * 2u >> 12;         /* 0..14 */
+    const uint32_t d = 1024u;                                      /* the centre */
+    const uint8_t b[] = { (uint8_t)(playing ? 0x4C : 0x41), 0x0B, (uint8_t)(d >> 3), (uint8_t)(d >> 3),
+                          (uint8_t)(c << 4 | c), (uint8_t)((d & 7u) << 5 | (d & 7u) << 1 | 0x11u),
+                          (uint8_t)((m * 2u + 1u) >> 8) };
+    lg4ff_cmd(out, b, 7);
 }
 
 #endif /* M2HLE_LG4FF_PROTO_H */

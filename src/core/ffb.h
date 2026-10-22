@@ -2,7 +2,7 @@
  * ffb.h — force feedback for the host (Pinboard #1047): what the cabinet's
  * drive board is doing to the wheel (board/drive_board.h), as a host can play
  * it back: a gamepad's two rumble motors, or a force-feedback wheel's
- * constant, spring and friction effects.
+ * constant, spring and damper effects.
  *
  * Each frontend polls ffb_poll() once a displayed frame and hands the result
  * to its device (main_sdl.c and main.c: SDL rumble and haptics, sdl_pads.h;
@@ -15,9 +15,15 @@
  * `drive`) and Sega Rally's 315-5649 (quirks.io_5649, port E; Pinboard #1082),
  * each decoded in its game's language. Every other game gets none.
  *
- * Rumble has no spring or friction, so a gamepad feels only the pushes (the
- * strong motor, harder with the level) and the shake (the weak motor). The
- * centring and friction Daytona holds all race long stay on a wheel. Sega
+ * A wheel plays Daytona's clutch as a damper, not a friction: a wheel's
+ * friction sticks and slips when held against it, a buzz the cabinet's held
+ * motor never makes (Pinboard #1447). Its uncentering is a spring the wrong
+ * way round (`spring` negative), which turns the wheel on the way it points.
+ *
+ * Rumble has no spring or damper, so a gamepad feels only the pushes (the
+ * strong motor, harder with the level) and the uncentering (the weak motor,
+ * the grass). The centring and the clutch Daytona holds all race long stay on
+ * a wheel. Sega
  * Rally's force is one steady torque, the wheel's centring most of the race:
  * a wheel plays all of it as a constant force, a pad rumbles only for the
  * hard half (FFB_TORQUE_RUMBLE and up), the kicks of a slide or a crash.
@@ -42,8 +48,8 @@ typedef struct {
     drive_effect_t effect;
     uint16_t strong, weak;      /* rumble motors, 0-0xFFFF */
     int16_t  push;              /* a wheel's constant force, + right */
-    uint16_t spring, friction;  /* a wheel's coefficients, 0-0x7FFF */
-    uint16_t shake;             /* a wheel's sine magnitude, 0-0x7FFF */
+    int16_t  spring;            /* its centring, -0x7FFF..0x7FFF; < 0 uncentring */
+    uint16_t damper;            /* its clutch, 0-0x7FFF */
 } ffb_out_t;
 
 static int g_ffb_gain = 100;
@@ -93,17 +99,17 @@ static inline ffb_out_t ffb_poll(void) {
             o.weak   = (uint16_t)(o.strong / 3u);
             break;
         }
-        case DRIVE_VIBRATE:
-            o.shake  = ffb__scale(0x1800u + lv * 0x0C00u, 0x7FFF);
+        case DRIVE_UNCENTER:
+            o.spring = (int16_t)-(int)ffb__scale(lv * 0x1000u + 0x0FFFu, 0x7FFF);   /* -0x0FFF..-0x7FFF */
             o.weak   = ffb__scale(0x4000u + lv * 0x1600u, 0xFFFF);
             o.strong = (uint16_t)(o.weak / 4u);
             break;
         case DRIVE_SPRING:
         case DRIVE_CENTER:
-            o.spring = ffb__scale(lv * 0x1000u + (lv ? 0x0FFFu : 0u), 0x7FFF);   /* 0, 0x1FFF..0x7FFF */
+            o.spring = (int16_t)ffb__scale(lv * 0x1000u + (lv ? 0x0FFFu : 0u), 0x7FFF);   /* 0, 0x1FFF..0x7FFF */
             break;
-        case DRIVE_FRICTION:
-            o.friction = ffb__scale(lv * 0x1000u + (lv ? 0x0FFFu : 0u), 0x7FFF);
+        case DRIVE_CLUTCH:
+            o.damper = ffb__scale(lv * 0x1000u + (lv ? 0x0FFFu : 0u), 0x7FFF);
             break;
         case DRIVE_TORQUE:                                             /* lv 1..32 */
             o.push = (int16_t)(o.effect.dir * (int)ffb__scale(lv * 0x0400u - (lv == 32u), 0x7FFF));

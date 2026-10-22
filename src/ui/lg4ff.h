@@ -23,8 +23,9 @@
  *     SDL_Init; Pinboard #1439).
  *   - When SDL has no haptic for the wheel (Windows without Logitech's driver),
  *     the drive board's force (ffb.h) goes to it: the push as its constant
- *     force, with the shake on top; the centring as the wheel's own spring;
- *     the friction in its friction slot. A report goes only when it changes.
+ *     force; the centring as the wheel's own spring; the uncentring as a
+ *     reversed spring in a slot; the clutch in its damper slot. A report goes
+ *     only when it changes.
  *     Where SDL has the haptic (Linux's hid-lg4ff, Windows with LGS), the
  *     force stays with sdl_pads.h.
  *
@@ -33,7 +34,7 @@
  * one this says so once, and gives the range through the driver's sysfs
  * `range` file if a udev rule lets us write it (lg4ff__sysfs_range).
  *
- * The force is let go (none, no spring, no friction) when the window loses the
+ * The force is let go (none, no spring, no damper) when the window loses the
  * focus or the run ends (lg4ff_release, lg4ff_shutdown).
  *
  * Options: --g25 off (lg4ff_option) leaves every Logitech wheel alone;
@@ -59,7 +60,6 @@
 #include "log.h"
 
 #define LG4FF_SWITCHED_MAX 4
-#define LG4FF_SHAKE_MS     30   /* half the period sdl_pads.h gives its sine */
 
 static bool g_lg4ff_on = true;
 static int  g_lg4ff_range = 270;
@@ -73,9 +73,9 @@ static struct {
     bool           warned;
     char           switched[LG4FF_SWITCHED_MAX][256];   /* paths sent the mode switch */
     int            nswitched;
-    /* What the wheel plays: the force byte (0x80 none), the spring and the
-     * friction (0 none), as it is when it is opened. */
-    int            force, spring, friction;
+    /* What the wheel plays: the force byte (0x80 none), the spring (< 0 the
+     * uncentring) and the damper (0 none), as it is when it is opened. */
+    int            force, spring, damper;
 } g_lg4ff;
 
 /* --g25 on|off, --g25-range N: true when `opt` is one. */
@@ -106,7 +106,7 @@ static void lg4ff__close(void) {
     if (g_lg4ff.dev) SDL_hid_close(g_lg4ff.dev);
     g_lg4ff.dev = NULL;
     g_lg4ff.force = 0x80;
-    g_lg4ff.spring = g_lg4ff.friction = 0;
+    g_lg4ff.spring = g_lg4ff.damper = 0;
 }
 
 /* False (and the wheel closed: it went) when the write failed. */
@@ -207,7 +207,7 @@ static void lg4ff__find(void) {
         }
         g_lg4ff.model = id.model;
         g_lg4ff.force = 0x80;
-        g_lg4ff.spring = g_lg4ff.friction = 0;
+        g_lg4ff.spring = g_lg4ff.damper = 0;
         LOG_INFO("lg4ff: %s (%04X)", lg4ff_name(id.model), i->product_id);
         if (g_lg4ff_range && lg4ff_has_range(id.model)) {
             uint8_t r[LG4FF_REPORT];
@@ -246,8 +246,10 @@ static bool lg4ff_set_range(int deg) {
     return true;
 }
 
-/* The force to `push`, `spring`, `friction`, each only when it changed. */
-static void lg4ff__play(int push, int spring, int friction) {
+/* The force to `push`, `spring`, `damper`, each only when it changed. The
+ * centring is the wheel's own spring, the uncentring a slot's (both stopped
+ * on the way from one to the other). */
+static void lg4ff__play(int push, int spring, int damper) {
     uint8_t r[3][LG4FF_REPORT];
     int f = lg4ff_force_byte(push);
     if (f != g_lg4ff.force) {
@@ -256,14 +258,21 @@ static void lg4ff__play(int push, int spring, int friction) {
         g_lg4ff.force = f;
     }
     if (spring != g_lg4ff.spring) {
-        int n = lg4ff_autocenter(r, spring);
-        for (int k = 0; k < n; k++) if (!lg4ff__send(r[k])) return;
+        int was = g_lg4ff.spring;
+        if (spring > 0 || was > 0) {
+            int n = lg4ff_autocenter(r, spring > 0 ? spring : 0);
+            for (int k = 0; k < n; k++) if (!lg4ff__send(r[k])) return;
+        }
+        if (spring < 0 || was < 0) {
+            lg4ff_uncenter(r[0], spring < 0 ? -spring : 0, was < 0);
+            if (!lg4ff__send(r[0])) return;
+        }
         g_lg4ff.spring = spring;
     }
-    if (friction != g_lg4ff.friction) {
-        lg4ff_friction(r[0], friction, g_lg4ff.friction > 0);
+    if (damper != g_lg4ff.damper) {
+        lg4ff_damper(r[0], damper, g_lg4ff.damper > 0);
         if (!lg4ff__send(r[0])) return;
-        g_lg4ff.friction = friction;
+        g_lg4ff.damper = damper;
     }
 }
 
@@ -295,9 +304,7 @@ static void lg4ff_update(const ffb_out_t *o, bool haptic) {
     }
     if (!g_lg4ff.dev) return;
     if (haptic) { lg4ff_release(); return; }
-    int push = o->push;
-    if (o->shake) push += (SDL_GetTicks() / LG4FF_SHAKE_MS & 1) ? o->shake : -(int)o->shake;
-    lg4ff__play(push, o->spring, o->friction);
+    lg4ff__play(o->push, o->spring, o->damper);
 }
 
 /* The run ends: the force let go, the wheel closed. */

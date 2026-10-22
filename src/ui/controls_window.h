@@ -60,7 +60,7 @@ static struct {
     uint32_t det_id;                /* the device it watches */
     int  det_start[16];             /* its axes when Detect was clicked */
     int  learn_act;                 /* the action a wheel button is being set for; -1: none */
-    uint32_t learn_held;            /* the wheel's buttons held then, which do not count */
+    uint64_t learn_held;            /* the wheel's buttons held then, which do not count */
     int  range_default;             /* the turn without a wheel.range line (--g25-range's) */
     bool range_known;
     int  range_drag;                /* the rotation slider's value while it is held */
@@ -185,6 +185,7 @@ static inline void controls_load(const game_profile_t *p) {
     }
 #if M2HLE_PADS
     for (int i = 0; i < g_ctl.cli_n; i++) sdl_pads_option(g_ctl.cli[i].opt, g_ctl.cli[i].val);
+    wheel_preset_apply();   /* a G25's own layout, if nothing changed the built-in one */
     if (g_lg4ff_range && g_lg4ff_range != range) lg4ff_set_range(g_lg4ff_range);   /* this profile's turn */
 #endif
 }
@@ -297,6 +298,23 @@ static inline bool controls_key_event(const sapp_event *ev) {
 
 /* ---- The window ---------------------------------------------------------- */
 
+/* Which of a driving game's view buttons (1-4) action a presses; 0 if none. */
+static inline int controls_view_button(int a) {
+    const game_profile_t *p = g_active_profile;
+    if (!p || !p->input.bits[a]) return 0;
+    for (int v = 0; v < 4; v++)
+        if (p->quirks.wheel.view[v] && p->input.bits[a] == p->quirks.wheel.view[v]) return v + 1;
+    return 0;
+}
+
+/* A player-2 action a pad or wheel button can press: only a view button
+ * (Daytona's VR3 / VR4). */
+static inline bool controls_p2_choice(uint32_t acts) {
+    for (int a = GAME_INPUT_P2_UP; a <= GAME_INPUT_P2_COIN; a++)
+        if ((acts & (1u << a)) && !controls_view_button(a)) return false;
+    return true;
+}
+
 /* An action's row label, with what a driving game makes of it. */
 static inline void controls_action_label(int a, char *buf, size_t cap) {
     const game_profile_t *p = g_active_profile;
@@ -309,6 +327,11 @@ static inline void controls_action_label(int a, char *buf, size_t cap) {
         else if (bit == p->quirks.wheel.shift_down) what = "shift down";
         else if (bit == p->quirks.wheel.left)       what = "steer left";
         else if (bit == p->quirks.wheel.right)      what = "steer right";
+        int v = controls_view_button(a);
+        if (v) {
+            snprintf(buf, cap, p->quirks.wheel.view[1] ? "%s (view %d)" : "%s (view)", g_ctl_action_label[a], v);
+            return;
+        }
     }
     if (what) snprintf(buf, cap, "%s (%s)", g_ctl_action_label[a], what);
     else      snprintf(buf, cap, "%s", g_ctl_action_label[a]);
@@ -374,6 +397,7 @@ static const uint32_t g_ctl_pad_choices[] = {
     ACT(GAME_INPUT_P1_B1) | ACT(GAME_INPUT_P1_B2), ACT(GAME_INPUT_P1_B1) | ACT(GAME_INPUT_P1_B3),
     ACT(GAME_INPUT_P1_B2) | ACT(GAME_INPUT_P1_B3), ACT(GAME_INPUT_P1_B1) | ACT(GAME_INPUT_P1_B2) | ACT(GAME_INPUT_P1_B3),
     ACT(GAME_INPUT_P1_B3) | ACT(GAME_INPUT_P1_B4),
+    ACT(GAME_INPUT_P2_B3), ACT(GAME_INPUT_P2_B4),   /* Daytona's VR3 / VR4 (controls_p2_choice) */
 };
 #define CTL_PAD_CHOICES (int)(sizeof g_ctl_pad_choices / sizeof g_ctl_pad_choices[0])
 
@@ -398,6 +422,7 @@ static inline bool controls_acts_combo(const char *id, uint32_t *acts) {
     igSetNextItemWidth(-1.0f);
     if (!igBeginCombo(id, controls_acts_text(*acts, cur, sizeof cur), 0)) return false;
     for (int c = 0; c < CTL_PAD_CHOICES; c++) {
+        if (!controls_p2_choice(g_ctl_pad_choices[c])) continue;
         if (igSelectableEx(controls_acts_text(g_ctl_pad_choices[c], item, sizeof item),
                            *acts == g_ctl_pad_choices[c], 0, (ImVec2){ 0, 0 })) {
             controls_edit_begin();
@@ -604,41 +629,51 @@ static inline void controls_wheel_readout(void) {
 /* The actions a wheel's buttons are set for, one row each. */
 static const int g_ctl_wheel_acts[] = {
     GAME_INPUT_P1_START, GAME_INPUT_P1_COIN, GAME_INPUT_P1_B1, GAME_INPUT_P1_B2, GAME_INPUT_P1_B3, GAME_INPUT_P1_B4,
+    GAME_INPUT_P2_B3, GAME_INPUT_P2_B4,
     GAME_INPUT_P1_UP, GAME_INPUT_P1_DOWN, GAME_INPUT_P1_LEFT, GAME_INPUT_P1_RIGHT, GAME_INPUT_SERVICE, GAME_INPUT_TEST,
     GAME_INPUT_GEAR_N, GAME_INPUT_GEAR_1, GAME_INPUT_GEAR_2, GAME_INPUT_GEAR_3, GAME_INPUT_GEAR_4,
 };
 
-static inline uint32_t controls_wheel_held(SDL_Joystick *joy, int nbut) {
-    uint32_t m = 0;
-    for (int b = 0; joy && b < nbut && b < WHEEL_BUTTONS; b++) if (SDL_GetJoystickButton(joy, b)) m |= 1u << b;
+static inline uint64_t controls_wheel_held(SDL_Joystick *joy) {
+    uint64_t m = 0;
+    for (int b = 0; joy && b < WHEEL_BUTTONS; b++) if (wheel_button_down(joy, b)) m |= 1ull << b;
     return m;
+}
+
+/* "3", or the d-pad's "D-pad up" (WHEEL_HAT). */
+static inline const char *controls_wheel_button_name(int b, char *buf, size_t cap) {
+    static const char *const dir[4] = { "up", "right", "down", "left" };
+    if (b < WHEEL_HAT) snprintf(buf, cap, "%d", b);
+    else               snprintf(buf, cap, "D-pad %s", dir[b - WHEEL_HAT]);
+    return buf;
 }
 
 /* A Set button's wait: the first wheel button pressed after it was clicked
  * plays its action, and only that. */
-static inline void controls_wheel_learn_poll(SDL_Joystick *joy, int nbut, bool pads_on) {
+static inline void controls_wheel_learn_poll(SDL_Joystick *joy, bool pads_on) {
     if (g_ctl.learn_act < 0) return;
     if (!joy) { g_ctl.learn_act = -1; return; }
-    uint32_t held = controls_wheel_held(joy, nbut), fresh = held & ~g_ctl.learn_held;
+    uint64_t held = controls_wheel_held(joy), fresh = held & ~g_ctl.learn_held;
     g_ctl.learn_held &= held;   /* let go: it counts when pressed again */
     if (!fresh) return;
     int b = 0, a = g_ctl.learn_act;
-    while (!(fresh & (1u << b))) b++;
-    char lab[48], was[96];
+    while (!(fresh & (1ull << b))) b++;
+    char lab[48], was[96], bn[16];
+    controls_wheel_button_name(b, bn, sizeof bn);
     controls_edit_begin();
     uint32_t old = g_wheel_opt.button[b];
     g_wheel_opt.button[b] = ACT(a);
     controls_action_label(a, lab, sizeof lab);
-    if (old && old != ACT(a)) snprintf(g_ctl.status, sizeof g_ctl.status, "Button %d is %s now (it was %s).", b, lab,
+    if (old && old != ACT(a)) snprintf(g_ctl.status, sizeof g_ctl.status, "Button %s is %s now (it was %s).", bn, lab,
                                        controls_acts_text(old, was, sizeof was));
-    else                      snprintf(g_ctl.status, sizeof g_ctl.status, "Button %d is %s now.", b, lab);
+    else                      snprintf(g_ctl.status, sizeof g_ctl.status, "Button %s is %s now.", bn, lab);
     g_ctl.learn_act = -1;
     controls_pads_changed(pads_on);
     controls_save();
 }
 
-static inline void controls_wheel_actions(SDL_Joystick *joy, int nbut, bool pads_on) {
-    controls_wheel_learn_poll(joy, nbut, pads_on);
+static inline void controls_wheel_actions(SDL_Joystick *joy, bool pads_on) {
+    controls_wheel_learn_poll(joy, pads_on);
     igSeparatorText("Buttons");
     igTextWrapped("Set: click it, then press the wheel's button. Right-click clears the action's buttons.");
     if (!igBeginTableEx("wheelacts", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV, (ImVec2){ 0, 0 }, 0.0f)) return;
@@ -646,18 +681,20 @@ static inline void controls_wheel_actions(SDL_Joystick *joy, int nbut, bool pads
     igTableSetupColumnEx("Wheel buttons", ImGuiTableColumnFlags_WidthStretch, 1.0f, 0);
     igTableSetupColumnEx("##set", ImGuiTableColumnFlags_WidthFixed, 150.0f, 0);
     igTableHeadersRow();
-    uint32_t held = controls_wheel_held(joy, nbut);
+    uint64_t held = controls_wheel_held(joy);
     bool gears = g_active_profile && g_active_profile->input.bits[GAME_INPUT_GEAR_N];
     for (int i = 0; i < (int)(sizeof g_ctl_wheel_acts / sizeof g_ctl_wheel_acts[0]); i++) {
         int a = g_ctl_wheel_acts[i];
         if (a >= GAME_INPUT_GEAR_N && !gears) continue;
-        char label[48], list[96];
+        if (a >= GAME_INPUT_P2_UP && a <= GAME_INPUT_P2_COIN && !controls_view_button(a)) continue;
+        char label[48], list[96], bn[16];
         size_t n = 0;
         bool lit = false;
         list[0] = '\0';
         for (int b = 0; b < WHEEL_BUTTONS && n < sizeof list; b++)
             if (g_wheel_opt.button[b] & ACT(a)) {
-                n += (size_t)snprintf(list + n, sizeof list - n, "%s%d", n ? ", " : "", b);
+                n += (size_t)snprintf(list + n, sizeof list - n, "%s%s", n ? ", " : "",
+                                      controls_wheel_button_name(b, bn, sizeof bn));
                 lit |= (held >> b) & 1;
             }
         igTableNextRow();
@@ -781,23 +818,27 @@ static inline void controls_tab_wheel(bool pads_on) {
     }
     controls_wheel_range(joy);
     controls_wheel_readout();
-    controls_wheel_actions(joy, nbut, pads_on);
+    controls_wheel_actions(joy, pads_on);
     igSpacing();
     if (!igCollapsingHeader("Each button's actions (combos)", 0)) return;
     int rows = nbut > 12 ? nbut : 12;
-    if (rows > WHEEL_BUTTONS) rows = WHEEL_BUTTONS;
+    if (rows > WHEEL_HAT) rows = WHEEL_HAT;
+    bool hat = joy && SDL_GetNumJoystickHats(joy) > 0;
     if (!igBeginTableEx("wheelbinds", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY,
                         (ImVec2){ 0, 260.0f }, 0.0f)) return;
     igTableSetupColumnEx("Button", ImGuiTableColumnFlags_WidthFixed, 90.0f, 0);
     igTableSetupColumnEx("Presses", ImGuiTableColumnFlags_WidthStretch, 1.0f, 0);
     igTableHeadersRow();
     char id[32];
-    for (int b = 0; b < rows; b++) {
+    char bn[16];
+    for (int b = 0; b < (hat ? WHEEL_BUTTONS : rows); b++) {
+        if (b >= rows && b < WHEEL_HAT) b = WHEEL_HAT;   /* then the d-pad */
         igTableNextRow();
-        if (joy && b < nbut && SDL_GetJoystickButton(joy, b))
+        if (joy && wheel_button_down(joy, b))
             igTableSetBgColor(ImGuiTableBgTarget_RowBg1, 0x6000C000u, -1);
         igTableSetColumnIndex(0);
-        igText("Button %d", b);
+        controls_wheel_button_name(b, bn, sizeof bn);
+        if (b < WHEEL_HAT) igText("Button %s", bn); else igTextUnformatted(bn);
         igTableSetColumnIndex(1);
         snprintf(id, sizeof id, "##wheel%d", b);
         if (controls_acts_combo(id, &g_wheel_opt.button[b])) { controls_pads_changed(pads_on); controls_save(); }
