@@ -138,6 +138,7 @@
 #include "video_window.h"
 #include "game_frame.h"
 #include "input.h"
+#include "link_check.h"   /* a MASTER alone on the link (#1449): logged once */
 #include "audio_out.h"   /* audio_out_cb: drains g_sound's ring (only its callback is used here) */
 #include "miniz.h"
 #include "net/comm_local.h"   /* --versus: the two cabinets' link over 127.0.0.1 */
@@ -347,6 +348,7 @@ static bool load_rom(const char *zip) {
     /* The model lookup is built from the ROM's model table: a new set needs a new one. */
     geo3d_lookup_invalidate();
     g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    link_check_reset();   /* a MASTER alone on the link is logged once per set */
     input_reset();
     input_attach(&state.bus);
     return true;
@@ -1661,6 +1663,7 @@ static void render_frame(void) {
     Uint64 swap_start = SDL_GetTicksNS();
     SDL_GL_SwapWindow(g_window);
     g_st.swap_ns += SDL_GetTicksNS() - swap_start;
+    (void)link_check_tell();   /* logged once per set: no way to ask here */
     hprof_leave(pzone);
     g_st.renders++;
 }

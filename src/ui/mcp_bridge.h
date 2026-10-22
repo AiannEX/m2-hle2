@@ -50,6 +50,7 @@
 #include "ffb.h"          /* get_status reports the drive board ("drive") */
 #include "cabinet_picture.h" /* set_camera's cabinet: another cabinet's colours */
 #include "m2_texload.h"   /* get_status reports the texture loader in C */
+#include "link_check.h"   /* a MASTER alone on the link (#1449): link_check */
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -144,9 +145,12 @@ static void (*g_mcp_script_cmd)(const char *cmd, const char *req, char *resp, in
  * ones dropped past its cap, and the SLAVE's early ones. */
 static void mcp_link_pace_json(const emu_thread_ctx_t *emu, char *out, int cap) {
     if (!emu) { snprintf(out, (size_t)cap, "null"); return; }
-    snprintf(out, (size_t)cap, "{\"linked\":%s,\"frames\":%llu,\"dropped\":%llu,\"trims\":%u}",
+    snprintf(out, (size_t)cap,
+             "{\"linked\":%s,\"frames\":%llu,\"dropped\":%llu,\"trims\":%u,"
+             "\"lone_masters\":%u,\"cable\":%s}",
              m2comm_linked() ? "true" : "false", (unsigned long long)emu->link_pace.frames,
-             (unsigned long long)emu->link_pace.dropped, emu->link_pace.trims);
+             (unsigned long long)emu->link_pace.dropped, emu->link_pace.trims,
+             (unsigned)m2comm_lone_masters(), m2comm_cable() ? "true" : "false");
 }
 
 /* get_status's game fields: the frame count, whether the ROM set is in, the
@@ -2710,6 +2714,36 @@ static void mcp_cmd_state(const char *req, char *resp, int cap, int load) {
 }
 
 /*
+ * {"cmd":"link_check","answer":"cable"} -- the question a MASTER with nobody
+ * on the link gets (core/link_check.h, #1449), answered for a script:
+ * "test" (back to the test menu: Test held 20 frames), "continue", "cable"
+ * (the virtual TOSlink cable in). No "answer" only reads: "due" is whether
+ * the windowed build would be asking now, "lone_masters" the starts counted.
+ */
+static void mcp_cmd_link_check(const char *req, char *resp, int cap) {
+    char a[16];
+    if (mcp_json_get_str(req, "answer", a, sizeof a)) {
+        link_answer_t ans;
+        if      (strcmp(a, "test")     == 0) ans = LINK_ANSWER_TEST_MENU;
+        else if (strcmp(a, "continue") == 0) ans = LINK_ANSWER_CONTINUE;
+        else if (strcmp(a, "cable")    == 0) ans = LINK_ANSWER_CABLE;
+        else {
+            snprintf(resp, (size_t)cap,
+                     "{\"ok\":false,\"error\":\"answer is test, continue or cable\"}");
+            return;
+        }
+        int locked = g_mcp.emu && g_mcp.emu->thread_alive;
+        if (locked) emu_mutex_lock(&g_mcp.emu->mutex);
+        link_check_answer(ans, g_emu_frames);
+        if (locked) emu_mutex_unlock(&g_mcp.emu->mutex);
+    }
+    snprintf(resp, (size_t)cap,
+             "{\"ok\":true,\"due\":%s,\"lone_masters\":%u,\"cable\":%s}",
+             link_check_due() ? "true" : "false", (unsigned)m2comm_lone_masters(),
+             m2comm_cable() ? "true" : "false");
+}
+
+/*
  * {"cmd":"idle_hold","on":1} -- the CPU saver (g_idle_hold, emu_thread.h,
  * --idle-until-match): while no netplay session owns the board, it is put back
  * to power-on and not stepped. "on":0 lets it run attract again; no "on" only
@@ -3090,6 +3124,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
     else if (strcmp(cmd, "save_state")               == 0) mcp_cmd_state(req, resp, cap, 0);
     else if (strcmp(cmd, "load_state")               == 0) mcp_cmd_state(req, resp, cap, 1);
     else if (strcmp(cmd, "idle_hold")                == 0) mcp_cmd_idle_hold(req, resp, cap);
+    else if (strcmp(cmd, "link_check")               == 0) mcp_cmd_link_check(req, resp, cap);
     else if (strcmp(cmd, "enemy_rank")               == 0) mcp_cmd_enemy_rank(req, resp, cap);
     else if (strcmp(cmd, "follow_lead")              == 0) mcp_cmd_follow_lead(req, resp, cap);
     else if (strcmp(cmd, "replay")                   == 0) mcp_cmd_replay(req, resp, cap);

@@ -32,6 +32,15 @@ m2hleLang.add({
     'page.pause': 'Pause',
     'page.resume': 'Resume',
     'page.pause.key': '{action} ({key})',
+    'page.link.title': 'No other cabinet on the link',
+    'page.link.text': 'This cabinet is set to be the link\'s MASTER, but no other cabinet is linked to it. ' +
+                      'It will wait for one, give up and restart, over and over.\n' +
+                      'Set it to SINGLE in the test menu\'s game settings (Daytona USA: GAME ASSIGNMENTS, LINK ID).',
+    'page.link.test': 'Back to the test menu',
+    'page.link.continue': 'Continue anyway',
+    'page.link.cable': 'Insert a virtual TOSlink cable',
+    'page.link.cable.tip': 'Wires this comm board\'s output to its own input: a link of one cabinet, ' +
+                           'so the MASTER finds itself and the game goes on. Until another game is loaded.',
   },
   ja: {
     'page.gl.lost': 'ブラウザがグラフィックスを解放しました（WebGL コンテキストの消失）。続けるにはページを再読み込みしてください。',
@@ -54,6 +63,15 @@ m2hleLang.add({
     'page.pause': 'ポーズ',
     'page.resume': '再開',
     'page.pause.key': '{action}（{key}）',
+    'page.link.title': '通信相手の筐体がありません',
+    'page.link.text': 'この筐体は通信の MASTER に設定されていますが、ほかの筐体がつながっていません。' +
+                      '相手を待ち、あきらめて再起動することを繰り返します。\n' +
+                      'テストモードのゲーム設定で SINGLE にしてください（デイトナUSA：GAME ASSIGNMENTS の LINK ID）。',
+    'page.link.test': 'テストモードに戻る',
+    'page.link.continue': 'このまま続ける',
+    'page.link.cable': '仮想 TOSlink ケーブルを挿す',
+    'page.link.cable.tip': '通信ボードの出力を自分の入力につなぎます。1 台だけの通信になり、MASTER が自分自身を見つけてゲームが進みます。' +
+                           'ほかのゲームを読み込むまで有効です。',
   },
 });
 
@@ -189,6 +207,7 @@ function loadZipNow(zips) {
     if (window.stfArcade) window.stfArcade.onGame(m2hleFollow.active ? 'follow' : 'solo');
     m2hleTouch.onGame();
     pauseOnGame();
+    linkCheckOnGame();
     $('canvas').focus();
   }, 0));
 }
@@ -579,6 +598,46 @@ function pauseToggle() {
   const on = !!Module._web_set_paused(Module._web_paused() ? 0 : 1);   /* the Console's menu opens a frame later */
   m2hleTools.print(on ? 'paused' : 'resumed');
   pauseRender();
+}
+
+/* ---- A MASTER alone on the link ------------------------------------------------
+ *
+ * Daytona USA, Virtual-On and the other linked games keep the cabinet's place on
+ * the link in the test menu. Set to MASTER with no other cabinet, the game waits,
+ * gives up, reboots and waits again, for ever. The emulator holds the board at the
+ * first of those waits (main_web.c, web_link_check; core/link_check.h) and this
+ * asks the player: back to the test menu (Test held for a moment), carry on, or
+ * plug in a virtual TOSlink cable, the comm board's output into its own input.
+ * The cable is offered here and nowhere else. */
+function linkCheck() {
+  const box = $('link-check');
+  const ask = Module._web_link_check();   /* 0 nothing, 1 ask, 2 ask, no Test button */
+  if (!ask) { box.hidden = true; return; }
+  if (!box.hidden) return;
+  $('lc-title').textContent = m2hleLang.t('page.link.title');
+  $('lc-text').textContent = m2hleLang.t('page.link.text');
+  $('lc-test').textContent = m2hleLang.t('page.link.test');
+  $('lc-continue').textContent = m2hleLang.t('page.link.continue');
+  $('lc-cable').textContent = m2hleLang.t('page.link.cable');
+  $('lc-cable').title = m2hleLang.t('page.link.cable.tip');
+  $('lc-test').hidden = ask !== 1;
+  box.hidden = false;
+  m2hleTools.add('link: MASTER with no other cabinet, asking', 'warning');
+  (ask === 1 ? $('lc-test') : $('lc-continue')).focus();
+}
+
+function linkCheckOnGame() {
+  if (linkCheckOnGame.done) return;
+  linkCheckOnGame.done = true;
+  /* link_answer_t: 0 the test menu, 1 continue, 2 the cable */
+  [['lc-test', 0, 'test menu'], ['lc-continue', 1, 'continue'], ['lc-cable', 2, 'virtual TOSlink cable']]
+    .forEach(([id, answer, what]) => $(id).addEventListener('click', () => {
+      Module._web_link_answer(answer);
+      $('link-check').hidden = true;
+      m2hleTools.print('link: ' + what);
+      setTimeout(() => $('canvas').focus(), 0);
+    }));
+  setInterval(linkCheck, 250);
 }
 
 function pauseOnGame() {
