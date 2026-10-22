@@ -974,3 +974,55 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--sel-line); }
 .rp-img { display: block; width: 100%; height: auto; margin: 0 0 0.5rem; border: 1px solid rgba(0, 255, 255, 0.4); image-rendering: pixelated; }
 .rp-text { display: block; box-sizing: border-box; width: 100%; margin-top: 0.3rem; resize: vertical; font: inherit; }
 .rp-label { display: block; font-size: 0.875rem; color: var(--dim); }
+
+/* ---- Cardboard 3D (m2hle-cardboard.js) ----------------------------------------
+ * The picture is two eyes side by side; nothing else may cover it, and the
+ * 3D settings are drawn once over each eye. */
+body.cardboard .bar, body.cardboard #touch, body.cardboard #paused,
+body.cardboard .stfa-open { display: none !important; }
+.cb-menu {
+  position: fixed;
+  z-index: 6;
+  transform: translateY(-50%);
+  box-sizing: border-box;
+  --win: rgb(19, 34, 65);
+  --rail: 0.5em;
+  --pad: 0.8em;
+  padding: calc(var(--rail) + 0.6em) var(--pad) var(--pad) calc(var(--rail) + var(--pad));
+}
+.cb-menu[hidden], .cb-tip[hidden] { display: none; }
+.cb-title { margin: 0 0 0.5em; font-size: 1.15em; }
+.cb-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.35em 0.5em;
+  border-radius: 0.3em;
+  cursor: pointer;
+}
+.cb-row.sel { background: rgba(0, 255, 255, 0.18); box-shadow: inset 0 0 0 2px var(--cyan); }
+.cb-name { flex: 0 0 42%; }
+.cb-button .cb-name { flex: 1 1 auto; text-align: center; }
+.cb-bar {
+  flex: 1 1 auto;
+  height: 0.5em;
+  border-radius: 0.25em;
+  background: rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+}
+.cb-fill { display: block; height: 100%; background: var(--cyan); }
+.cb-val { flex: 0 0 3.6em; text-align: right; font-variant-numeric: tabular-nums; margin-left: auto; }
+.cb-hint { margin: 0.6em 0 0; font-size: 0.8em; opacity: 0.75; text-align: center; }
+.cb-tip {
+  position: fixed;
+  z-index: 6;
+  bottom: 12%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 0.3em 0.7em;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 0.3em;
+  pointer-events: none;
+}

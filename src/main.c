@@ -1625,6 +1625,10 @@ static void window_game_rect(int *ox, int *oy, int *w, int *h) {
     if (avail_h < 1) avail_h = 1;
     /* Letterbox against whatever is actually being shown: the stream's
      * target has its own aspect, chosen by --av-size. */
+    if (g_stereo.on && !s_av_mirror) {   /* both eyes share the whole area (stereo.h) */
+        *ox = 0; *oy = menu_h; *w = sapp_width(); *h = avail_h;
+        return;
+    }
     int src_w = s_av_mirror ? av_stream_width()  : post_shader_picture_width();
     int src_h = s_av_mirror ? av_stream_height() : VIDEO_HEIGHT;
     game_rect_t r = game_render_letterbox(sapp_width(), avail_h, src_w, src_h);
@@ -1658,7 +1662,13 @@ static void window_draw_game(int ox, int oy, int w, int h, bool post, bool win_o
      * window shows that target rather than redrawing it. */
     if (s_av_mirror)
         game_render_draw_target(av_capture_color_tex(), true, ox, oy, w, h);
-    else if (post)
+    else if (g_stereo.on) {
+        game_rect_t pic[2];
+        game_frame_draw_stereo(&state.video, &state.geo3d, &state.bus, &state.romset,
+                               (game_rect_t){ox, oy, w, h}, game_render_wide_width(), lerp_t, pic);
+        extract_model_tick();
+        return;
+    } else if (post)
         post_shader_draw(ox, oy, w, h, sapp_width(), sapp_height());
     else
         game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
@@ -1748,7 +1758,7 @@ static void frame(void) {
     /* The filter reads the game from a target of its own and covers only the
      * game's rectangle. Not while the window mirrors the A/V stream: that
      * target is the stream's composition, overlay and all. */
-    const bool post = !s_av_mirror && post_shader_active();
+    const bool post = !s_av_mirror && !g_stereo.on && post_shader_active();
     if (post) {
         int sw, sh;
         post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, w, h, &sw, &sh);
@@ -2130,6 +2140,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             g_arcade_arg = 1;
         } else if (strcmp(argv[i], "--no-arcade") == 0) {
             g_arcade_arg = 0;
+        } else if (strcmp(argv[i], "--stereo") == 0) {
+            stereo_set(1, g_stereo.depth, g_stereo.focus, g_stereo.spacing, g_stereo.size, g_stereo.swap);
         } else if (strcmp(argv[i], "--pixel-depth") == 0) {
             g_pixdepth_arg = g_geo3d_pixel_depth = 1;
         } else if (strcmp(argv[i], "--no-pixel-depth") == 0) {

@@ -829,10 +829,10 @@ static void web_count_callback(void) {
 static bool web_keep_picture(bool have_game, bool lobby, bool overlay, bool afford) {
     static uint64_t s_drawn_slices;
     static int      s_drawn_w, s_drawn_h;
-    static unsigned s_drawn_pots;
+    static unsigned s_drawn_pots, s_drawn_stereo;
     const bool board_moved = g_web_perf.slices != s_drawn_slices;
     const bool resized     = sapp_width() != s_drawn_w || sapp_height() != s_drawn_h;
-    const bool pots_turned = g_crt_pots.gen != s_drawn_pots;
+    const bool pots_turned = g_crt_pots.gen != s_drawn_pots || g_stereo.gen != s_drawn_stereo;
     if (have_game && !lobby && !overlay && !board_moved && !resized && !pots_turned && !g_web_objview_show && !afford
         && !g_web_shot_want) {
         g_web_perf.pictures_skipped++;
@@ -842,6 +842,7 @@ static bool web_keep_picture(bool have_game, bool lobby, bool overlay, bool affo
     s_drawn_w      = sapp_width();
     s_drawn_h      = sapp_height();
     s_drawn_pots   = g_crt_pots.gen;
+    s_drawn_stereo = g_stereo.gen;
     return false;
 }
 
@@ -851,8 +852,34 @@ static int web_picture_width(void) {
     return g_game_wide.extra ? game_render_wide_width() : post_shader_picture_width();
 }
 
+/* With 3D on (stereo.h), the menus go into both eyes at the screen's depth:
+ * recorded once over the left half, drawn there and again `dx` to the right,
+ * where the right eye's picture is. */
+static game_rect_t web_stereo_rect(int h) {
+    return game_frame_stereo_rect((game_rect_t){0, 0, sapp_width(), sapp_height()}, h, web_picture_width());
+}
+
+/* The left eye's menus: the lobby fitted to the left half, the pause menu over
+ * the left picture. */
+static void web_record_menus_stereo(ps3ui_canvas_t *cv, bool overlay) {
+    const int cw = sapp_width() / 2, ch = sapp_height();
+    ps3ui_gpu_record(cv, cw, ch);
+    if (overlay) {
+        ps3ui_canvas_size(cv, cw, ch);
+        const game_rect_t r = web_stereo_rect(0);
+        float k = (float)r.w / 1920.0f;
+        if ((float)r.h / 1080.0f < k) k = (float)r.h / 1080.0f;
+        cv->k = k;
+        cv->ox = (float)r.x + ((float)r.w - 1920.0f * k) * 0.5f;
+        cv->oy = (float)r.y + ((float)r.h - 1080.0f * k) * 0.5f;
+    }
+    if (web_shell_live()) ps3ui_shell_draw(&g_ps3ui_shell, cv);
+    else                ps3ui_app_draw(&g_ps3ui_app, cv);
+}
+
 /* Record the menus into `cv`: the lobby on its own, or the pause menu over the game. */
 static void web_record_menus(ps3ui_canvas_t *cv, bool overlay) {
+    if (g_stereo.on) { web_record_menus_stereo(cv, overlay); return; }
     if (overlay) {
         /* over the game: the 16:9 layout fitted to the game's letterboxed picture */
         game_rect_t r = game_render_letterbox(sapp_width(), sapp_height(),
@@ -907,9 +934,28 @@ typedef struct {
 static void web_shot_done(const web_picture_t *pic);   /* the page's screenshot (Pinboard #653) */
 static void web_cheats_place(const web_picture_t *pic, bool shown);   /* the Cheats tab's drawing */
 
+/* The recorded menus in both eyes (web_record_menus_stereo): the pause menu
+ * over each picture, the lobby in each half. */
+static void web_draw_menus_stereo(ps3ui_canvas_t *cv, bool overlay) {
+    ps3ui_gpu_draw_at(cv, 0, 0);
+    ps3ui_gpu_draw_at(cv, overlay ? web_stereo_rect(1).x - web_stereo_rect(0).x : sapp_width() / 2, 0);
+}
+
+/* Both eyes side by side (stereo.h), then the pause menu over each. No filter,
+ * light gun crosshairs or pots: they are drawn for one picture. */
+static void web_present_stereo(const web_picture_t *pic, ps3ui_canvas_t *cv) {
+    game_rect_t eyes[2];
+    game_frame_draw_stereo(&state.video, &state.geo3d, &state.bus, &state.romset,
+                           (game_rect_t){0, 0, sapp_width(), sapp_height()}, web_picture_width(),
+                           pic->lerp_t, eyes);
+    if (pic->overlay) web_draw_menus_stereo(cv, true);
+    sgl_draw();
+}
+
 /* The game in its letterbox, through the filter, from the offscreen target or
  * drawn straight in; then the pause menu over it. */
 static void web_present_game(const web_picture_t *pic, ps3ui_canvas_t *cv) {
+    if (g_stereo.on) { web_present_stereo(pic, cv); return; }
     int ox = pic->ox, oy = pic->oy, w = pic->w, h = pic->h;
     if (pic->post)           post_shader_draw(ox, oy, w, h, sapp_width(), sapp_height());
     else if (pic->offscreen) game_render_draw_target(g_web_rt.texture, true, ox, oy, w, h);
@@ -941,7 +987,8 @@ static void web_present(const web_picture_t *pic, ps3ui_canvas_t *cv) {
     sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
     if (pic->lobby) {
         /* The lobby's 16:9 frame fitted to the canvas; its own colour fills the rest. */
-        ps3ui_gpu_draw(cv);
+        if (g_stereo.on) web_draw_menus_stereo(cv, false);
+        else             ps3ui_gpu_draw(cv);
         sgl_draw();
     } else if (show_objview) {
         web_present_objview();
@@ -970,12 +1017,12 @@ static void web_place_picture(web_picture_t *pic, bool game) {
     pic->ox = r.x; pic->oy = r.y; pic->w = r.w; pic->h = r.h;
     crt_pots_place(&pic->ox, &pic->oy, &pic->w, &pic->h);
     post_shader_set_input_scale(g_web_rt.want);
-    web_cheats_place(pic, game && !pic->overlay && !g_web_objview_show);
-    pic->post = game && !g_web_objview_show && post_shader_active();
+    web_cheats_place(pic, game && !pic->overlay && !g_web_objview_show && !g_stereo.on);
+    pic->post = game && !g_web_objview_show && !g_stereo.on && post_shader_active();
     if (pic->post) web_draw_post_source(pic->w, pic->h, pic->lerp_t);
 
     /* Offscreen first, when there is a render scale: the game at N x 496x384. */
-    pic->offscreen = game && !pic->post && g_web_rt.scale > 0;
+    pic->offscreen = game && !pic->post && !g_stereo.on && g_web_rt.scale > 0;
     if (pic->offscreen) web_draw_offscreen(pic->lerp_t);
 }
 
@@ -1874,6 +1921,17 @@ EMSCRIPTEN_KEEPALIVE int web_shader_mode(void) { return (int)post_shader_mode();
 /* The Arcade, the board's picture under any filter: 0 off, 1 on. */
 EMSCRIPTEN_KEEPALIVE void web_shader_set_arcade(int on) { post_shader_set_arcade(on != 0); }
 EMSCRIPTEN_KEEPALIVE int web_shader_arcade(void) { return post_shader_arcade() ? 1 : 0; }
+
+/* Side-by-side 3D for a Cardboard viewer (stereo.h, m2hle-cardboard.js): on,
+ * then Depth (parallax at infinity, a fraction of a picture), Focus (a multiple
+ * of the scene's distance), Spacing (between the pictures' centres, a fraction
+ * of the canvas), Size (a fraction of a half) and Swap. Out of range is clamped. */
+EMSCRIPTEN_KEEPALIVE void web_stereo_set(int on, float depth, float focus, float spacing, float size, int swap) {
+    stereo_set(on, depth, focus, spacing, size, swap);
+}
+EMSCRIPTEN_KEEPALIVE int web_stereo_on(void) { return g_stereo.on; }
+/* The scene's distance the focus is a multiple of, for the page's log. */
+EMSCRIPTEN_KEEPALIVE float web_stereo_scene(void) { return g_stereo.scene_z; }
 
 /* Depth per pixel, not the board's one key a polygon (geo3d.h): 0 off, 1 on. */
 EMSCRIPTEN_KEEPALIVE void web_set_pixel_depth(int on) { g_geo3d_pixel_depth = on != 0; }

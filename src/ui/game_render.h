@@ -26,6 +26,7 @@
 #include "geo3d.h"
 #include "log.h"
 #include "rom_loader.h"
+#include "stereo.h"
 
 typedef struct {
     float x, y;
@@ -2554,6 +2555,7 @@ static inline void gm_mat4_geo_projection(float *m, const float *gproj, int win,
         m[10] = z10;
         m[11] = z11;
     }
+    stereo_apply_projection(m);   /* the eye being drawn, with 3D on (stereo.h) */
 }
 
 /*
