@@ -1254,7 +1254,15 @@ static uint32_t lr_port_held_shell(unsigned port) {
 static bool lr_shell_input(bool *board_paused) {
     bool session = pkt_lockstep_playing(&g_pkt) || netplay_active() || emu_ggpo_match();
     if (emu_ggpo_match() && g_ps3ui_shell.scr != PS3UI_SH_GAME) ps3ui_shell_go(&g_ps3ui_shell, PS3UI_SH_GAME);
-    ps3ui_shell_frame(&g_ps3ui_shell, lr_lobby_pad(), lr_lobby_pad_port(1), session);
+    /* The link question (#1449) has the pad: the button that answers it must
+     * not also leave the title for MAIN MENU. What is held while it is up stays
+     * the question's until let go, or the shell sees it pressed a frame later. */
+    static uint32_t ask_held, ask_held2;
+    uint32_t pad = lr_lobby_pad(), pad2 = lr_lobby_pad_port(1);
+    if (link_ask_up()) ask_held = pad, ask_held2 = pad2;
+    ask_held &= pad;
+    ask_held2 &= pad2;
+    ps3ui_shell_frame(&g_ps3ui_shell, pad & ~ask_held, pad2 & ~ask_held2, session);
     /* Online Battle in RetroArch's own netplay mode: say where it lives */
     if (g_ps3ui_shell.scr == PS3UI_SH_ONLINE && opt.online != LR_ONLINE_RPCN) {
         ps3ui_shell_go(&g_ps3ui_shell, PS3UI_SH_MAIN);
