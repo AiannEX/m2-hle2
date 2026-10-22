@@ -17,7 +17,8 @@ use the same commands and get the same treatment.
 - **Range.** `--g25-range N` sets the turning range in degrees (default 270, about
   what the cabinets' wheels turn; 40..900; `0` leaves the wheel as it is). This
   replaces the range set in LGS, if it is installed. The DFP takes no range
-  command from us.
+  command from us. The Controls window's Wheel tab sets it too, per game
+  (Rotation; `wheel.range` in the controls file), and sends it at once.
 - **Force.** Only when SDL has no haptic for the wheel, which means Windows without
   Logitech's driver. The drive board's force (`ffb.h`) goes to the wheel this way:
   - the push becomes its constant force, with the shake added on top as a
@@ -35,13 +36,45 @@ use the same commands and get the same treatment.
   `/etc/udev/rules.d/60-logitech-wheel.rules`:
   `KERNEL=="hidraw*", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c29[4-9a-b]|c24f|c260", MODE="0666"`.
   The kernel does not switch a G29 in its PS4 mode; with the rule, m2hle does.
-  Without that rule, m2hle says so once in the log and does nothing more.
+  Without that rule, m2hle says so once in the log, and the Wheel tab says so
+  under Rotation. It then tries the range through the kernel driver's
+  `/sys/bus/hid/drivers/logitech/<device>/range`, which is root's unless a rule
+  opens it as well (the one Oversteer installs does):
+  `ACTION=="add", SUBSYSTEM=="hid", DRIVERS=="logitech", RUN+="/bin/sh -c 'cd %S%p; chmod 666 range || true'"`.
+  See the next section for why 900 degrees comes back without the hidraw rule.
 - **Not tried on a real wheel yet:** there is no Logitech wheel here.
   `tests/lg4ff_test.c` checks every report byte for byte. `tests/lg4ff_host_test.c`
   runs `lg4ff.h` on a pretend G25 that starts in compatibility mode, then on a
   pretend G29 in its PS4 mode. The direction
   of the push (above `0x80` = right) follows SDL's lg4ff haptics; it is not seen in
   the binary.
+
+## Linux: 900 degrees, a wheel that steers by itself, buttons (Pinboard #1439)
+
+A G29 owner on Ubuntu 26.10 found the wheel stuck at 900 degrees, the car steering
+with the wheel straight, and the wheel's buttons impossible to set in the Controls
+window. No G29 is here; what was found:
+
+- **900 degrees.** Once the hidraw node can be read, SDL 3.4's own HIDAPI `lg4ff`
+  driver takes the wheel (it is on by default off Windows). On the wheel's first
+  report it sends a range of `SDL_HIDAPI_LG4FF_RANGE` from SDL's environment, 900
+  when unset, and turns autocentre off. That came after ours. `lg4ff_sdl_env` now
+  puts our range there before `SDL_Init` (both front ends), and the Wheel tab
+  updates it. Without the hidraw rule the kernel's `hid-lg4ff` keeps the wheel, at
+  its own default of 900, until the sysfs `range` is written (above).
+- **Steering by itself.** Not reproduced. A wheel whose straight is not the middle
+  of its axis would do it; the Wheel tab's **Centre** button records where the
+  wheel reads held straight (`wheel.center`), and each side of that is spread over
+  its half of the turn (`wheel_host_steer_centred`). Under the axes, "The game
+  reads" shows the board's wheel value against its straight (`0x80` for Sega
+  Rally), so an owner can tell whether the offset comes from the wheel or from
+  the game. It also warns when a pad or wheel button holds Left or Right: with
+  the host's wheel exactly straight, those still walk the board's wheel.
+- **Buttons.** Not reproduced either: the per-button action combo opens here with
+  and without a (virtual) G29. The tab now lists the actions, each with a **Set**
+  button: click it, then press the wheel's button (one that was already held does
+  not count). Right-click clears the action's buttons. The per-button combos, for
+  combinations, are under "Each button's actions".
 
 ## Where it was read
 

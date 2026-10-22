@@ -1782,6 +1782,7 @@ int main(int argc, char **argv) {
     scripts_load();
 
     versus_before_sdl();
+    lg4ff_sdl_env();   /* SDL's lg4ff driver sets our range, not 900 (#1439) */
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_HAPTIC)) {
         fprintf(stderr, "m2hle: SDL_Init: %s\n", SDL_GetError());
         return 1;
