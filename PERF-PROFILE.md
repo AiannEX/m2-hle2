@@ -267,6 +267,67 @@ the loop; its hot instructions are the pitch-LFO multiply and the stack spills o
 ~1-2%, nothing to take in one piece. `scsp_eg_update` is a few adds. The i960 is not the sound
 thread's problem and was covered by #403/#406.
 
+## 2026-10-23: the sound thread, by part (Pinboard #1481)
+
+The same attract bench (`arc_bench sfight --sound --frames 30000`, no `--i960-timing`) on
+`idea-1477-i960-hoist` (#533), recorded at 800 Hz (the container's cap): 41,794 samples, the sound
+thread (`m2-sound`) **34.1%** of them. No code changed; the counts per slot below come from a
+throwaway build with counters in `scsp.h`.
+
+**The sound thread by part** (`tools/perf_inline.py`, filtered to the thread with `perf script --comms
+m2-sound`; % of the thread's 17,717 samples):
+
+| part | share | what is in it |
+|---|---|---|
+| the SCSP | **62%** | DSP 29.5%, slots 25.8%, mix/out, timers, register and RAM-touch bookkeeping 6.7% |
+| the 68000 | 31.7% | `m68k_step_core` 16.8%, `m68k_direct` 3.2%, `m68k_wait` 2.5%, `m68k_rw` 2.4%, `m68k_fetch` 1.5%, ... |
+| the rest | 6% | `sound_step` / `sound_run` / `sound_m68k_write` glue 5.5%, libc |
+
+The DSP's 29.5% is the program body 10.8%, `scsp_dsp_pack` 4.5%, `scsp_dsp_unpack` 4.3%,
+`scsp_dsp_ring_rd` 3.8%, a `memcpy` inlined into the program 2.4%, `scsp_sext` 2.3%. By real
+function: `scsp_dsp_prog_sfight_fvipers` 28.8% of the thread, **`scsp_slot_run_body` 24.2%**,
+`m68k_step_core` 19.2%, `m68k_rw` 6.1%, `sound_run` 5.5%. The DSP program is at its ceiling (above);
+the slot loop is the SCSP function left to look at, and it is nearly as big (8.2% of the process).
+
+**What the slot loop does on attract** (30,000 frames, counted): 16.3 M runs of one slot, 398 M
+slot-samples (~17 voices a sample, 24 samples a run on average). Every one of them takes the fast
+path, `scsp_slot_run_pcm` (no FM, no noise, no reverse loop: the general loop ran 0 samples). All
+are 8-bit PCM; PLFO / ALFO on 848 of 398 M; SDIR, STWINH, SBCTL and LPSLNK never; LPCTL 0 on 24%,
+1 (forward loop) on 76%. Runs: 40% are one sample long (the single-slot catch-ups), but they are
+1.6% of the samples; most samples are in runs of 16-127. The envelope: **release 50.6%, decay 2
+49.4%**, attack 0.03%, decay 1 0.006%; every decay-2 sample has D2R = 0, so its level never moves.
+The state changes inside a run in 0.15% of runs. 98% of the samples are non-zero after the
+envelope, so there is no silence in it (and silence skip is closed anyway).
+
+**What it costs, per slot-sample:** about 100 instructions in the loop plus 11-13 in
+`scsp_eg_update`, which is not inlined (a call per sample). The work: two RAM bytes and the
+interpolation (2 multiplies), the step and the loop check, the envelope (the call, an
+`scsp_eg_table` load, a multiply), four gain multiplies, the sound-stack store and three
+read-modify-write adds (`acc_mixs[k][isel]`, `acc_l[k]`, `acc_r[k]`). Where `perf annotate` puts the
+function's samples: the sound-stack store 10.9% and the envelope's multiply 8.1% (both waiting on the
+envelope), the jump back from the envelope 7.5%, the reload of `sl->active` after the call 7.4%. So
+the envelope chain (call, `state` and `vol` through memory, table load, multiply) is ~35-40% of the
+function. The loop's constant flags (PCM8B, PLFOS, SBCTL, STWINH, SDIR, LPCTL) and its four gains are
+spilled to the stack and re-read every sample (register pressure; the flag tests alone ~10%).
+
+**Its inputs, by how often they change:**
+
+- *Per slice / per sync:* `s->ram`, `ram_size`, `sous_ptr` (flips only at the end of `scsp_sync`).
+- *Per run (one call), always:* every slot register. A 68000 write below 0x400 is a full sync
+  (`scsp_write_syncs`), so none changes inside a run: SA, LSA, LEA, PCM8B, SBCTL, LPCTL, PLFOS,
+  ALFOS, SDIR, STWINH, LPSLNK, ISEL, the base step, the four gains (`g_mixs`, `g_dl`, `g_dr`,
+  `g_sous`), and the envelope rates (`rr`, `d2r`, `dl`).
+- *Per run, nearly always:* the envelope state (99.85% of runs). In decay 2 with D2R = 0 (half of
+  all slot-samples) the envelope's gain itself, `scsp_eg_table[vol >> ...]`, is a constant of the run.
+  In release `vol` falls by `rr` a sample: the table lookup is per sample, the state switch is not.
+- *Per sample:* the position (`cur` / `nxt`, its fraction), the two RAM bytes, the loop wrap,
+  `vol` in release, and the `k`-indexed accumulators.
+
+So the slot loop's cost is the envelope's per-sample call and the state and level it keeps in
+memory, on top of arithmetic that is already minimal. A run specialised on the state (decay-2-held,
+release) with the level in a register would take the call, the reloads and the switch off almost
+every sample; not tried here (this pin was measurement only).
+
 ## How to take one
 
 `perf` comes from `linux-tools-generic` (in the antigravity-dev image; `/usr/local/bin/perf`).
