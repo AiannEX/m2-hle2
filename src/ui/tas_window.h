@@ -19,6 +19,7 @@
 #include "ImGuiFileDialog.h"
 #include "emu_thread.h"
 #include "tas.h"
+#include "lightgun_ui.h"   /* the crosshair's settings (Pinboard #1496) */
 
 static struct {
     bool show;
@@ -275,6 +276,7 @@ static inline void tas_ui_aim(void) {
     igSetItemTooltip("How near the picture's edge an aim counts as off the screen (a reload).\n"
                      "5 %% is MAME's; a real gun sees the picture to its edge. The border is\n"
                      "recorded with each frame's aim, so the movie plays back the same.");
+    lightgun_ui_settings();
 
     ImVec2 size = { 248, 186 };
     ImVec2 o = igGetCursorScreenPos();

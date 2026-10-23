@@ -256,6 +256,39 @@ int main(void) {
         g_lightgun.x[0] = g_lightgun.y[0] = 0;
     }
 
+    /* ---- (A2c) the crosshair's reticle (Pinboard #1496): shape, size, none ---- */
+    {
+        static game_profile_t gun_profile;
+        const game_profile_t *was = g_active_profile;
+        gun_profile.quirks.lightgun = 1;
+        g_active_profile = &gun_profile;
+        lightgun_host_bar_t bars[LIGHTGUN_HOST_BARS];
+        int cross = lightgun_host_crosshairs(0, 0, 496, 384, bars);
+        float arm = bars[5].x1 - bars[5].x0;     /* P1's right arm, past its outlines */
+        CHECK(cross == 8, "the default: P1's cross, four arms and their outlines");
+        CHECK(lightgun_host_option("--gun-reticle", "dot") && g_lightgun_reticle == LIGHTGUN_RETICLE_DOT &&
+              lightgun_host_crosshairs(0, 0, 496, 384, bars) == 2, "--gun-reticle dot: one square and its outline");
+        CHECK(lightgun_host_option("--gun-reticle", "box") && lightgun_host_crosshairs(0, 0, 496, 384, bars) == 8,
+              "--gun-reticle box: four sides");
+        CHECK(lightgun_host_option("--gun-reticle", "off") && lightgun_host_crosshairs(0, 0, 496, 384, bars) == 0,
+              "--gun-reticle off: no crosshair");
+        CHECK(lightgun_host_option("--gun-reticle", "my reticle.png") && g_lightgun_reticle == LIGHTGUN_RETICLE_IMAGE &&
+              !strcmp(g_lightgun_reticle_image, "my reticle.png") && lightgun_host_crosshairs(0, 0, 496, 384, bars) == 8,
+              "a file is the image; the bars draw the cross for it");
+        lightgun_host_option("--gun-reticle-size", "200");
+        lightgun_host_option("--gun-reticle", "cross");
+        lightgun_host_crosshairs(0, 0, 496, 384, bars);
+        CHECK(g_lightgun_reticle_size == 200 && bars[5].x1 - bars[5].x0 > arm * 1.9f, "--gun-reticle-size 200 doubles it");
+        CHECK(lightgun_host_option("--gun-reticle-size", "9999") && g_lightgun_reticle_size == LIGHTGUN_RETICLE_SIZE_MAX &&
+              lightgun_host_option("--gun-reticle-size", "1") && g_lightgun_reticle_size == LIGHTGUN_RETICLE_SIZE_MIN,
+              "the size is clamped");
+        lightgun_host_option("--gun-reticle-size", "100");
+        lightgun_host_option("--gun-reticle", "ring");
+        lightgun_reticle_set_image(NULL);
+        g_lightgun_reticle_cli = false;
+        g_active_profile = was;
+    }
+
     /* ---- (A3) a four-player cabinet's side switch (Air Walkers, Pinboard #1063) ---- */
     {
         static game_profile_t four_profile = { .id = "four" };

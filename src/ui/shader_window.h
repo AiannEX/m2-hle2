@@ -31,6 +31,7 @@
 #include "stereo.h"
 #include "cabinet_picture.h"
 #include "log.h"
+#include "lightgun_ui.h"   /* Light gun crosshair (Pinboard #1496) */
 
 static struct {
     bool show_params;
@@ -256,6 +257,8 @@ static inline void shader_ui_menu(ImGuiFileDialog *fd) {
     }
     igSetItemTooltip("The resolution the game is drawn at before the filter reads it. Automatic is the "
                      "window's size for the CRT and the Arcade and 1x for a custom shader.");
+    if (lightgun_ui_on()) igSeparator();
+    lightgun_ui_menu();
     igSeparator();
     igTextDisabled("Filters can cut performance. Turn one off if the game slows down.");
     if (post_shader_error()[0]) {

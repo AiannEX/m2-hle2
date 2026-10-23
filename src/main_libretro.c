@@ -333,6 +333,17 @@ static struct retro_core_option_v2_definition option_defs[] = {
       { { "5", "5 % (MAME)" }, { "4", "4 %" }, { "3", "3 %" }, { "2", "2 %" }, { "1", "1 %" },
         { "0", "None" }, { NULL, NULL } },
       "5" },
+    { "m2hle_gun_reticle", "Light gun: crosshair", NULL,
+      "The House of the Dead: the crosshair drawn where each gun aims, or none (a real light gun needs none).",
+      NULL, NULL,
+      { { "cross", "Cross" }, { "dot", "Dot" }, { "box", "Box" }, { "off", "None" }, { NULL, NULL } },
+      "cross" },
+    { "m2hle_gun_reticle_size", "Light gun: crosshair size", NULL,
+      "The crosshair's size, against its usual one.",
+      NULL, NULL,
+      { { "100", "100 %" }, { "50", "50 %" }, { "75", "75 %" }, { "150", "150 %" }, { "200", "200 %" },
+        { "300", "300 %" }, { NULL, NULL } },
+      "100" },
     { "m2hle_ffb", "Force feedback", NULL,
       "The drive board, as the pad's rumble: Daytona USA's kicks and shakes, Sega Rally's hard turns of the "
       "wheel (a slide, a crash). A pad has no spring or friction, so the weight the wheel has is not in it.",
@@ -369,6 +380,8 @@ static void lr_read_wheel_options(void) {
     if ((v = lr_var("m2hle_gun_flash")))   lightgun_host_option("--gun-flash", v);
     if ((v = lr_var("m2hle_gun_border")) && lightgun_host_option("--gun-border", v))
         s_lr_gun_border = g_lightgun_border;
+    if ((v = lr_var("m2hle_gun_reticle")))      lightgun_host_option("--gun-reticle", v);
+    if ((v = lr_var("m2hle_gun_reticle_size"))) lightgun_host_option("--gun-reticle-size", v);
     if ((v = lr_var("m2hle_ffb")))         ffb_option("--ffb-gain", v);
 }
 
@@ -490,6 +503,8 @@ static void lr_set_options(void) {
         { "m2hle_wheel_speed", "Wheel: turn speed; 10|4|6|8|14|20|255" },
         { "m2hle_gun_flash",  "Light gun: flash on each shot; off|1|2|3|4" },
         { "m2hle_gun_border", "Light gun: off-screen border (%); 5|4|3|2|1|0" },
+        { "m2hle_gun_reticle", "Light gun: crosshair; cross|dot|box|off" },
+        { "m2hle_gun_reticle_size", "Light gun: crosshair size (%); 100|50|75|150|200|300" },
 
         { "m2hle_ffb",        "Force feedback; 100|75|50|25|0" },
         { NULL, NULL },

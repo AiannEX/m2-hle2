@@ -16,6 +16,11 @@
  * front ends that draw rectangles (ps3ui's canvas, sokol_gl); the desktop's
  * ImGui draws its own.
  *
+ * The reticle is the player's (Pinboard #1496): a ring, a cross, a dot, a box,
+ * a picture of their own (a PNG, the desktop's ImGui only; the bars draw the
+ * cross for it) or none, at 50..300 % of its size (--gun-reticle STYLE|FILE,
+ * --gun-reticle-size P). Host only, like the flash: the board never sees it.
+ *
  * The flash (Pinboard #1045), off unless asked for (--gun-flash N): the
  * picture goes white for N drawn frames when a gun's trigger is pulled, as a
  * light gun that reads the screen (a Sinden, say) wants. It is the host's
@@ -30,6 +35,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -102,16 +108,75 @@ static inline bool lightgun_host_shown(int p) {
         || g_lightgun.y[p] != g_lightgun_range[p].y_rest;
 }
 
+/* The reticle's shape. RING is the desktop's circle and cross; the bars,
+ * which have no circle, draw it as the cross. */
+enum {
+    LIGHTGUN_RETICLE_RING, LIGHTGUN_RETICLE_CROSS, LIGHTGUN_RETICLE_DOT, LIGHTGUN_RETICLE_BOX,
+    LIGHTGUN_RETICLE_IMAGE, LIGHTGUN_RETICLE_OFF, LIGHTGUN_RETICLES
+};
+
+static const char *const k_lightgun_reticle_names[LIGHTGUN_RETICLES] = {
+    "ring", "cross", "dot", "box", "image", "off",
+};
+
+#define LIGHTGUN_RETICLE_SIZE_MIN 50
+#define LIGHTGUN_RETICLE_SIZE_MAX 300
+
+static int      g_lightgun_reticle      = LIGHTGUN_RETICLE_RING;
+static int      g_lightgun_reticle_size = 100;      /* percent */
+static bool     g_lightgun_reticle_tint = true;     /* an image in the player's colour */
+static char     g_lightgun_reticle_image[512];      /* the PNG for LIGHTGUN_RETICLE_IMAGE */
+static uint32_t g_lightgun_reticle_gen;             /* bumped when the image's path changes */
+static bool     g_lightgun_reticle_cli;             /* the command line chose: no saved choice */
+
+/* A style's name, or -1. */
+static inline int lightgun_reticle_parse(const char *s) {
+    for (int i = 0; i < LIGHTGUN_RETICLES; i++)
+        if (!strcmp(s, k_lightgun_reticle_names[i])) return i;
+    if (!strcmp(s, "none")) return LIGHTGUN_RETICLE_OFF;
+    return -1;
+}
+
+/* The reticle's picture is `path` (NULL or "" lets it go). */
+static inline void lightgun_reticle_set_image(const char *path) {
+    size_t n = path ? strlen(path) : 0;
+    if (n >= sizeof g_lightgun_reticle_image) n = sizeof g_lightgun_reticle_image - 1;
+    if (n) memcpy(g_lightgun_reticle_image, path, n);
+    g_lightgun_reticle_image[n] = '\0';
+    g_lightgun_reticle_gen++;
+}
+
+static inline int lightgun_reticle_clamp_size(int pc) {
+    return pc < LIGHTGUN_RETICLE_SIZE_MIN ? LIGHTGUN_RETICLE_SIZE_MIN
+         : pc > LIGHTGUN_RETICLE_SIZE_MAX ? LIGHTGUN_RETICLE_SIZE_MAX : pc;
+}
+
 #define LIGHTGUN_HOST_FLASH_MAX 8
 
 static int  g_lightgun_flash;              /* frames of white a pull draws; 0 = off */
 static int  s_lightgun_flash_left;
 static bool s_lightgun_flash_was[LIGHTGUN_PLAYERS];
 
-/* --gun-flash N (0..8 frames; "on" is 2, "off" 0), or --gun-border P (the
- * off-screen border, 0..5 % of the picture, lightgun.h; "mame" is 5): true
- * when `opt` is one. */
+/* --gun-flash N (0..8 frames; "on" is 2, "off" 0), --gun-border P (the
+ * off-screen border, 0..5 % of the picture, lightgun.h; "mame" is 5),
+ * --gun-reticle ring|cross|dot|box|off|FILE.png or --gun-reticle-size P
+ * (50..300 %): true when `opt` is one. */
 static inline bool lightgun_host_option(const char *opt, const char *val) {
+    if (!strcmp(opt, "--gun-reticle")) {
+        int st = lightgun_reticle_parse(val);
+        if (st < 0) {                                  /* a file */
+            lightgun_reticle_set_image(val);
+            st = LIGHTGUN_RETICLE_IMAGE;
+        }
+        g_lightgun_reticle = st;
+        g_lightgun_reticle_cli = true;
+        return true;
+    }
+    if (!strcmp(opt, "--gun-reticle-size")) {
+        g_lightgun_reticle_size = lightgun_reticle_clamp_size((int)strtol(val, NULL, 0));
+        g_lightgun_reticle_cli = true;
+        return true;
+    }
     if (!strcmp(opt, "--gun-border")) {
         double pc = !strcmp(val, "mame") ? 5.0 : strtod(val, NULL);
         g_lightgun_border = lightgun_clamp((int)(pc * 10.0 + 0.5), 0, LIGHTGUN_BORDER_DEF);
@@ -148,18 +213,21 @@ typedef struct {
 
 #define LIGHTGUN_HOST_BARS (LIGHTGUN_PLAYERS * 8 + 1)
 
-/* The crosshairs over a picture at (ox, oy, w, h): four arms a gun, a dark
- * outline under each, P1 red and P2 blue; under them, on a frame that
- * flashes, the whole picture white. Returns how many bars. Call it once a
- * drawn frame: it counts the flash down. */
+/* The crosshairs over a picture at (ox, oy, w, h), in the reticle's shape
+ * (the cross for a ring or an image; none when it is off), a dark outline
+ * under each, P1 red and P2 blue; under them, on a frame that flashes, the
+ * whole picture white. Returns how many bars. Call it once a drawn frame: it
+ * counts the flash down. */
 static inline int lightgun_host_crosshairs(float ox, float oy, float w, float h,
                                            lightgun_host_bar_t out[LIGHTGUN_HOST_BARS]) {
     if (!lightgun_host_on() || w <= 0.0f || h <= 0.0f) return 0;
-    float arm = h / 384.0f * 10.0f, gap = arm * 0.3f;     /* ~10 board pixels */
-    float t = h / 384.0f * 1.5f;
+    float z = (float)g_lightgun_reticle_size / 100.0f;
+    float arm = h / 384.0f * 10.0f * z, gap = arm * 0.3f;     /* ~10 board pixels */
+    float t = h / 384.0f * 1.5f * (z < 1.0f ? 1.0f : z);
     if (t < 1.0f) t = 1.0f;
     int n = 0;
     if (lightgun_host_flash_tick()) out[n++] = (lightgun_host_bar_t){ ox, oy, ox + w, oy + h, 0xFFFFFFu, 1.0f };
+    if (g_lightgun_reticle == LIGHTGUN_RETICLE_OFF) return n;
     for (int p = 0; p < LIGHTGUN_PLAYERS; p++) {
         if (!lightgun_host_shown(p)) continue;
         float fx, fy;
@@ -169,13 +237,32 @@ static inline int lightgun_host_crosshairs(float ox, float oy, float w, float h,
             float e = k ? 0.0f : 1.0f;           /* the outline's margin */
             uint32_t rgb = k ? (p == 0 ? 0xE02020u : 0x3060FFu) : 0x000000u;
             float a = k ? 1.0f : 0.63f;
-            const float b[4][4] = {
-                { cx - arm - e, cy - t - e, cx - gap + e, cy + t + e },
-                { cx + gap - e, cy - t - e, cx + arm + e, cy + t + e },
-                { cx - t - e, cy - arm - e, cx + t + e, cy - gap + e },
-                { cx - t - e, cy + gap - e, cx + t + e, cy + arm + e },
-            };
-            for (int i = 0; i < 4; i++)
+            float b[4][4];
+            int nb = 4;
+            if (g_lightgun_reticle == LIGHTGUN_RETICLE_DOT) {
+                float d = t * 1.5f;
+                const float q[4] = { cx - d - e, cy - d - e, cx + d + e, cy + d + e };
+                memcpy(b[0], q, sizeof q);
+                nb = 1;
+            } else if (g_lightgun_reticle == LIGHTGUN_RETICLE_BOX) {
+                float r = arm * 0.7f;
+                const float q[4][4] = {
+                    { cx - r - e, cy - r - e, cx + r + e, cy - r + 2 * t + e },
+                    { cx - r - e, cy + r - 2 * t - e, cx + r + e, cy + r + e },
+                    { cx - r - e, cy - r - e, cx - r + 2 * t + e, cy + r + e },
+                    { cx + r - 2 * t - e, cy - r - e, cx + r + e, cy + r + e },
+                };
+                memcpy(b, q, sizeof q);
+            } else {
+                const float q[4][4] = {
+                    { cx - arm - e, cy - t - e, cx - gap + e, cy + t + e },
+                    { cx + gap - e, cy - t - e, cx + arm + e, cy + t + e },
+                    { cx - t - e, cy - arm - e, cx + t + e, cy - gap + e },
+                    { cx - t - e, cy + gap - e, cx + t + e, cy + arm + e },
+                };
+                memcpy(b, q, sizeof q);
+            }
+            for (int i = 0; i < nb; i++)
                 out[n++] = (lightgun_host_bar_t){ b[i][0], b[i][1], b[i][2], b[i][3], rgb, a };
         }
     }
