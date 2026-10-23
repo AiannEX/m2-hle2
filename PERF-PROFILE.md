@@ -411,6 +411,33 @@ of the other spills. Eight variants (pcm8 x release x lpctl); everything else ke
 construction (it removes tests that cannot fail). Below that, the slot loop is the arithmetic of
 the voice itself.
 
+## 2026-10-23: the slot run inside RAM (Pinboard #1488)
+
+The cut above, made as one more case of `scsp_pcm_run_eg` (an `inside` flag beside `pcm8` and
+`release`), not as eight hand-written copies; `lpctl` stays a run constant read once, as before.
+`scsp_slot_run_pcm` takes it when SBCTL and STWINH are clear and `scsp_pcm_run_inside` holds: the
+top position the run can read, the start (the larger of `cur` and `nxt`) plus `n - 1` steps and a
+sample, scaled to bytes from `sa`, is below the RAM size and the 20-bit wrap. That bound holds for
+the whole run because `cur` and `nxt` only climb, except at a forward loop's end, which takes them
+back by `lea - lsa` (so the check refuses `lsa > lea` on a loop). The registers it reads are the
+run's constants, the same as LFO and SDIR on this path. The inside loop drops the SBCTL xors, the
+STWINH test, both wraps and both bound tests.
+
+**Cost**: `arc_bench sfight --sound --frames 3000`, `perf stat -e instructions:u`, two runs each:
+48.271G → 47.836G, **−435M (−0.90%)**, runs agree within 10K. `scsp_pcm_wave` had to be
+`SCSP_FORCE_INLINE`: with an extra argument and plain `inline`, GCC stopped inlining it, and the
+count went up to 48.546G.
+
+**Who takes it**: every run on this path in STF attract, and in daytona, srallyc, vcop, fvipers,
+dynamcop, hotd, doa and vonj over 1800 frames (a temporary counter, removed): none of them ever set
+SBCTL or STWINH here, or ran outside RAM. The fallback is held by `scsp_fuzz` (random SBCTL, STWINH
+and addresses): its file matches #536's, and changes if either guard is taken out (without the
+reach test it crashes).
+
+**Bit-exact against #536**: `det_digest --sound` on STF attract (3000) and the scripted fight
+(4500), `--profile` on the eight games above (1800 each), frame digests and sound hashes identical;
+`ab-builds.mjs --sound` identical at 600, 1800 and 3000; ctest 40/40.
+
 ## How to take one
 
 `perf` comes from `linux-tools-generic` (in the antigravity-dev image; `/usr/local/bin/perf`).
