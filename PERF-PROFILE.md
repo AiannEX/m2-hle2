@@ -438,6 +438,41 @@ reach test it crashes).
 (4500), `--profile` on the eight games above (1800 each), frame digests and sound hashes identical;
 `ab-builds.mjs --sound` identical at 600, 1800 and 3000; ctest 40/40.
 
+## 2026-10-23: after the inside-RAM cut, again (Pinboard #1491)
+
+The same attract bench (`arc_bench sfight --sound --frames 30000`, no `--i960-timing`) on #1488's
+`525c36a`, 2000 Hz, 41,169 samples; no code changed. The build is the one measured above
+(`perf stat` over 3000 frames, two runs: 47,836,571,484 and 47,836,590,888 instructions).
+
+**By thread:** main 68.6%, the sound thread **31.4%** (31.5% before #1488).
+
+**By real function** (% of the process): `emu_slice_body` 27.1% (the i960, closed),
+`game_render_draw_geo_list` 10.8% (closed), `scsp_dsp_prog_sfight_fvipers` 9.9% (closed),
+**`s24_draw_tilemap` 7.2%**, `m68k_step_core` 6.7% (closed), **`scsp_slot_run_body` 5.4%** (6.3%
+before), `render_frame` 5.2%, `mem_ea` 3.7%, `m68k_rw` 2.2%, `geo3d_emit_tri_uv` 1.9%,
+`sound_run` 1.9%, `mem_write32_slow` 1.9%. In the sound thread: DSP 32%, 68000 core 21%, slots 17%.
+
+**The most expensive open function is the tile walk, `s24_draw_tilemap`** (7.2%; the CPU tile
+compositor of the handheld / libretro builds, #211). By source line, 43% of its samples (3.4% of
+the process) are on `s24_cell_load`'s graphics read, the four bytes of the cell's row at
+`gfx + (entry & 0x3FFF) * 32`: by instruction, a third of the function lands on the first `shl`
+that uses those bytes, the stall of a cache miss in the tile graphics ROM (one cell in 16K, picked
+by the name table). The rest is the run walk: the window-mask bit test (`tile_renderer.h:227`,
+10%), the name-table word (6%), the pixel stores (10%). Nothing in it is a test or reload of a
+value fixed for the pass: `opaque`, `mode` and the line's split are tested once a run, and the
+run is up to eight pixels.
+
+`render_frame`'s 5.2% is mostly (2.9% of the process) `tile_compose_cpu`'s recolour of every
+pixel, two 4-byte pen lookups and stores per pixel, taken when the tile RAM goes `full` or a pen
+changes. #403 chose a store per pixel over a pen test per pixel on purpose; the samples sit on the
+stores.
+
+**No cut as specific as the inside-loop hoist.** The open functions left are a memory stall (the
+tile graphics), stores (the recolour) and the arithmetic of the voice (the slot loop, described in
+#1487's section; #1488 took its run-constant tests). Making the tile walk cheaper would mean
+reading the graphics less often (caching decoded cell rows, or redrawing fewer lines), which is a
+change of what is drawn when, not a hoist.
+
 ## How to take one
 
 `perf` comes from `linux-tools-generic` (in the antigravity-dev image; `/usr/local/bin/perf`).
