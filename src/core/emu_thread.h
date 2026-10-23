@@ -396,6 +396,7 @@ static inline const char *emu_state_flat_load(emu_thread_ctx_t *ctx, const void 
  * inputs and writes to a feed, a follower runs on them. Hooked into the slice. */
 #include "follow.h"
 #include "replay.h"   /* recorded online matches, and their playback (Pinboard #572) */
+#include "tas.h"      /* tool-assisted play: a movie, rewind, the greenzone (Pinboard #1462) */
 
 /* A game script's hooks (core/m2lua.h, Pinboard #958), set by a host that runs
  * scripts and called with the emu mutex held: at each vblank, and before and
@@ -632,7 +633,7 @@ static inline void emu_state_request_pump(emu_thread_ctx_t *ctx, netplay_step_t 
         else if (m2comm_linked())     err = "the board is linked to another cabinet";
         else if (replay_playing())    err = "a replay is playing";
         else                          err = emu_state_load_now(ctx, ctx->state_path);
-        if (!err) { follow_lead_break("state loaded"); replay_rec_break("state loaded"); }
+        if (!err) { follow_lead_break("state loaded"); replay_rec_break("state loaded"); tas_break("a state was loaded"); }
     } else {
         err = emu_state_save_now(ctx, ctx->state_path);
     }
@@ -652,6 +653,7 @@ static inline void emu_comm_role_pump(emu_thread_ctx_t *ctx, netplay_step_t step
         replay_rec_break("comm link role");
         replay_play_yield();
         follow_lead_break("comm link role");
+        tas_break("the comm link reset the board");
         ctx->total_steps       = 0;
         ctx->cpu_prev_snapshot = ctx->cpu_snapshot;
         ctx->cpu_snapshot      = *ctx->cpu;
@@ -693,6 +695,7 @@ static inline netplay_step_t emu_netplay_pump(emu_thread_ctx_t *ctx) {
         else if (asked) asked = netplay_reset_board_now();
         else            netplay_do_reset();
         follow_lead_break("board reset");
+        tas_break("the board was reset");
         /* THE STEP COUNT IS PART OF THE BOARD, because the frame check hashes
          * it -- `netplay_frame_check` calls it "the instruction count since
          * reset" and it has to actually be one. Left running, it carries the
@@ -712,6 +715,8 @@ static inline netplay_step_t emu_netplay_pump(emu_thread_ctx_t *ctx) {
         if (asked) ctx->reset_count++;
     }
     emu_comm_role_pump(ctx, step);
+    /* After the reset above: a movie from power-on starts on the reset board. */
+    tas_pump(ctx, step != NETPLAY_STEP_OFF || replay__session_live(), ctx->request_reset != 0);
     return step;
 }
 
@@ -886,6 +891,7 @@ static inline int64_t emu_slice_begin(emu_thread_ctx_t *ctx, int *hzone) {
     g_vblank_edge = 0;
     g_geodl_full_snap = g_active_profile && g_active_profile->quirks.geo_displaylist;
     follow_slice_begin(ctx);   /* follow.h: latch or replay this slice's inputs */
+    tas_slice_begin(ctx);      /* tas.h: the movie's input for this frame */
     replay_slice_begin(ctx);   /* replay.h: record a netplay match's */
     emu_slice_irq_stale(ctx);
     /* The cycles run outside a slice (a single step, a load). */
@@ -976,6 +982,7 @@ static inline void emu_slice_body(emu_thread_ctx_t *ctx) {
     ctx->slice_capped = (i >= max_steps);
     bool frame = g_vblank_edge != 0;
     follow_slice_end(ctx, frame);
+    tas_slice_end(ctx, frame);
     replay_slice_end(ctx, frame);
     if (frame) emu_slice_frame_edge(ctx);
     emu_script_frame(frame);
@@ -1081,6 +1088,7 @@ static inline void emu_idle_hold(emu_thread_ctx_t *ctx) {
         if (reset) {
             ctx->total_steps       = 0;    /* as the barrier's reset: see emu_netplay_pump */
             follow_lead_break("idle hold");
+            tas_break("idle hold");
             replay_rec_break("idle hold");
             ctx->cpu_prev_snapshot = ctx->cpu_snapshot;
             ctx->cpu_snapshot      = *ctx->cpu;
@@ -1116,10 +1124,11 @@ static inline void emu_pace_frame(emu_thread_ctx_t *ctx, int64_t work_t1) {
     if (m2comm_linked()) { emu_pace_linked(ctx, work_t1); return; }
     link_pace_stop(&ctx->link_pace);
     int64_t now = emu_now_us();
+    int64_t slice_us = (int64_t)EMU_SLICE_US * tas_slowdown();   /* TAS slow motion */
     if (ctx->frame_deadline_us == 0) {
-        ctx->frame_deadline_us = now + EMU_SLICE_US;
+        ctx->frame_deadline_us = now + slice_us;
     } else {
-        ctx->frame_deadline_us += EMU_SLICE_US;
+        ctx->frame_deadline_us += slice_us;
         /* Catch-up clamp: if we've fallen >1 frame behind (paused
          * in debugger, heavy host load), reset rather than spin. */
         if (ctx->frame_deadline_us < now - (int64_t)EMU_SLICE_US) {
@@ -1142,7 +1151,7 @@ static inline void emu_pace_frame(emu_thread_ctx_t *ctx, int64_t work_t1) {
      * frame per call. */
     bool budget_hit = ctx->frame_budget_hit != 0;
     ctx->frame_budget_hit = 0;
-    if (unthrottled || netplay_catching_up() || replay_play_unpaced()) ctx->frame_deadline_us = 0;
+    if (unthrottled || netplay_catching_up() || replay_play_unpaced() || tas_unpaced()) ctx->frame_deadline_us = 0;
     else if (sleep_us > 0 && !budget_hit) {
         emu_sleep_us(sleep_us);
         g_emu_times.pace_us += emu_now_us() - work_t1;
@@ -1173,7 +1182,7 @@ static inline bool emu_netplay_allows_slice(emu_thread_ctx_t *ctx, int64_t slice
         g_emu_times.net_us += emu_now_us() - slice_start;
         return false;
     }
-    if (np_step == NETPLAY_STEP_OFF && g_idle_hold && !ctx->frame_budget && !replay_playing()) {
+    if (np_step == NETPLAY_STEP_OFF && g_idle_hold && !ctx->frame_budget && !replay_playing() && !tas_live()) {
         emu_idle_hold(ctx);
         g_emu_times.net_us += emu_now_us() - slice_start;
         return false;
