@@ -250,15 +250,15 @@ static inline void tas__gz_trim(void) {
     size_t budget = (size_t)g_tas.budget_mb << 20;
     if (budget < 4 * g_tas.state_size) budget = 4 * g_tas.state_size;
     while (tas_gz_bytes() > budget && g_tas.gz_n > 1) {
-        int far = -1;
-        uint32_t far_d = 0;
+        int pick = -1;
+        uint32_t pick_d = 0;
         for (uint32_t i = 1; i < g_tas.gz_n; i++) {
             uint32_t f = g_tas.gz[i].frame;
             if (f % g_tas.gz_every_now == 0) continue;
             uint32_t d = f > g_tas.frame ? f - g_tas.frame : g_tas.frame - f;
-            if (far < 0 || d > far_d) { far = (int)i; far_d = d; }
+            if (pick < 0 || d > pick_d) { pick = (int)i; pick_d = d; }
         }
-        if (far >= 0) { tas__gz_drop((uint32_t)far); continue; }
+        if (pick >= 0) { tas__gz_drop((uint32_t)pick); continue; }
         if (g_tas.gz_every_now > (1u << 20)) break;
         g_tas.gz_every_now *= 2;
     }
