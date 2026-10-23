@@ -326,7 +326,46 @@ spilled to the stack and re-read every sample (register pressure; the flag tests
 So the slot loop's cost is the envelope's per-sample call and the state and level it keeps in
 memory, on top of arithmetic that is already minimal. A run specialised on the state (decay-2-held,
 release) with the level in a register would take the call, the reloads and the switch off almost
-every sample; not tried here (this pin was measurement only).
+every sample; not tried here (this pin was measurement only). #1482 did it (below).
+
+## 2026-10-23: the slot loop, specialised on the envelope (Pinboard #1482)
+
+`scsp_slot_run_pcm` now hands a run to `scsp_pcm_run_eg` when the voice has no PLFO, no ALFO and
+no SDIR and its envelope is in release, or in decay 2 with D2R = 0. Neither state can change inside
+a run (a register write is a full sync, and the attack-to-decay link needs attack), except that
+release reaching 0 stops the voice, which the loop handles itself. So: decay 2's gain
+`scsp_eg_table[vol >> 16]` is read once for the run; release keeps `vol` in a register, subtracts
+`rr` and looks the gain up each sample; `vol`, `cur`, `nxt` and the stop are written back once at
+the end. The call to `scsp_eg_update`, its state switch and the reloads of `state`, `vol` and
+`active` are gone, and the sound-stack slot for even and odd `k` is computed once. PCM8B and
+release are constants at the four call sites, so each variant compiles on its own. Every other
+state (attack, decay 1, decay 2 with D2R > 0), LFOs, SDIR and the non-PCM paths keep the old body.
+
+**Cost**, `arc_bench sfight --sound --frames 3000`, `perf stat -e instructions:u`, two runs each,
+built from #535 (`f5890cc`) and this branch:
+
+| build | run 1 | run 2 |
+|---|---|---|
+| #535 (= #533's code) | 49,246,493,196 | 49,246,480,315 |
+| #1482 | 48,270,805,086 | 48,270,759,554 |
+
+−976 M instructions, **−1.98% of the process**; the runs agree to 50 K. Only `scsp.h`'s PCM path
+changed, so all of it is the slot loop. What share of the loop that is: callgrind over the same
+3000 frames counts `scsp_slot_run_body` inclusive (with `scsp_eg_update`) at 967 M → 759 M,
+**−21.5% of the slot loop's instructions** (under valgrind the bench runs the sound thread less, so
+only the ratio carries over; 976 M / 0.215 puts the loop at ~4.5 G of the native 49.2 G, ~9%, in
+line with #1481's 8.2% of samples). `scsp_eg_update` went from 101 M to nothing.
+
+**Proof (board-identical, no proto bump)**:
+
+- `det_digest --sound`, #535 vs #1482: sfight attract 3000 (output `1027c032a3e9d7f5`) and the
+  scripted fight 4500 (`01b322174c61fc8f`), frame digests and sound hashes identical; `--profile`
+  daytona, srallyc, vcop, fvipers, dynamcop, hotd, doa and vonj at 1800, identical.
+- `tools/ab-builds.mjs --sound` on sfight at 600/1800/3000: IDENTICAL.
+- ctest 40/40.
+- Both ends of a run in the new loop are reached on attract: a build whose release did not stop
+  the voice at 0 changed the sound output hash (`6cc3eacc...`), and one whose no-loop voice did not
+  stop at its end changed it too (`b45d0afd...`).
 
 ## How to take one
 

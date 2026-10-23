@@ -96,7 +96,8 @@ the chip does is the output. So `scsp.h` now makes its samples late
 
 - The 68000 loop only says a sample boundary passed (`scsp_tick`).
 - Each slot keeps its own place in the samples owed, and is run on alone,
-  a stretch at a time in a tight loop (`scsp_slot_run_pcm`), when something
+  a stretch at a time in a tight loop (`scsp_slot_run_pcm`; in release or a
+  held decay 2, `scsp_pcm_run_eg`, PERF-PROFILE.md #1482), when something
   looks at it: its KYONB, the monitor if it is the slot MSLC named at the last
   boundary, or a 68000 write inside the RAM it may read. The driver's refill
   writes run one slot on; its monitor poll runs one slot on; neither makes the
