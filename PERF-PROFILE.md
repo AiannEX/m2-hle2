@@ -367,6 +367,50 @@ line with #1481's 8.2% of samples). `scsp_eg_update` went from 101 M to nothing.
   the voice at 0 changed the sound output hash (`6cc3eacc...`), and one whose no-loop voice did not
   stop at its end changed it too (`b45d0afd...`).
 
+## 2026-10-23: after the envelope hoist, again (Pinboard #1487)
+
+The same attract bench (`arc_bench sfight --sound --frames 30000`, no `--i960-timing`) on #1482's
+`9ce4518`, 800 Hz, 46,126 samples; no code changed. The build is the one measured above (`perf stat`
+over 3000 frames: 48,271,035,355 instructions).
+
+**By thread:** main 68.5%, the sound thread **31.5%** (34.1% before #1482).
+
+**By real function** (% of the process): `emu_slice_body` 26.9% (the i960, closed),
+`game_render_draw_geo_list` **10.9%**, `scsp_dsp_prog_sfight_fvipers` 9.9% (closed),
+`s24_draw_tilemap` 6.8%, **`scsp_slot_run_body` 6.3%** (8.2% before), `m68k_step_core` 6.3%
+(closed), `render_frame` 6.0%, `mem_ea` 3.0%, `geo3d_emit_tri_uv` 2.1%, `m68k_rw` 2.0%,
+`sound_run` 1.9%. In the sound thread: DSP 31%, slots 20%, 68000 core 20%.
+
+**The most expensive open function is the GEO list walk** (10.9%), and it has no hot spot: by
+source line the top is 0.5% (`geo3d_cull_code`'s five plane tests, the cached mesh's vertex
+transform, `geo3d_flat_depth`); by inlined function it is luma 1.9%, flat depth 1.4%, cull codes
+1.0%, normals 0.9%, cached faces 0.9%, ... It is float work per vertex and per face, already worked
+by #308, #317, #339 and #403; nothing in it is a reload of something constant.
+
+**The slot loop, what is left** (6.3% of the process; `scsp_pcm_run_eg` 4.9% and `scsp_pcm_wave`
+2.4% by inlined function). `perf annotate` of the 8-bit release variant: ~75 instructions a sample,
+the work the brief lists (two RAM bytes, the interpolation, the step and loop test, one
+`scsp_eg_table` load, the envelope multiply, four gain multiplies, the stack store, three adds).
+About **19 of the 75 are reloads of run constants from the stack**, because the loop has more live
+values than x86-64 has registers: `rr`, the table base, `sa`, `step`, `ram` and `ram_size` (twice
+each), the four gains, `mixs`, both sound-stack pointers, and the flags `stwinh`, `sbctl` (two
+tests) and `lpctl`. They hit L1, but the loop is throughput-bound on instructions, as the DSP is.
+The samples sit on the multiplies and on what follows them (the add into `acc_l`, the stack store):
+the real work. The flag tests come next (`stwinh` 4.7%, the `k & 1` stack pick 5.5% in each of
+the two variants, `sbctl` 1.5%), mostly skid from the multiply before.
+
+**A cut as specific as the envelope hoist, not made** (this pin was measurement only): attract never
+sets SBCTL or STWINH (#1481's counts), and sound RAM is 512 KB, so the two `a < ram_size` tests in
+`scsp_pcm_wave` always pass for a voice whose whole loop lies inside it. A variant of
+`scsp_pcm_run_eg` taken when `sbctl == 0 && !stwinh` and the run's reach (`sa` + max(`lea`, the
+start) + 2 + `step >> 12`, below 0x80000 and with no 20-bit wrap) is inside RAM, with `lpctl` a
+constant too (0 on 24% of the samples, 1 on 76%), drops the flag tests, the `sbctl` xor, both bound
+tests and the `ram_size` reloads: ~13-15 instructions of ~75, and the registers they free take some
+of the other spills. Eight variants (pcm8 x release x lpctl); everything else keeps today's
+`scsp_pcm_run_eg`. Estimate: ~15-20% of the loop, **~1% of the process**, bit-exact by
+construction (it removes tests that cannot fail). Below that, the slot loop is the arithmetic of
+the voice itself.
+
 ## How to take one
 
 `perf` comes from `linux-tools-generic` (in the antigravity-dev image; `/usr/local/bin/perf`).
