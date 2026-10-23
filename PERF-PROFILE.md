@@ -171,6 +171,81 @@ On x86 the i960 is not where the time goes: the 9,000 frames are 228 G instructi
 the sound board and the render, so even the AOT's whole gain is about 1%. The handheld's profile
 (above) has the same order, sound board and draw ahead of the i960.
 
+## 2026-10-22: the most expensive functions, again (Pinboard #1474)
+
+The same bench (`arc_bench --sound --frames 30000`) on master at `4075c17`, after everything above,
+re-profiled to answer "what is the most expensive function, and is it the SCSP". The box was shared
+(load average ~9), so wall-clock times below are rough; shares of samples and instruction counts
+(`perf stat -e instructions:u`) are not.
+
+**By thread:** main (i960, bus, COP, 3D decode, CPU tiles, render) 67.5%, the sound thread 32.5%.
+Per the bench's own timers, flat out: emulation 0.40 ms and render 0.38 ms a frame on the main
+thread (tiles 0.24, 3D 0.12), the sound board about a third again on its own thread. `snd_bench`
+puts the sound board alone at **~49x real time** (60 s of sound in 1.22 s), i.e. ~2% of a core at
+60 fps; the live thread agrees.
+
+**By real function** (`perf report --sort symbol`, inlining folded in): `emu_slice_body` 28.4% (the
+whole i960 + bus + COP + timers), **`scsp_dsp_prog_sfight_fvipers` 9.6%** (STF's reverb, the single
+most expensive function of the process), `scsp_slot_run_body` 7.4%, `m68k_step_core` 6.3%, the GEO
+list walk 10.4% in pieces, the CPU tile compositor 6.9%, `render_frame` 4.75%, `mem_ea` 3.6%.
+
+**By inlined function** (`tools/perf_inline.py`, top of 39,237 samples):
+
+```
+ 10.30%  i960_step_core                 2.26%  scsp_slot_env                  1.52%  hle_check_synced
+  6.52%  m68k_step_core                 1.88%  s24_draw_line                  1.49%  geo3d_emit_tri_uv
+  4.23%  scsp_dsp_prog_sfight_fvipers   1.82%  geo3d_board_luma               1.48%  mem_read32
+  3.83%  scsp_slot_run_pcm              1.80%  scsp_pcm_wave                  1.29%  m68k_direct
+  3.74%  s24_cell_load                  1.79%  scsp_dsp_pack                  1.15%  sound_step
+  3.62%  memcpy                         1.74%  scsp_dsp_unpack                1.14%  tile_compose_cpu
+  3.15%  emu_slice_body                 1.65%  geo3d_flat_depth               1.05%  mem_write32
+  2.95%  mem_ea                         1.59%  emu_timers_after_step_fast     1.03%  geo3d_board_normal
+  2.59%  mem_fetch2                     1.58%  scsp_ram_w                     0.99%  m68k_wait
+```
+
+So the hunch was right: the sound thread's 32.5% is the DSP program ~10% (the program body 4.2%,
+its 23 float16 unpacks and 10 packs 3.5%, its 33 delay-line RAM accesses 1.6%, the 24-bit sign
+extensions 0.7%), the slots ~8% (`scsp_slot_run_pcm` + env + wave), and the 68000 ~12.5%
+(`m68k_step_core`, its bus, the two wait states, the SCSP register reads and writes). The rest is
+`scsp_sync` and the thread's hand-over.
+
+**Is the lazy chip misbehaving?** No. `det_digest` now prints the chip's counters (`sound: chip syncs,
+single-slot catch-ups, lockstep samples`): attract (3000 frames, 2.2 M samples) has one full sync
+per ~108 samples, 0.69 single-slot catch-ups a sample and **1** sample made in lockstep; a scripted
+fight (4500 frames, 3.3 M samples) one sync per ~81 samples, 0.68 catch-ups a sample and 896
+lockstep samples (FM voices). The fallback paths are not where the time goes; the cost is the
+chip's work itself at 44.1 kHz.
+
+**Where the DSP's time goes.** `perf annotate` of the program shows no hot spot: the cost is spread
+evenly over ~3,000 straight-line instructions a sample (84 steps, ~36 instructions each, with the
+multiply, the two clamps, the temp/mems traffic and, on 33 steps, the float16 and the RAM access).
+At ~190-200 ns a sample it runs at ~3 IPC; it is throughput-bound on instruction count, so a gain
+has to be fewer instructions. A silence skip is impossible (the delay line's limit cycle, SCSP.md),
+the unpack LUT and the branchless unpack were measured and rejected before (`scsp.h`, above `scsp_dsp_pack`).
+
+**What this did:** `tools/gen-scsp-dsp.py` now checks the program's delay ring against the end of
+sound RAM **once a sample** (`ring_ok`: RBP, RBL and the widest address the program forms) and
+makes the 33 accesses plain big-endian word reads and writes inside it (`scsp_dsp_ring_rd/wr` in
+the generated header), instead of `scsp_ram_w/ww` with its mask and bounds test on each. A ring
+past the end of RAM takes the checked path as before. Bit-exact: `snd_bench` hashes (out
+`3704855bb1f0b17b`, ram `ee38c9db48fd2123`, efreg `3dcf915d389ad344`, dsp-state
+`8caaee08bcbdff0f`), `det_digest --sound` digests and sound hashes for attract and the fight,
+`scsp_dsp_test`, `scsp_dsp_test_masks` and `scsp_lazy_test` all unchanged. Gain: the DSP's own
+instructions **−3.5%** a sample (12.72 G → 12.29 G over 4 M samples), `snd_bench`'s DSP time
+201 → 185 ns a sample (noisy box), the whole board's instructions −0.3% over 3000 frames. Small,
+as expected of a function already at its ceiling; the next real step for the sound thread would be
+a different design (the 68000 in threaded code, or the driver in C, `--sound-hle`, which #173 has),
+not more peephole work on the chip.
+
+**The 68000's share** is the dispatch itself: the hottest instructions of `m68k_step_core` are the
+`m68k_fast` table lookup and its indirect jump, i.e. one mispredicted jump per instruction. That is
+the price of a table interpreter; the handler bodies are cheap.
+
+**What was left alone, and why:** `scsp_slot_run_pcm` is already the slot's registers hoisted out of
+the loop; its hot instructions are the pitch-LFO multiply and the stack spills of its flags, each
+~1-2%, nothing to take in one piece. `scsp_eg_update` is a few adds. The i960 is not the sound
+thread's problem and was covered by #403/#406.
+
 ## How to take one
 
 `perf` comes from `linux-tools-generic` (in the antigravity-dev image; `/usr/local/bin/perf`).
@@ -182,10 +257,18 @@ cmake -S . -B $B -DCMAKE_BUILD_TYPE=Release \
 cmake --build $B -j6
 # arc_bench is not a CMake target; det_digest's flags build it:
 gcc -g -fno-omit-frame-pointer -O3 -DNDEBUG -std=gnu11 -ffp-contract=off -fno-strict-aliasing \
-    -DM2HLE_BUILD_FLAVOR=\"release\" -DM2HLE_VERSION=\"dev\" -DM2HLE_DEV_TOOLS=0 \
+    -DM2HLE_BUILD_FLAVOR=\"release\" -DM2HLE_VERSION=\"dev\" -DM2HLE_DEV_TOOLS=0 -DM2HLE_AGES \
     $(grep C_INCLUDES $B/CMakeFiles/det_digest.dir/flags.make | cut -d= -f2-) \
     tests/arc_bench.c -o $B/arc_bench $B/libminiz.a -lpthread -ldl -lm
+# a Ninja tree has no flags.make; the include list is in build.ninja instead:
+#   grep -A6 'build CMakeFiles/det_digest.dir/tests/det_digest.c.o' $B/build.ninja | grep ' INCLUDES = ' | sed 's/^ *INCLUDES = //'
 ```
+
+`snd_bench` and `snd_replay` want a MAME sound capture (`tools/mame/snd_capture.py`, tools/README.md).
+In the dev container the shared MAME build makes one in a few minutes: `MAME_EXE=~/build/mame-bin/mame-shared/shared`,
+`MAME_ROMPATH=$ROMS_DIR`, `MAME_EXTRA_ARGS="-video none -debugger none"`, `SDL_VIDEODRIVER=dummy`, and
+`BRIDGE_PORT=<free port>` when the bridge's 6510 is taken. Hold any change to the chip against its hashes
+(`snd_bench <cap> 60 400000`) and against `det_digest --sound` before and after.
 
 Then, from a scratch directory (never the ROM folder):
 

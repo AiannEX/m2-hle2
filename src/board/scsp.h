@@ -1607,8 +1607,10 @@ static inline void scsp_timers(scsp_t *s, uint64_t now) {
 /* A sample boundary has passed: the chip owes one more sample. It makes it
  * now only when it has to (see "The chip's own time"); the host calls
  * scsp_sync at the end of a run, and the samples go to s->sink in order. */
+static uint64_t g_scsp_coupled_ticks;                 /* boundaries made in lockstep (coupled) */
 static inline void scsp_tick(scsp_t *s) {
     s->owed++;
+    g_scsp_coupled_ticks += s->coupled;
     s->latch_slot  = s->mslc;
     s->latch_ok    = 1;
     s->latch_fresh = 0;
