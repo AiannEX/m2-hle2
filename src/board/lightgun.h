@@ -24,6 +24,13 @@
  * it up and pulls the trigger, which is the shot off the screen a player would
  * make.
  *
+ * That 5 % border is MAME's, not the cabinet's (a real gun sees the picture
+ * to its edge): the host can narrow it, down to none (Pinboard #1493,
+ * --gun-border, for a tool-assisted run that shoots at the edge). The border
+ * is the host's like its pointer, so it travels with it: byte 2 of a player's
+ * GUN record, 0 for MAME's 5 % (every record before #1493). A board fed from
+ * the network keeps to 5 %; a follower and a replay to the record's.
+ *
  * Where a gun points is board state, moved by held bits like the wheel of
  * io_5649.h: the gun's up/down/left/right walk it MAME's key steps a frame
  * (13 across, 10 down), on the board's own vblank count, so netplay, replays
@@ -52,6 +59,7 @@
 #define LIGHTGUN_STEP_X     13     /* MAME PORT_KEYDELTA: A/D steps a frame */
 #define LIGHTGUN_STEP_Y     10
 #define LIGHTGUN_STEPS_MAX  64     /* frames caught up at one read */
+#define LIGHTGUN_BORDER_DEF 50     /* the off-screen border, tenths of a %: MAME's 5 % */
 
 /* One gun's range: the A/D values at the picture's left/right and top/bottom
  * edges, and where it rests (MAME's PORT_MINMAX and default). */
@@ -77,12 +85,15 @@ typedef struct {
     volatile int   on;        /* a pointer drives this gun */
     volatile int   offscreen; /* it points outside the picture */
     volatile float x, y;
+    volatile int   border;    /* the GUN record's byte: tenths of a % + 1; 0 = MAME's 5 % */
 } lightgun_pointer_t;
 
 static lightgun_state_t    g_lightgun;
 static lightgun_range_t    g_lightgun_range[LIGHTGUN_PLAYERS];
 static lightgun_controls_t g_lightgun_controls[LIGHTGUN_PLAYERS];
 static lightgun_pointer_t  g_lightgun_pointer[LIGHTGUN_PLAYERS];
+/* The host's off-screen border, tenths of a % (0..LIGHTGUN_BORDER_DEF). */
+static volatile int        g_lightgun_border = LIGHTGUN_BORDER_DEF;
 /* The held bits, set by input_attach as io_5649.h's; and "is the board
  * driven from elsewhere" (a session, a follow, a replay), set by emu_thread.h,
  * which sees all three. */
@@ -96,6 +107,16 @@ static int      (*g_lightgun_remote_fn)(void);
 static inline int lightgun_clamp(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static inline uint32_t lightgun_held(void) { return g_lightgun_held_fn ? g_lightgun_held_fn() : 0; }
 static inline bool lightgun_remote(void) { return g_lightgun_remote_fn && g_lightgun_remote_fn(); }
+
+/* The border in a GUN record's byte and back: MAME's 5 % is 0, as before the
+ * byte meant anything. */
+static inline uint8_t lightgun_border_byte(int tenths) {
+    tenths = lightgun_clamp(tenths, 0, LIGHTGUN_BORDER_DEF);
+    return tenths == LIGHTGUN_BORDER_DEF ? 0 : (uint8_t)(tenths + 1);
+}
+static inline int lightgun_border_tenths(int byte) {
+    return byte <= 0 || byte > LIGHTGUN_BORDER_DEF ? LIGHTGUN_BORDER_DEF : byte - 1;
+}
 
 /* Power-on: both guns at rest, the mux on P1 Y. */
 static inline void lightgun_reset(void) {
@@ -124,9 +145,9 @@ static inline bool lightgun_pointer_live(int p) {
 }
 
 /* ---- The feed's GUN record (follow.h, replay.h) ---------------------------
- * Per player: u8 on, u8 offscreen, u16 0, the x and y floats' bits, all
- * little-endian. Bits, not a conversion: the board's own maths turns them
- * into A/D values on every host alike. */
+ * Per player: u8 on, u8 offscreen, u8 border (lightgun_border_byte), u8 0,
+ * the x and y floats' bits, all little-endian. Bits, not a conversion: the
+ * board's own maths turns them into A/D values on every host alike. */
 #define LIGHTGUN_FEED_BYTES (LIGHTGUN_PLAYERS * 12)
 
 static inline uint32_t lightgun__fbits(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
@@ -140,6 +161,7 @@ static inline void lightgun_latch(uint8_t out[LIGHTGUN_FEED_BYTES]) {
             const lightgun_pointer_t *h = &g_lightgun_pointer[p];
             lightgun_pointer_t *f = &g_lightgun_fed[p];
             f->on = h->on && !lightgun_remote(); f->offscreen = h->offscreen; f->x = h->x; f->y = h->y;
+            f->border = lightgun_remote() ? 0 : lightgun_border_byte(g_lightgun_border);
         }
         g_lightgun_fed_on = 1;
     }
@@ -147,7 +169,7 @@ static inline void lightgun_latch(uint8_t out[LIGHTGUN_FEED_BYTES]) {
         const lightgun_pointer_t *f = &g_lightgun_fed[p];
         uint8_t *q = out + p * 12;
         uint32_t x = lightgun__fbits(f->x), y = lightgun__fbits(f->y);
-        q[0] = f->on ? 1 : 0; q[1] = f->offscreen ? 1 : 0; q[2] = q[3] = 0;
+        q[0] = f->on ? 1 : 0; q[1] = f->offscreen ? 1 : 0; q[2] = (uint8_t)f->border; q[3] = 0;
         for (int i = 0; i < 4; i++) { q[4 + i] = (uint8_t)(x >> (8 * i)); q[8 + i] = (uint8_t)(y >> (8 * i)); }
     }
 }
@@ -159,11 +181,12 @@ static inline void lightgun_unlatch(void) { g_lightgun_fed_on = 0; }
 static inline void lightgun_feed_put(const uint8_t *in) {
     for (int p = 0; p < LIGHTGUN_PLAYERS; p++) {
         lightgun_pointer_t *f = &g_lightgun_fed[p];
-        if (!in) { f->on = 0; f->offscreen = 0; f->x = f->y = 0.5f; continue; }
+        if (!in) { f->on = 0; f->offscreen = 0; f->border = 0; f->x = f->y = 0.5f; continue; }
         const uint8_t *q = in + p * 12;
         uint32_t x = 0, y = 0;
         for (int i = 0; i < 4; i++) { x |= (uint32_t)q[4 + i] << (8 * i); y |= (uint32_t)q[8 + i] << (8 * i); }
         f->on = q[0] != 0; f->offscreen = q[1] != 0; f->x = lightgun__bitsf(x); f->y = lightgun__bitsf(y);
+        f->border = q[2];
     }
     g_lightgun_fed_on = 1;
 }
@@ -204,13 +227,22 @@ static inline void lightgun_advance(void) {
     }
 }
 
+/* The border gun `p` reads this slice, tenths of a %: the fed copy's, the
+ * host's, or MAME's 5 % on a board fed from the network. */
+static inline int lightgun__border(int p) {
+    if (g_lightgun_fed_on) return lightgun_border_tenths(g_lightgun_fed[p].border);
+    return lightgun_remote() ? LIGHTGUN_BORDER_DEF : lightgun_clamp(g_lightgun_border, 0, LIGHTGUN_BORDER_DEF);
+}
+
 /* Gun `p` sees no picture: its reload is held, the host's pointer is off the
- * picture, or it points within MAME's 5 % border. */
+ * picture, or it points within the border (MAME's 5 %, or the host's). */
 static inline bool lightgun_offscreen(int p, uint32_t held) {
     const lightgun_range_t *r = &g_lightgun_range[p];
     if (held & g_lightgun_controls[p].reload) return true;
     if (lightgun_pointer_live(p) && lightgun__pointer(p)->offscreen) return true;
-    int bx = (r->x_max - r->x_min) * 5 / 100, by = (r->y_max - r->y_min) * 5 / 100;
+    int b = lightgun__border(p);
+    int bx = (r->x_max - r->x_min) * b / 1000, by = (r->y_max - r->y_min) * b / 1000;
+
     return g_lightgun.x[p] <= r->x_min + bx || g_lightgun.x[p] >= r->x_max - bx
         || g_lightgun.y[p] <= r->y_min + by || g_lightgun.y[p] >= r->y_max - by;
 }

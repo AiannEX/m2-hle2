@@ -326,6 +326,24 @@ static struct retro_core_option_v2_definition option_defs[] = {
       { { "off", NULL }, { "1", "1 frame" }, { "2", "2 frames" }, { "3", "3 frames" }, { "4", "4 frames" },
         { NULL, NULL } },
       "off" },
+    { "m2hle_gun_border", "Light gun: off-screen border", NULL,
+      "The House of the Dead: how near the picture's edge a shot counts as off the screen (a reload). "
+      "5 % is MAME's; a real gun sees the picture to its edge. Online play keeps to 5 %.",
+      NULL, NULL,
+      { { "5", "5 % (MAME)" }, { "4", "4 %" }, { "3", "3 %" }, { "2", "2 %" }, { "1", "1 %" },
+        { "0", "None" }, { NULL, NULL } },
+      "5" },
+    { "m2hle_gun_reticle", "Light gun: crosshair", NULL,
+      "The House of the Dead: the crosshair drawn where each gun aims, or none (a real light gun needs none).",
+      NULL, NULL,
+      { { "cross", "Cross" }, { "dot", "Dot" }, { "box", "Box" }, { "off", "None" }, { NULL, NULL } },
+      "cross" },
+    { "m2hle_gun_reticle_size", "Light gun: crosshair size", NULL,
+      "The crosshair's size, against its usual one.",
+      NULL, NULL,
+      { { "100", "100 %" }, { "50", "50 %" }, { "75", "75 %" }, { "150", "150 %" }, { "200", "200 %" },
+        { "300", "300 %" }, { NULL, NULL } },
+      "100" },
     { "m2hle_ffb", "Force feedback", NULL,
       "The drive board, as the pad's rumble: Daytona USA's kicks and shakes, Sega Rally's hard turns of the "
       "wheel (a slide, a crash). A pad has no spring or friction, so the weight the wheel has is not in it.",
@@ -350,12 +368,20 @@ static int lr_option_scale(const char *v) {
          : !strcmp(v, "quadruple") ? 4 : !strcmp(v, "fullscreen") ? 0 : 2;
 }
 
+/* The light guns' off-screen border the option asks for (lightgun.h). */
+static int s_lr_gun_border = LIGHTGUN_BORDER_DEF;
+
 /* A 315-5649 wheel's pot (io_5649.h), for Sega Rally. */
 static void lr_read_wheel_options(void) {
+
     const char *v;
     if ((v = lr_var("m2hle_wheel_range"))) io5649_wheel_option("--wheel-range", v);
     if ((v = lr_var("m2hle_wheel_speed"))) io5649_wheel_option("--wheel-speed", v);
     if ((v = lr_var("m2hle_gun_flash")))   lightgun_host_option("--gun-flash", v);
+    if ((v = lr_var("m2hle_gun_border")) && lightgun_host_option("--gun-border", v))
+        s_lr_gun_border = g_lightgun_border;
+    if ((v = lr_var("m2hle_gun_reticle")))      lightgun_host_option("--gun-reticle", v);
+    if ((v = lr_var("m2hle_gun_reticle_size"))) lightgun_host_option("--gun-reticle-size", v);
     if ((v = lr_var("m2hle_ffb")))         ffb_option("--ffb-gain", v);
 }
 
@@ -476,6 +502,10 @@ static void lr_set_options(void) {
         { "m2hle_wheel_range", "Wheel: full lock; 0x58|0x30|0x40|0x4C|0x68|0x7F" },
         { "m2hle_wheel_speed", "Wheel: turn speed; 10|4|6|8|14|20|255" },
         { "m2hle_gun_flash",  "Light gun: flash on each shot; off|1|2|3|4" },
+        { "m2hle_gun_border", "Light gun: off-screen border (%); 5|4|3|2|1|0" },
+        { "m2hle_gun_reticle", "Light gun: crosshair; cross|dot|box|off" },
+        { "m2hle_gun_reticle_size", "Light gun: crosshair size (%); 100|50|75|150|200|300" },
+
         { "m2hle_ffb",        "Force feedback; 100|75|50|25|0" },
         { NULL, NULL },
     };
@@ -664,7 +694,11 @@ static bool lr_in_session(void);
  * whole frame here. In a session the pointer stays out (each board must aim
  * from the words on the wire), and the gun's buttons still count. */
 static uint32_t lr_port_gun(unsigned port) {
+    /* The off-screen border is this host's: RetroArch's lockstep (which the
+     * board's own remote test does not see) keeps to MAME's on both sides. */
+    if (port == 0) g_lightgun_border = lr_in_session() ? LIGHTGUN_BORDER_DEF : s_lr_gun_border;
     if (port > 1 || g_lr_port_device[port] != RETRO_DEVICE_LIGHTGUN || !lightgun_host_on()) return 0;
+
     const game_input_map_t *in = &g_active_profile->input;
     int p = (int)port;
     if (lr_in_session()) {

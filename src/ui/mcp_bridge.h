@@ -3010,6 +3010,8 @@ static void mcp_cmd_replay(const char *req, char *resp, int cap) {
  *   {"seek":F}, {"rewind":K}, {"undo_rewind":1}, {"advance":N} (N frames on)
  *   {"recording":0|1}, {"keys_too":0|1}, {"cut":0|1}, {"pad":HELD}, {"once":BITS}
  *   {"aim":"P,X,Y[,OFF]"}  the pad aims gun P at X,Y (0..1); {"aim":"P"} lets it go
+ *   {"gun_border":T}  the guns' off-screen border, tenths of a % (50, MAME's, to 0)
+
  *   {"edit":F,"xor":BITS}, {"insert":F}, {"delete":F}, {"undo":1}, {"redo":1}
  *   {"branch_save":I}, {"branch_load":I}, {"save":PATH}, {"load":PATH}
  *   {"from":F,"count":N}  the frames' held words and checks in the answer */
@@ -3033,6 +3035,9 @@ static const char *mcp_tas_do(const char *req) {
     if (mcp_json_get_u32(req, "cut", &v))               g_tas.cut = v != 0;
     if (mcp_json_get_u32(req, "pad", &v))               g_tas.pad.hold = v;
     if (mcp_json_get_u32(req, "once", &v))              g_tas.pad.once = v;
+    if (mcp_json_get_u32(req, "gun_border", &v))        /* tenths of a %, lightgun.h */
+        g_lightgun_border = v > LIGHTGUN_BORDER_DEF ? LIGHTGUN_BORDER_DEF : (int)v;
+
     if (mcp_json_get_str(req, "aim", path, sizeof path)) {
         int p = -1, off = 0;
         float x = 0.5f, y = 0.5f;

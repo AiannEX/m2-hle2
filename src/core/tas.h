@@ -633,7 +633,8 @@ static inline tas_input_t tas__pad_input(void) {
             if (!g_tas.pad.aim_on[p]) continue;
             uint8_t *q = in.gun + p * 12;
             uint32_t x = lightgun__fbits(g_tas.pad.aim_x[p]), y = lightgun__fbits(g_tas.pad.aim_y[p]);
-            q[0] = 1; q[1] = g_tas.pad.aim_off[p] ? 1 : 0; q[2] = q[3] = 0;
+            q[0] = 1; q[1] = g_tas.pad.aim_off[p] ? 1 : 0; q[3] = 0;   /* q[2]: the host's border */
+
             for (int i = 0; i < 4; i++) { q[4 + i] = (uint8_t)(x >> (8 * i)); q[8 + i] = (uint8_t)(y >> (8 * i)); }
         }
     }

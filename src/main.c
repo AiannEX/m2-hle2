@@ -1547,6 +1547,7 @@ static void draw_windows(void) {
     replay_ui_window(&state.emu, state.file_dialog);
     tas_ui_dialog(&state.emu, state.file_dialog);
     tas_ui_window(&state.emu);
+    lightgun_ui_dialog(state.file_dialog);
 
     draw_board_windows();
     if (state.show_bus_stats)   draw_bus_stats_window();
@@ -2259,6 +2260,7 @@ sapp_desc sokol_main(int argc, char* argv[]) {
     /* The record switch is the player's (replay.cfg); a headless run keeps
      * only what its command line says, as the graders boot blank. */
     if (!g_headless && !g_replay_cli_set) replay_settings_load();
+    if (!g_headless) lightgun_ui_settings_load();   /* the crosshair (Pinboard #1496) */
     scripts_setup();
     if (g_headless) exit(headless_main());
     /* Capture mode wants the game moving, not a first frame held on pause. */

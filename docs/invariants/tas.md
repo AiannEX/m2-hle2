@@ -8,7 +8,8 @@ Using it:
 
 - TAS > *Start a movie here* takes the board as it is; *from power-on* resets it first (the start waits for the reset: `start_req` in `tas_pump`). *Open movie...* / *Save movie...* read and write `.m2tas` files.
 - F10 advances a frame (pauses while it runs). F11 rewinds a frame and repeats while held. Shift+F11 undoes the rewind, going forward to where the run of rewinds began. F12 turns recording on and off.
-- The virtual pad: a click holds a button until clicked again; a right-click holds it for the next frame only. *Keys and pads too* records the host's own buttons alongside. On a gun game, the aim box sets where each gun points (left button P1, right P2).
+- The virtual pad: a click holds a button until clicked again; a right-click holds it for the next frame only. *Keys and pads too* records the host's own buttons alongside. On a gun game, the aim box sets where each gun points (left button P1, right P2), and *Off-screen border* how near the edge an aim counts as off the screen (MAME's 5 % down to none, Pinboard #1493); each frame records the border in its GUN payload, so changing it is an edit like any other.
+
 - Branches 1-9 keep whole movies (a best run so far). *Undo* / *Redo* take back an edit, a take that wrote over the movie, or a branch load. In the piano roll, a click on a cell toggles that button in that frame, and a click on a frame number goes there.
 
 The rules that keep it exact:
