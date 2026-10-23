@@ -893,7 +893,10 @@ trusted.
 `tools/gen-scsp-dsp.py` compiles the DSP programs listed in
 `tools/scsp-dsp-programs.txt` to C (`src/board/scsp_dsp_known.h`); a game whose
 program is not listed runs on the interpreter. `scsp_dsp_test` holds each
-compiled program against the reference step.
+compiled program against the reference step. A compiled program checks its delay
+ring against the end of sound RAM once a sample (`ring_ok`) and reads and writes
+the ring directly inside it; a ring past the end takes `scsp_ram_w/ww` as the
+interpreter does (#1474, PERF-PROFILE.md).
 
 ### Over a long session it drifts, and 70 seconds does not show it
 

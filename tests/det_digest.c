@@ -969,6 +969,9 @@ int main(int argc, char **argv) {
             (unsigned long long)snd_out_n, (unsigned long long)snd_out_hash,
             (unsigned long long)fnv(FNV0, g_sound.ram, sizeof g_sound.ram),
             sound_thread_on() ? "sound thread" : "one thread", (unsigned long long)g_emu_times.sound_jobs);
+    fprintf(stderr, "sound: chip syncs %llu, single-slot catch-ups %llu, lockstep samples %llu\n",
+            (unsigned long long)g_sound.scsp.syncs, (unsigned long long)g_sound.scsp.catches,
+            (unsigned long long)g_scsp_coupled_ticks);
     fprintf(stderr, "sound: %s; i960 commands %u, bytes that waited a slice %llu, midi drops %u\n",
             g_shle.on ? "driver in C (--sound-hle)" : "68000", g_sound.code_n,
             (unsigned long long)g_sound.midi_holds, g_sound.scsp.mi_drops);

@@ -112,9 +112,11 @@ def emit_step(st, p):
             a += ' + 1u'
         s.append('addr = ((((uint32_t)%s) & %s) + rbp) << 1;' % (a, '0xFFFFu' if table else 'rbl_mask'))
         if mrd:
-            s.append('memval = %s;' % ('scsp_ram_w(s, addr) << 8' if nofl else 'scsp_dsp_unpack(scsp_ram_w(s, addr))'))
+            s.append('memval = %s;' % ('scsp_dsp_ring_rd(s, ram, ring_ok, addr) << 8' if nofl
+                                        else 'scsp_dsp_unpack(scsp_dsp_ring_rd(s, ram, ring_ok, addr))'))
         if mwt:
-            s.append('scsp_ram_ww(s, addr, %s);' % ('(uint16_t)(shifted >> 8)' if nofl else 'scsp_dsp_pack(shifted)'))
+            s.append('scsp_dsp_ring_wr(s, ram, ring_ok, addr, %s);' % ('(uint16_t)(shifted >> 8)' if nofl
+                                                                      else 'scsp_dsp_pack(shifted)'))
     if adrl:
         s.append('adrs = %s;' % ('(uint32_t)((shifted >> 12) & 0xFFF)' if sh == 3 else '(uint32_t)(inputs >> 16)'))
     if ewt:
@@ -131,15 +133,23 @@ def emit_program(prog):
             run = st
             break
     name = 'scsp_dsp_prog_' + prog['name']
+    # The widest delay-memory address the program forms: rbp + rbl_mask for ring
+    # steps, rbp + 0xFFFF for TABLE steps. One bounds check per sample covers all
+    # of them (scsp_dsp_ring_rd/wr), in place of one per access.
+    span = '0xFFFFu' if any((words[st * 4 + 2] >> 15) & 1 and (words[st * 4 + 2] >> 13) & 3
+                            for st in range(run)) else 'rbl_mask'
     out = ['static void %s(scsp_t *s) {' % name,
            '    scsp_dsp_t *d = &s->dsp;',
            '    int32_t *mems = d->mems, *temp = d->temp;',
            '    int16_t efreg[16] = {0};',
            '    const uint32_t dec = d->dec, rbl_mask = d->rbl - 1, rbp = d->rbp << 12;',
+           '    uint8_t *ram = s->ram;',
+           '    const int ring_ok = ((rbp + %s) << 1) + 1 < s->ram_size;' % span,
            '    int32_t acc = 0, memval = 0, frc = 0, yreg = 0, inputs, tr, b, x, y, shifted;',
            '    uint32_t adrs = 0, addr;',
            '    int64_t v;',
-           '    (void)frc; (void)yreg; (void)adrs; (void)addr; (void)memval; (void)rbl_mask; (void)rbp;']
+           '    (void)frc; (void)yreg; (void)adrs; (void)addr; (void)memval; (void)rbl_mask; (void)rbp;',
+           '    (void)ram; (void)ring_ok;']
     for st in range(run):
         out.append(emit_step(st, words[st * 4:st * 4 + 4]))
     out.append('    memcpy(d->efreg, efreg, sizeof d->efreg);')
@@ -172,6 +182,22 @@ def generate():
  */
 #ifndef SCSP_DSP_KNOWN_H
 #define SCSP_DSP_KNOWN_H
+
+/*
+ * Delay-memory access. A program's ring (RBP, RBL) is checked against the end
+ * of RAM once per sample (ring_ok); within it the accesses are the plain
+ * big-endian word reads and writes scsp_ram_w/ww make, without their per-access
+ * bounds test. A ring past the end of RAM takes the checked path, as before.
+ * The largest address a ring can reach (RBP 0x3F << 12, plus 0xFFFF, doubled)
+ * is below the 1 MB mask, so the mask is never needed on the fast path.
+ */
+static inline uint16_t scsp_dsp_ring_rd(const scsp_t *s, const uint8_t *ram, int ok, uint32_t a) {
+    return ok ? (uint16_t)((ram[a] << 8) | ram[a + 1]) : scsp_ram_w(s, a);
+}
+static inline void scsp_dsp_ring_wr(scsp_t *s, uint8_t *ram, int ok, uint32_t a, uint16_t v) {
+    if (ok) { ram[a] = (uint8_t)(v >> 8); ram[a + 1] = (uint8_t)v; }
+    else scsp_ram_ww(s, a, v);
+}
 
 %s
 

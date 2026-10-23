@@ -222,7 +222,6 @@ static int  s_irq_baseline_depth = 0;
  * (game_quirks_t.irq_vectors), and the slices it has been in service for. */
 static bool s_irq_from_table     = false;
 static int  s_irq_slices         = 0;
-static uint64_t s_timer_cycles_seen = 0;   /* cpu->cycles the board's clock has been given */
 /* The slice ended on a vblank: one video frame of the board ran. */
 static volatile int g_vblank_edge = 0;
 
@@ -265,7 +264,8 @@ static inline void emu_board_reset_state(void) {
     s_irq_baseline_depth = 0;
     s_irq_from_table     = false;
     s_irq_slices         = 0;
-    s_timer_cycles_seen  = 0;   /* install_fn put cpu->cycles back to 0 */
+    g_irqt_seen          = 0;   /* install_fn put cpu->cycles back to 0 */
+    g_irqt_given         = 0;
     g_vblank_edge        = 0;
     g_versus_result      = 0;
     g_replay_stage_pin   = -1;
@@ -293,7 +293,7 @@ static inline savestate_emu_t emu_state_latches(const emu_thread_ctx_t *ctx) {
     savestate_emu_t e;
     memset(&e, 0, sizeof e);
     e.total_steps        = ctx->total_steps;
-    e.timer_cycles_seen  = s_timer_cycles_seen;
+    e.timer_cycles_seen  = g_irqt_seen;
     e.frame_clock_sample = g_frame_clock.sample;
     e.frame_clock_frame  = g_frame_clock.frame;
     e.irq_in_service     = s_irq_in_service;
@@ -310,7 +310,8 @@ static inline savestate_emu_t emu_state_latches(const emu_thread_ctx_t *ctx) {
 
 static inline void emu_state_put_latches(emu_thread_ctx_t *ctx, const savestate_emu_t *e) {
     ctx->total_steps     = e->total_steps;
-    s_timer_cycles_seen  = e->timer_cycles_seen;
+    g_irqt_seen          = e->timer_cycles_seen;   /* pending is whole between slices */
+    g_irqt_given         = e->timer_cycles_seen;
     s_irq_in_service     = e->irq_in_service != 0;
     s_irq_baseline_depth = e->irq_baseline_depth;
     s_irq_from_table     = e->irq_from_table != 0;
@@ -575,10 +576,12 @@ static inline void emu_timers_slice_begin(emu_thread_ctx_t *ctx) {
     i960_cpu_t *cpu = ctx->cpu;
     /* A board loaded or reset by a host that does not call
      * emu_board_reset_state starts its count again under us. */
-    if (cpu->cycles < s_timer_cycles_seen) s_timer_cycles_seen = cpu->cycles;
-    g_irqt.pending += (int64_t)(cpu->cycles - s_timer_cycles_seen);
-    s_timer_cycles_seen = cpu->cycles;
+    irqt_sync();
+    if (cpu->cycles < g_irqt_seen) g_irqt_seen = cpu->cycles;
+    g_irqt.pending += (int64_t)(cpu->cycles - g_irqt_seen);
+    g_irqt_seen = g_irqt_given = cpu->cycles;
     irqt_flush();
+    irqt__due();
 }
 
 /* After each instruction: count its cycles, and take an interrupt as soon as
@@ -586,8 +589,8 @@ static inline void emu_timers_slice_begin(emu_thread_ctx_t *ctx) {
  * (emu_offer_sound) and is left to them. */
 static inline void emu_timers_after_step(emu_thread_ctx_t *ctx) {
     i960_cpu_t *cpu = ctx->cpu;
-    g_irqt.pending += (int64_t)(cpu->cycles - s_timer_cycles_seen);
-    s_timer_cycles_seen = cpu->cycles;
+    g_irqt_seen = cpu->cycles;
+    irqt_sync();
     if (g_irqt.pending >= g_irqt.horizon) irqt_flush();
     if (!s_irq_in_service && (g_irqt.intreq & g_irqt.intena & 0x03FFu) && g_active_profile)
         emu_service_irq(ctx);
@@ -595,13 +598,25 @@ static inline void emu_timers_after_step(emu_thread_ctx_t *ctx) {
 
 /* The same on the run loop's fast path, where no handler is in service
  * (entering one bumps the attention word, which sends the loop slow) and the
- * profile is the slice's: two loads an instruction fewer. */
-static inline void emu_timers_after_step_fast(emu_thread_ctx_t *ctx, i960_cpu_t *cpu, bool profile) {
-    g_irqt.pending += (int64_t)(cpu->cycles - s_timer_cycles_seen);
-    s_timer_cycles_seen = cpu->cycles;
+ * profile is the slice's. Between events an instruction only moves the
+ * boundary and compares it with g_irqt_due (irq_timer.h); the work is here.
+ * pending was a load, an add and a store an instruction, and the interrupt
+ * test two loads more. */
+static MEM_NOINLINE void emu_timers_due(emu_thread_ctx_t *ctx, bool profile) {
+    irqt_sync();
     if (g_irqt.pending >= g_irqt.horizon) irqt_flush();
     if ((g_irqt.intreq & g_irqt.intena & 0x03FFu) && profile)
         emu_service_irq(ctx);
+}
+
+/* True when it did that work, the only part of the fast path that can move
+ * the attention word. */
+static I960_HOT_INLINE bool emu_timers_after_step_fast(emu_thread_ctx_t *ctx, i960_cpu_t *cpu, bool profile) {
+    uint64_t c = cpu->cycles;
+    g_irqt_seen = c;
+    if (M2_LIKELY((int64_t)c < g_irqt_due)) return false;
+    emu_timers_due(ctx, profile);
+    return true;
 }
 
 /* ---- The sound board against the board's clock ---------------------------
@@ -930,6 +945,7 @@ static inline void emu_slice_body(emu_thread_ctx_t *ctx) {
      * its inlining limits on the handheld -- mem_fetch2 became a call per
      * instruction, and the two-loop version ran 5% MORE instructions. */
     const bool     profile = g_active_profile != NULL;
+    const bool     bt      = g_i960_bt_on;   /* set by emu_slice_begin, fixed for the slice */
     int      i;
     uint64_t steps = 0;
     uint32_t attn  = g_emu_attn;
@@ -959,7 +975,7 @@ static inline void emu_slice_body(emu_thread_ctx_t *ctx) {
          * slow path, or with a breakpoint armed, it is offered only this one,
          * so every check below still sees each instruction. */
         if (M2_UNLIKELY(i960_step_core(cpu, bus,
-                                       (slow || bps) ? 1u : (uint32_t)(max_steps - i)) != 0)) break;
+                                       (slow || bps) ? 1u : (uint32_t)(max_steps - i), bt) != 0)) break;
         steps++;
         if (M2_UNLIKELY(slow || g_emu_attn != attn)) {
             emu_slice_loop_t l = { i, steps, attn, bps, slow };
@@ -968,13 +984,14 @@ static inline void emu_slice_body(emu_thread_ctx_t *ctx) {
             if (stop) break;
         } else {
             /* Fast: no handler in service (entering one bumps the word). */
-            emu_timers_after_step_fast(ctx, cpu, profile);
-            if (g_emu_attn != attn) {      /* flagged by the timer service */
+            if (M2_UNLIKELY(emu_timers_after_step_fast(ctx, cpu, profile))
+                    && g_emu_attn != attn) {      /* flagged by the timer service */
                 slow = true;
                 if (emu_slice_break_flag()) break;
             }
         }
     }
+    irqt_sync();   /* pending whole again: savestates, rollback and hosts read it */
     g_emu_times.loop_us += emu_now_us() - loop_t0
                          - (g_emu_times.sound_inline_us + g_emu_times.sound_wait_us - loop_snd);
     g_emu_times.steps   += steps;

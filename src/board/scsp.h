@@ -998,11 +998,26 @@ static inline void scsp_latch(scsp_t *s) {                /* the slot monitor's 
     s->mslc_data = (uint16_t)((ca << 7) | (sgc << 5) | eg);
 }
 
-/* scsp_slot_wave for scsp_slot_run_pcm: PCM only, no FM, RAM read in place */
-static inline int32_t scsp_pcm_wave(const scsp_t *s, const uint8_t *ram, uint32_t ram_size, uint32_t sa,
-                                    uint32_t cur, uint32_t nxt, int pcm8) {
+#if defined(_MSC_VER) && !defined(__clang__)
+#define SCSP_FORCE_INLINE __forceinline
+#else
+#define SCSP_FORCE_INLINE inline __attribute__((always_inline))
+#endif
+
+/* scsp_slot_wave for scsp_slot_run_pcm: PCM only, no FM, RAM read in place.
+ * `inside`: both reads are inside RAM (scsp_pcm_run_inside), no wrap or test. */
+static SCSP_FORCE_INLINE int32_t scsp_pcm_wave(const scsp_t *s, const uint8_t *ram, uint32_t ram_size, uint32_t sa,
+                                               uint32_t cur, uint32_t nxt, int pcm8, int inside) {
     int32_t frac = (int32_t)(cur & ((1u << SCSP_SHIFT) - 1)), sample;
-    if (pcm8) {
+    if (inside && pcm8) {
+        int32_t p1 = (int8_t)ram[sa + (cur >> SCSP_SHIFT)], p2 = (int8_t)ram[sa + (nxt >> SCSP_SHIFT)];
+        sample = ((p1 * 256) * ((1 << SCSP_SHIFT) - frac) + (p2 * 256) * frac) >> SCSP_SHIFT;
+    } else if (inside) {
+        uint32_t a1 = sa + ((cur >> (SCSP_SHIFT - 1)) & ~1u), a2 = sa + ((nxt >> (SCSP_SHIFT - 1)) & ~1u);
+        int32_t p1 = (int16_t)(uint16_t)(ram[a1] << 8 | ram[a1 + 1]);
+        int32_t p2 = (int16_t)(uint16_t)(ram[a2] << 8 | ram[a2 + 1]);
+        sample = (p1 * ((1 << SCSP_SHIFT) - frac) + p2 * frac) >> SCSP_SHIFT;
+    } else if (pcm8) {
         uint32_t a1 = (sa + (cur >> SCSP_SHIFT)) & 0xFFFFFu, a2 = (sa + (nxt >> SCSP_SHIFT)) & 0xFFFFFu;
         int32_t p1 = (int8_t)(a1 < ram_size ? ram[a1] : 0), p2 = (int8_t)(a2 < ram_size ? ram[a2] : 0);
         sample = ((p1 * 256) * ((1 << SCSP_SHIFT) - frac) + (p2 * 256) * frac) >> SCSP_SHIFT;
@@ -1028,6 +1043,78 @@ static inline void scsp_pcm_loop(scsp_slot_t *sl, int lpctl, uint32_t *cur, uint
     }
 }
 
+/* Whether every byte a run of n samples can read lies inside sound RAM, so
+ * scsp_pcm_wave needs neither its 20-bit wrap nor its bound tests. cur and
+ * nxt only climb, by step a sample (nxt at most a sample past cur), except at
+ * a forward loop's end, which takes them back by lea - lsa: so the top of the
+ * run is under the start plus n steps, if lsa <= lea. */
+static inline int scsp_pcm_run_inside(const scsp_t *s, const scsp_slot_t *sl, uint32_t n, int pcm8, int lpctl) {
+    if (lpctl && SCSP_LSA(sl) > SCSP_LEA(sl)) return 0;
+    uint64_t top = (uint64_t)sl->cur + (uint64_t)(n - 1) * sl->step + (1u << SCSP_SHIFT);
+    if (sl->nxt > top) top = sl->nxt;
+    const uint64_t end = (uint64_t)SCSP_SA(sl) + (pcm8 ? (top >> SCSP_SHIFT) : ((top >> SCSP_SHIFT) << 1) + 1);
+    return end < s->ram_size && end <= 0xFFFFFu;
+}
+
+/* scsp_slot_run_pcm for the two envelopes nearly every sample is in (STF's
+ * attract: release 51%, decay 2 with D2R = 0 49%), with no LFO and no SDIR.
+ * Neither leaves its state inside a run: decay 2 with D2R = 0 holds its level
+ * (scsp_eg_update returns it unchanged), and release falls by rr a sample
+ * until it reaches 0 and stops the voice. So the envelope's gain is a constant
+ * of the run, or one table load a sample off a level kept here, and the call,
+ * the state switch and the reloads of vol and active go. The arithmetic and
+ * its order are scsp_slot_run_pcm's; pcm8 and release are constants at each
+ * call, so each of the four is compiled on its own. With `inside` (no SBCTL,
+ * no STWINH, the whole run inside RAM: STF's attract always) the run is
+ * compiled once more without those tests. */
+static SCSP_FORCE_INLINE uint32_t scsp_pcm_run_eg(scsp_t *s, scsp_slot_t *sl, unsigned i, uint32_t k,
+                                                   uint32_t to, int pcm8, int release, int inside) {
+    const int32_t  gm = sl->g_mixs, gl = sl->g_dl, gr = sl->g_dr, gs = sl->g_sous;
+    const int      sbctl = inside ? 0 : (int)SCSP_SBCTL(sl), lpctl = (int)SCSP_LPCTL(sl);
+    const int      stwinh = inside ? 0 : SCSP_STWINH(sl) != 0;
+    const uint32_t sa = SCSP_SA(sl), lsa = SCSP_LSA(sl), lea = SCSP_LEA(sl), step = sl->step;
+    const uint8_t *ram = s->ram;
+    const uint32_t ram_size = s->ram_size;
+    int32_t       *mixs = &s->acc_mixs[0][SCSP_ISEL(sl)];
+    int32_t       *acc_l = s->acc_l, *acc_r = s->acc_r;
+    /* the sound-stack entry for even and odd k (scsp_slot_run_pcm's index) */
+    int16_t *const sous0 = &s->sous[(s->sous_ptr + i) & 63], *const sous1 = &s->sous[((s->sous_ptr ^ 32u) + i) & 63];
+    const int32_t  rr = sl->rr;
+    int32_t        vol = sl->vol, eg = scsp_eg_table[vol >> SCSP_EG_SHIFT];
+    uint32_t       cur = sl->cur, nxt = sl->nxt;
+    int            live = 1;
+    for (; k < to; k++) {
+        int32_t sample = scsp_pcm_wave(s, ram, ram_size, sa, cur, nxt, pcm8, inside);
+        if (sbctl & 1) sample ^= 0x7FFF;
+        if (sbctl & 2) sample = (int16_t)(sample ^ 0x8000);
+
+        cur += step;
+        nxt = cur + (1u << SCSP_SHIFT);
+        const uint32_t ad0 = cur >> SCSP_SHIFT, ad1 = nxt >> SCSP_SHIFT;
+        if (lpctl == 0) {                       /* scsp_pcm_loop; the stop waits for the end of the run */
+            if ((ad0 >= lsa && ad0 >= lea) || (ad1 >= lsa && ad1 >= lea)) live = 0;
+        } else {
+            if (ad0 >= lea) cur = (lsa << SCSP_SHIFT) + (cur - (lea << SCSP_SHIFT));
+            if (ad1 >= lea) nxt = (lsa << SCSP_SHIFT) + (nxt - (lea << SCSP_SHIFT));
+        }
+
+        if (release) {                          /* scsp_eg_update's SCSP_RELEASE */
+            vol -= rr;
+            if (vol <= 0) { vol = 0; live = 0; }
+            eg = scsp_eg_table[vol >> SCSP_EG_SHIFT];
+        }
+        sample = (int32_t)(((int64_t)sample * eg) >> SCSP_SHIFT);
+        if (!stwinh) *((k & 1u) ? sous1 : sous0) = (int16_t)((sample * gs) >> (SCSP_SHIFT + 1));
+        mixs[k * 16] += (sample * gm) >> (SCSP_SHIFT - 2);
+        acc_l[k] += (sample * gl) >> SCSP_SHIFT;
+        acc_r[k] += (sample * gr) >> SCSP_SHIFT;
+        if (!live) { k++; break; }
+    }
+    sl->cur = cur; sl->nxt = nxt; sl->vol = vol;
+    if (!live) scsp_slot_stop(sl, 0);
+    return k;
+}
+
 /* The common voice run alone for a stretch: PCM out of sound RAM, played
  * forwards with no loop or a forward loop, no FM. The same arithmetic as
  * scsp_slot_sample, in the same order, with the slot's registers read once
@@ -1042,11 +1129,21 @@ static uint32_t scsp_slot_run_pcm(scsp_t *s, scsp_slot_t *sl, unsigned i, uint32
     const uint32_t sa = SCSP_SA(sl), lsa = SCSP_LSA(sl), lea = SCSP_LEA(sl), base_step = sl->step;
     const uint8_t *ram = s->ram;
     const uint32_t ram_size = s->ram_size;
+    if (!plfo && !alfo && !sdir &&
+        (sl->state == SCSP_RELEASE || (sl->state == SCSP_DECAY2 && SCSP_D2R(sl) == 0))) {
+        const int release = sl->state == SCSP_RELEASE;
+        if (!sbctl && !stwinh && scsp_pcm_run_inside(s, sl, to - k, pcm8, lpctl)) {
+            if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 1);
+            return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 1);
+        }
+        if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 0) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 0);
+        return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 0) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 0);
+    }
     uint32_t cur = sl->cur, nxt = sl->nxt;
     for (; k < to; k++) {
         uint32_t step = base_step;
         if (plfo) step = (uint32_t)(((int64_t)step * scsp_lfo_p(&sl->plfo)) >> SCSP_SHIFT);
-        int32_t sample = scsp_pcm_wave(s, ram, ram_size, sa, cur, nxt, pcm8);
+        int32_t sample = scsp_pcm_wave(s, ram, ram_size, sa, cur, nxt, pcm8, 0);
         if (sbctl & 1) sample ^= 0x7FFF;
         if (sbctl & 2) sample = (int16_t)(sample ^ 0x8000);
 
@@ -1607,8 +1704,10 @@ static inline void scsp_timers(scsp_t *s, uint64_t now) {
 /* A sample boundary has passed: the chip owes one more sample. It makes it
  * now only when it has to (see "The chip's own time"); the host calls
  * scsp_sync at the end of a run, and the samples go to s->sink in order. */
+static uint64_t g_scsp_coupled_ticks;                 /* boundaries made in lockstep (coupled) */
 static inline void scsp_tick(scsp_t *s) {
     s->owed++;
+    g_scsp_coupled_ticks += s->coupled;
     s->latch_slot  = s->mslc;
     s->latch_ok    = 1;
     s->latch_fresh = 0;
