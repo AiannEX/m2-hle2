@@ -266,6 +266,16 @@ static inline void tas_ui_aim(void) {
         igText("%.3f, %.3f", g_tas.pad.aim_x[p], g_tas.pad.aim_y[p]);
         igPopID();
     }
+    /* The off-screen border (lightgun.h): MAME's 5 % turns a shot at the
+     * picture's edge into a reload. Recorded with each frame's aim. */
+    float border = (float)g_lightgun_border / 10.0f;
+    igSetNextItemWidth(160);
+    if (igSliderFloatEx("Off-screen border", &border, 0.0f, LIGHTGUN_BORDER_DEF / 10.0f, "%.1f %%", 0))
+        g_lightgun_border = lightgun_clamp((int)(border * 10.0f + 0.5f), 0, LIGHTGUN_BORDER_DEF);
+    igSetItemTooltip("How near the picture's edge an aim counts as off the screen (a reload).\n"
+                     "5 %% is MAME's; a real gun sees the picture to its edge. The border is\n"
+                     "recorded with each frame's aim, so the movie plays back the same.");
+
     ImVec2 size = { 248, 186 };
     ImVec2 o = igGetCursorScreenPos();
     igInvisibleButton("##aim", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);

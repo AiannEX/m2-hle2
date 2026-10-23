@@ -108,9 +108,17 @@ static int  g_lightgun_flash;              /* frames of white a pull draws; 0 = 
 static int  s_lightgun_flash_left;
 static bool s_lightgun_flash_was[LIGHTGUN_PLAYERS];
 
-/* --gun-flash N (0..8 frames; "on" is 2, "off" 0): true when `opt` is it. */
+/* --gun-flash N (0..8 frames; "on" is 2, "off" 0), or --gun-border P (the
+ * off-screen border, 0..5 % of the picture, lightgun.h; "mame" is 5): true
+ * when `opt` is one. */
 static inline bool lightgun_host_option(const char *opt, const char *val) {
+    if (!strcmp(opt, "--gun-border")) {
+        double pc = !strcmp(val, "mame") ? 5.0 : strtod(val, NULL);
+        g_lightgun_border = lightgun_clamp((int)(pc * 10.0 + 0.5), 0, LIGHTGUN_BORDER_DEF);
+        return true;
+    }
     if (strcmp(opt, "--gun-flash") != 0) return false;
+
     int n = !strcmp(val, "on") ? 2 : !strcmp(val, "off") ? 0 : (int)strtol(val, NULL, 0);
     g_lightgun_flash = n < 0 ? 0 : n > LIGHTGUN_HOST_FLASH_MAX ? LIGHTGUN_HOST_FLASH_MAX : n;
     if (!g_lightgun_flash) s_lightgun_flash_left = 0;

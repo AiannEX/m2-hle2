@@ -24,6 +24,8 @@
 const game_profile_t *g_active_profile = &sfight_profile;
 
 static int g_fail = 0;
+static int test_remote_yes(void) { return 1; }
+
 #define CHECK(cond, msg) do { \
     if (!(cond)) { printf("FAIL: %s\n", msg); g_fail++; } \
     else         { printf("ok:   %s\n", msg); } \
@@ -218,6 +220,40 @@ int main(void) {
         g_lightgun_held_fn = NULL;
         g_lightgun_controls[0].trigger = g_lightgun_controls[1].trigger = 0;
         g_active_profile = was;
+    }
+
+    /* ---- (A2b) the off-screen border (Pinboard #1493): MAME's 5 %, or the host's ---- */
+    {
+        g_lightgun_range[0] = (lightgun_range_t){ 0, 1000, 500, 0, 1000, 500 };
+        g_lightgun.x[0] = 960; g_lightgun.y[0] = 500;
+        CHECK(lightgun_offscreen(0, 0), "960 of 1000 is in MAME's 5 % border");
+        CHECK(lightgun_host_option("--gun-border", "1") && g_lightgun_border == 10 && !lightgun_offscreen(0, 0),
+              "--gun-border 1: 960 is on the picture");
+        uint8_t gun[LIGHTGUN_FEED_BYTES];
+        lightgun_latch(gun);
+        lightgun_unlatch();
+        CHECK(gun[2] == 11 && gun[14] == 11, "the border rides in the GUN record's byte 2");
+        lightgun_host_option("--gun-border", "mame");
+        lightgun_feed_put(gun);
+        CHECK(!lightgun_offscreen(0, 0), "a fed record's border is the one the board reads");
+        gun[2] = 0;
+        lightgun_feed_put(gun);
+        CHECK(lightgun_offscreen(0, 0), "a record from before #1493 (byte 0) keeps MAME's 5 %");
+        lightgun_unlatch();
+        lightgun_host_option("--gun-border", "0");
+        g_lightgun.x[0] = 999;
+        bool on999 = !lightgun_offscreen(0, 0);
+        g_lightgun.x[0] = 1000;
+        CHECK(on999 && lightgun_offscreen(0, 0), "--gun-border 0: only the very edge is off the picture");
+        g_lightgun.x[0] = 960;
+        g_lightgun_remote_fn = test_remote_yes;
+        lightgun_latch(gun);
+        lightgun_unlatch();
+        CHECK(lightgun_offscreen(0, 0) && gun[2] == 0, "a board fed from the network keeps to MAME's 5 %");
+        g_lightgun_remote_fn = NULL;
+        lightgun_host_option("--gun-border", "mame");
+        g_lightgun_range[0] = (lightgun_range_t){ 0 };
+        g_lightgun.x[0] = g_lightgun.y[0] = 0;
     }
 
     /* ---- (A3) a four-player cabinet's side switch (Air Walkers, Pinboard #1063) ---- */
