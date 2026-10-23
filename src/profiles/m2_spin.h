@@ -93,6 +93,7 @@ static inline int m2_spin_skip(i960_cpu_t *cpu, memory_bus_t *bus) {
     if (!i960_cond(cc, cop & 7u)) { reg_write(cpu, dst, old); return 1; }   /* it leaves */
 
     int64_t c = (int64_t)i960_cycle_cost(ld) + i960_cycle_cost(cb);
+    irqt_sync();   /* pending lags the run loop's boundary (irq_timer.h) */
     int64_t k = (g_irqt.horizon - g_irqt.pending - 1) / c;
     if (k > (int64_t)(g_hle_room / 2u)) k = g_hle_room / 2u;
     if (k < 1) { reg_write(cpu, dst, old); return 1; }

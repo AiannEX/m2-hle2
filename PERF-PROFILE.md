@@ -75,6 +75,8 @@ In order of what it would save, as #399 found it (#403 below took the first two)
 3. **The i960's per-instruction bookkeeping**: `i960_cycle_cost` 1.6%, `hle_check_synced` 1.3%,
    `emu_timers_after_step_fast` 1.2%. Together about an eighth of the i960's time, paid on every
    instruction whether or not a hook, a timer or a cost table entry has anything to say.
+   #1477 took the timer part and the `g_i960_bt_on` test (below); the cost lookup and the hook
+   bit are the two inputs that really change with the instruction.
 4. **The 68000's SCSP traffic**: register reads that make the slots catch up (`scsp_r16` →
    `scsp_latch_now`, 6%) and writes that sync the chip (`scsp_write`, 8.3%). By design (CLAUDE.md,
    "The SCSP makes its samples late"); STF's driver reads the monitor every ~5 samples.
@@ -115,6 +117,25 @@ What was looked at and left:
   change there is a board change, not a host one.
 - **The zkey of a culled face.** `geo3d_flat_depth` has to run for every face (a culled face
   still sets the previous z), and the key itself is a few integer operations.
+
+## What #1477 did with the per-instruction bookkeeping
+
+Of what the fast path looked at after each instruction, only the opcode (its cost) and the IP
+(the hook filter's bit) change with the instruction. The rest changes only at events:
+
+- `g_i960_bt_on` is fixed for a slice (only daytona, srallyc and vcop set it). The loop reads it
+  once and hands it to `i960_step_core`; a global was reloaded after every store.
+- The timers: `pending` was a load, an add and a store an instruction, then the horizon test and
+  the `intreq & intena` test two loads more. Now the loop stores the boundary and compares it with
+  one precomputed cycle count, `g_irqt_due`, where pending reaches the horizon (or 0 while a
+  board interrupt is up), and `pending` is brought up only when something reads it
+  (memory-bus.md has the rule). The attention word is re-read only when that work ran.
+
+Attract (`arc_bench --sound --frames 3000`, `perf stat -e instructions:u`, the whole process):
+50.395G → 49.247G instructions, −2.3%, the same to 30K over two runs; the sound thread does not
+change, so it is all the i960's. Bit-exact: `det_digest` frames and sound hashes on attract (3000)
+and the scripted fight (4500), `ab-builds --sound` at 600/1800/3000 on sfight and at 600/1800
+on the board-timing games.
 
 ## What #406/#408 did with it, and the handheld
 

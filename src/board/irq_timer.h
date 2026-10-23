@@ -76,10 +76,39 @@ typedef struct {
 
 static irq_timer_t g_irqt = {0};
 
+/* ---- The run loop's side of pending (emu_thread.h) -----------------------
+ *
+ * g_irqt_seen is the i960's cycle count at the last instruction boundary; the
+ * run loop writes it after every instruction. pending is NOT added to there:
+ * it holds the cycles up to g_irqt_given, and lags the boundary by
+ * seen - given until irqt_sync brings it up, which everything that reads it
+ * does first (irqt_flush, the hooks that skip code). The sum is the one the
+ * loop used to add an instruction at a time, so the counts tick exactly as
+ * they did.
+ *
+ * g_irqt_due is the boundary cycle count at which the loop has work: pending
+ * reaches horizon there, or 0 while a board interrupt (bits 0-9) is up and
+ * enabled. given - pending is unchanged by a sync, so it only moves when the
+ * horizon, pending's reset (a flush) or intreq/intena do, and each of those
+ * recomputes it. Until then the loop's whole check is cycles >= due (#1477). */
+static uint64_t g_irqt_seen  = 0;
+static uint64_t g_irqt_given = 0;
+static int64_t  g_irqt_due   = 0;
+
+static inline void irqt_sync(void) {
+    g_irqt.pending += (int64_t)(g_irqt_seen - g_irqt_given);
+    g_irqt_given = g_irqt_seen;
+}
+
+static inline void irqt__due(void) {
+    g_irqt_due = (g_irqt.intreq & g_irqt.intena & 0x03FFu) ? 0
+               : (int64_t)g_irqt_given + (g_irqt.horizon - g_irqt.pending);
+}
+
 /* ---- IRQ controller register access (called from memory.h) -------------- */
 
 static inline uint32_t irqt_request_read(void)        { return g_irqt.intreq; }
-static inline void     irqt_request_ack (uint32_t d)  { g_irqt.intreq &= d; }   /* write = ACK */
+static inline void     irqt_request_ack (uint32_t d)  { g_irqt.intreq &= d; irqt__due(); }   /* write = ACK */
 static inline uint32_t irqt_enable_read (void)        { return g_irqt.intena; }
 /* A write that enables the sound UART's line is where the board would take its
  * interrupt: TxRDY is already up, so the run loop offers it straight away
@@ -88,10 +117,11 @@ static volatile int g_irqt_sound_kick = 0;
 static inline void     irqt_enable_write(uint32_t d)  {
     if (d & ~g_irqt.intena & 0x0C00u) { g_irqt_sound_kick = 1; emu_attn_bump(); }
     g_irqt.intena = d;
+    irqt__due();
 }
 
 /* Assert a pending bit (from timer expiry / vblank / sound UART). */
-static inline void irqt_raise(uint32_t bit) { g_irqt.intreq |= bit; }
+static inline void irqt_raise(uint32_t bit) { g_irqt.intreq |= bit; irqt__due(); }
 
 /* The board's clock is the i960's: the timers count down by what each
  * instruction costs as it runs (i960.cycles), a timer interrupt is taken
@@ -122,6 +152,7 @@ static inline void irqt__horizon(void) {
     for (int t = 0; t < IRQT_TIMERS; t++)
         if (g_irqt.timer_run[t] && g_irqt.timer_count[t] < h) h = g_irqt.timer_count[t];
     g_irqt.horizon = h;
+    irqt__due();
 }
 
 /* ---- Timing: advance the board by `cycles` i960 cycles ------------------- */
@@ -152,6 +183,7 @@ static inline void irqt_tick(int64_t cycles) {
 
 /* Bring the counts up to the cycles run so far. */
 static inline void irqt_flush(void) {
+    irqt_sync();
     if (g_irqt.pending) {
         int64_t c = g_irqt.pending;
         g_irqt.pending = 0;
@@ -198,6 +230,7 @@ static inline void irqt_reset(void) {
     g_irqt.intena = 0;
     g_irqt_sound_kick = 0;
     g_irqt.pending = 0;
+    g_irqt_given = g_irqt_seen;
     g_irqt.vbl_phase = 0;
     g_irqt.vbl_count = 0;
     g_irqt_vblank = 0;
