@@ -31,6 +31,7 @@ The load-bearing invariants (reverse-engineered, in no datasheet, do not re-deri
 | Savestates, rewind | [savestates.md](docs/invariants/savestates.md) | `savestate.h`, `rollback.h` |
 | One-way follow | [follow.md](docs/invariants/follow.md) | `follow.h` |
 | Replays | [replays.md](docs/invariants/replays.md) | `replay.h` |
+| Tool-assisted play (TAS) | [tas.md](docs/invariants/tas.md) | `tas.h`, `tas_window.h` |
 | Netplay / RPCN | [netplay.md](docs/invariants/netplay.md) | `src/net/` |
 | Rooms of more than two | [rooms.md](docs/invariants/rooms.md) | `net/room.h` |
 | PS3 cross-play | [ps3-crossplay.md](docs/invariants/ps3-crossplay.md) | `ps3_link.h`, `rudp.h` |

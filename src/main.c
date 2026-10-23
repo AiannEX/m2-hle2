@@ -59,6 +59,7 @@
 #include "mcp_bridge.h"    /* --mcp TCP debug server (ported from m2-hle) */
 #include "netplay_window.h"  /* the RPCN netplay front-end */
 #include "replay_window.h"   /* the Replays menu and the playback window */
+#include "tas_window.h"      /* tool-assisted play (Pinboard #1462) */
 #include "kiosk.h"           /* --kiosk: chrome-free capture window + tray icon */
 #include "overlay_host.h"    /* --overlay: a plugin paints layers over the picture */
 #include "post_shader.h"     /* the CRT filter and libretro presets over the picture */
@@ -337,6 +338,7 @@ static void load_active_profile(const char *primary_zip) {
     sound_settle();   /* load_fn frees the sample ROMs the sound thread reads */
     emu_mutex_lock(&state.emu.mutex);
     replay_game_loaded();   /* a recording ends; a replay lets go of the board */
+    tas_break("another game was loaded");
     m2lua_unload();         /* the script's ROM patches come off the set going */
     emu_mutex_unlock(&state.emu.mutex);
 
@@ -419,7 +421,7 @@ static bool load_state_arg(void) {
     if (!g_load_state[0]) return true;
     emu_mutex_lock(&state.emu.mutex);
     const char *err = emu_state_load_now(&state.emu, g_load_state);
-    if (!err) follow_lead_break("state loaded");
+    if (!err) { follow_lead_break("state loaded"); tas_break("a state was loaded"); }
     emu_mutex_unlock(&state.emu.mutex);
     if (err) { LOG_ERROR("--load-state %s: %s", g_load_state, err); return false; }
     return true;
@@ -861,6 +863,7 @@ static void draw_menu_bar(void) {
     shader_ui_menu(state.file_dialog);
     menu_netplay();
     replay_ui_menu(&state.emu, state.file_dialog);
+    tas_ui_menu(&state.emu, state.file_dialog, state.romset.loaded);
     m2lua_ui_menu(&state.emu.mutex);
     menu_bar_status();
     igEndMainMenuBar();
@@ -1542,6 +1545,8 @@ static void draw_windows(void) {
     shader_ui_draw(state.file_dialog);
     replay_ui_dialog(&state.emu, state.file_dialog);
     replay_ui_window(&state.emu, state.file_dialog);
+    tas_ui_dialog(&state.emu, state.file_dialog);
+    tas_ui_window(&state.emu);
 
     draw_board_windows();
     if (state.show_bus_stats)   draw_bus_stats_window();
@@ -1888,6 +1893,7 @@ static void event(const sapp_event* ev) {
 #endif
 
     if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) return;
+    if (tas_ui_hotkey(&state.emu, ev)) return;
     event_hotkey(ev);
 }
 

@@ -3004,6 +3004,88 @@ static void mcp_cmd_replay(const char *req, char *resp, int cap) {
     if (locked) emu_mutex_unlock(&g_mcp.emu->mutex);
 }
 
+/* "tas": tool-assisted play (core/tas.h), for scripted tests of the movie.
+ *   {"start":1}  a movie from here ({"power_on":1}: from a reset)
+ *   {"stop":1}, {"resume":1} (the kept movie again, from its start)
+ *   {"seek":F}, {"rewind":K}, {"undo_rewind":1}, {"advance":N} (N frames on)
+ *   {"recording":0|1}, {"keys_too":0|1}, {"cut":0|1}, {"pad":HELD}, {"once":BITS}
+ *   {"aim":"P,X,Y[,OFF]"}  the pad aims gun P at X,Y (0..1); {"aim":"P"} lets it go
+ *   {"edit":F,"xor":BITS}, {"insert":F}, {"delete":F}, {"undo":1}, {"redo":1}
+ *   {"branch_save":I}, {"branch_load":I}, {"save":PATH}, {"load":PATH}
+ *   {"from":F,"count":N}  the frames' held words and checks in the answer */
+static const char *mcp_tas_do(const char *req) {
+    emu_thread_ctx_t *ctx = g_mcp.emu;
+    uint32_t v = 0, w = 0;
+    char path[512];
+    if (!ctx) return "no board";
+    if (mcp_json_get_u32(req, "power_on", &v) && v) {
+        const char *err = tas__busy();
+        if (!err) { g_tas.start_req = true; ctx->request_reset = 1; }
+        return err;
+    }
+    if (mcp_json_get_u32(req, "start", &v) && v)        return tas_start(ctx);
+    if (mcp_json_get_u32(req, "stop", &v) && v)         { tas_stop("asked for"); return NULL; }
+    if (mcp_json_get_u32(req, "resume", &v) && v)       return tas_resume(ctx);
+    if (mcp_json_get_str(req, "save", path, sizeof path)) return tas_save_file(path);
+    if (mcp_json_get_str(req, "load", path, sizeof path)) return tas_load_file(ctx, path, true);
+    if (mcp_json_get_u32(req, "recording", &v))         g_tas.recording = v != 0;
+    if (mcp_json_get_u32(req, "keys_too", &v))          g_tas.keys_too = v != 0;
+    if (mcp_json_get_u32(req, "cut", &v))               g_tas.cut = v != 0;
+    if (mcp_json_get_u32(req, "pad", &v))               g_tas.pad.hold = v;
+    if (mcp_json_get_u32(req, "once", &v))              g_tas.pad.once = v;
+    if (mcp_json_get_str(req, "aim", path, sizeof path)) {
+        int p = -1, off = 0;
+        float x = 0.5f, y = 0.5f;
+        int got = sscanf(path, "%d,%f,%f,%d", &p, &x, &y, &off);
+        if (p < 0 || p >= LIGHTGUN_PLAYERS) return "aim: no such gun";
+        g_tas.pad.aim_on[p] = got >= 3;
+        g_tas.pad.aim_x[p] = x; g_tas.pad.aim_y[p] = y;
+        g_tas.pad.aim_off[p] = got >= 4 && off;
+    }
+    if (!g_tas.on) return NULL;
+    if (mcp_json_get_u32(req, "seek", &v))              { g_tas.rewinding = false; tas_seek(v, false); }
+    if (mcp_json_get_u32(req, "rewind", &v))            tas_rewind(v, false);
+    if (mcp_json_get_u32(req, "undo_rewind", &v) && v && !tas_undo_rewind(false)) return "nothing to undo";
+    if (mcp_json_get_u32(req, "edit", &v) && mcp_json_get_u32(req, "xor", &w)) tas_edit_held(v, w);
+    if (mcp_json_get_u32(req, "insert", &v))            tas_insert(v, 1);
+    if (mcp_json_get_u32(req, "delete", &v))            tas_delete(v, 1);
+    if (mcp_json_get_u32(req, "undo", &v) && v && !tas_undo(false)) return "nothing to undo";
+    if (mcp_json_get_u32(req, "redo", &v) && v && !tas_undo(true))  return "nothing to redo";
+    if (mcp_json_get_u32(req, "branch_save", &v))       tas_branch_save((int)v);
+    if (mcp_json_get_u32(req, "branch_load", &v))       tas_branch_load((int)v);
+    if (mcp_json_get_u32(req, "advance", &v) && v)      emu_run_frames(ctx, v);
+    return NULL;
+}
+
+static void mcp_cmd_tas(const char *req, char *resp, int cap) {
+    int locked = g_mcp.emu && g_mcp.emu->thread_alive;
+    if (locked) emu_mutex_lock(&g_mcp.emu->mutex);
+    const char *err = mcp_tas_do(req);
+    char msg[260];
+    json_escape(msg, sizeof msg, g_tas.msg);
+    int k = snprintf(resp, (size_t)cap,
+             "{\"ok\":%s%s%s%s,\"on\":%d,\"frame\":%u,\"frames\":%u,\"seeking\":%d,\"pending\":%d,"
+             "\"mid\":%d,\"recording\":%d,\"rerecords\":%u,\"greenzone\":%u,\"desync\":%lld,"
+             "\"undo\":%d,\"running\":%d,\"msg\":\"%s\"",
+             err ? "false" : "true", err ? ",\"error\":\"" : "", err ? err : "", err ? "\"" : "",
+             g_tas.on ? 1 : 0, g_tas.frame, g_tas.mv.n, g_tas.seeking ? 1 : 0,
+             (g_tas.seek_req >= 0 || g_tas.start_req) ? 1 : 0, g_tas.mid ? 1 : 0,
+             g_tas.recording ? 1 : 0, g_tas.rerecords, g_tas.gz_n, (long long)g_tas.desync,
+             g_tas.undo_n, g_mcp.emu && emu_is_running(g_mcp.emu) ? 1 : 0, msg);
+    uint32_t from = 0, count = 0;
+    if (mcp_json_get_u32(req, "from", &from) && mcp_json_get_u32(req, "count", &count)) {
+        k += snprintf(resp + k, (size_t)(cap - k), ",\"held\":[");
+        for (uint32_t f = from; f < from + count && f < g_tas.mv.n && k < cap - 64; f++)
+            k += snprintf(resp + k, (size_t)(cap - k), "%s%u", f > from ? "," : "", g_tas.mv.in[f].held);
+        k += snprintf(resp + k, (size_t)(cap - k), "],\"check\":[");
+        for (uint32_t f = from; f < from + count && f < g_tas.mv.n && k < cap - 64; f++)
+            k += snprintf(resp + k, (size_t)(cap - k), "%s%u", f > from ? "," : "", g_tas.mv.check[f]);
+        k += snprintf(resp + k, (size_t)(cap - k), "]");
+    }
+    snprintf(resp + k, (size_t)(cap - k), "}");
+    if (locked) emu_mutex_unlock(&g_mcp.emu->mutex);
+}
+
 /* Commands that change the board in a way a follow feed cannot carry: the
  * segment ends, and the next slice starts another (core/follow.h). */
 static void mcp_follow_break_after(const char *cmd) {
@@ -3130,6 +3212,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
     else if (strcmp(cmd, "enemy_rank")               == 0) mcp_cmd_enemy_rank(req, resp, cap);
     else if (strcmp(cmd, "follow_lead")              == 0) mcp_cmd_follow_lead(req, resp, cap);
     else if (strcmp(cmd, "replay")                   == 0) mcp_cmd_replay(req, resp, cap);
+    else if (strcmp(cmd, "tas")                      == 0) mcp_cmd_tas(req, resp, cap);
     else if (strncmp(cmd, "script_", 7) == 0 && g_mcp_script_cmd) g_mcp_script_cmd(cmd, req, resp, cap);
     else snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"unknown cmd: %s\"}", cmd);
     mcp_follow_break_after(cmd);
