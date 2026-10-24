@@ -67,6 +67,8 @@ static const struct { const char *id; game_region_kind_t kind; } g_region_unhook
     { "lastbrnx",        REGION_PROGRAM_ROM },
     { "lastbrnxu",       REGION_PROGRAM_ROM },
     { "lastbrnxj",       REGION_PROGRAM_ROM },
+    { "pltkids",         REGION_TODO },
+    { "pltkidsa",        REGION_TODO },
     { "m2snake",         REGION_HOMEBREW },
     { "sfight_homebrew", REGION_HOMEBREW },
 };

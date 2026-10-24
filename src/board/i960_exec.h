@@ -912,8 +912,9 @@ static I960_HOT_INLINE int i960_step_core(i960_cpu_t *cpu, memory_bus_t *bus, ui
                                 cpu->frame_flushed = 0;
                                 cpu->frame_mem = 0;
                                 cpu->prcb = new_prcb;
+                                i960_prcb_cache(cpu, bus);
 
-                                uint32_t new_isp = mem_read32(bus, new_prcb + PRCB_INTR_STACK);
+                                uint32_t new_isp = cpu->intr_stack;
                                 if (new_isp) {
                                     cpu->locals.sp = new_isp;
                                 }

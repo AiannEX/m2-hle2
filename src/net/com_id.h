@@ -119,6 +119,9 @@ static const comid_entry_t g_comid_registry[] = {
     { "LASTBRNX",           "LSTBRX", NULL },   /* its profiles (Pinboard #1535) */
     { "LASTBRNXU",          "LSTBRX", NULL },
     { "LASTBRNXJ",          "LSTBRX", NULL },
+    { "PILOTKIDS",          "PLTKDS", NULL },   /* both builds (Pinboard #1538) */
+    { "PLTKIDS",            "PLTKDS", NULL },
+    { "PLTKIDSA",           "PLTKDS", NULL },
     { "DOA",                "DEDALV", NULL },
     { "DEADORALIVE",        "DEDALV", NULL },
 
