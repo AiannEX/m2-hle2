@@ -174,7 +174,11 @@ static inline void game_frame_draw(video_state_t *video, geo3d_state_t *geo3d,
     hprof_enter(HPROF_DRAW3D);
     sg_frame_stats gl0;
     if (g_game_frame_gl_counts) gl0 = sg_query_stats().cur_frame;
-    if (geo3d->enabled && g_active_profile && rs->main_data && rs->polygons) {
+    if (fbvram_shown(bus)) {
+        /* Test mode: the frame buffer the i960 drew in, and no polygons
+         * (board/fbvram.h; Last Bronx's title picture). */
+        game_render_draw_game(video->fb_view, bg.x, bg.y, bg.w, bg.h);
+    } else if (geo3d->enabled && g_active_profile && rs->main_data && rs->polygons) {
         const game_quirks_t *q = &g_active_profile->quirks;
         /* The geo_displaylist path emits geometry already in camera space (the
          * homebrew's own view() did the camera transform; the GEO projects with

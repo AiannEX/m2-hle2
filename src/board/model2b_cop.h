@@ -156,9 +156,10 @@ static inline uint32_t m2bc_fifo_r(void) {
 static inline void m2bc_ctl_w(uint32_t data) {
     if ((data ^ g_m2bc.coproctl) == 0x80000000u) {
         if (data & 0x80000000u) {
+            /* model2b copro_halt is empty: the core is held only from its
+             * reset to the first boot. Last Bronx raises the bit again after
+             * booting, to drain FIFO out, and its program must survive. */
             g_m2bc.coprocnt = 0;
-            g_m2bc.halted = true;
-            shc_reset();
         } else {
             LOG_INFO("COP: boot SHARC, %u halfwords", g_m2bc.coprocnt);
             g_m2bc.coproctl = data;
@@ -217,6 +218,19 @@ static void m2bc_ctl_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int 
     if (off == 0 && size == 4) m2bc_ctl_w(val);
 }
 
+/* The SHARC's IOP registers, which the i960 writes over the external port
+ * (MAME model2b_crx_mem: 0x8C0000 external_iop_write). Last Bronx uploads its
+ * program this way: DMA6 set up, then the words into EPB0 (0x04). Reads are
+ * the plain storage under it (MAME maps no read). */
+static void m2bc_iop_write_cb(mem_region_t *r, uint32_t addr, uint32_t val, int size) {
+    uint32_t off = addr - r->base;
+    for (int k = 0; k < size && off + (uint32_t)k < r->size; k++)
+        r->data[off + (uint32_t)k] = (uint8_t)(val >> (8 * k));
+    if (size == 2) val &= 0xFFFFu;
+    else if (size != 4) return;
+    shc_external_iop_write(off >> 2, val);
+}
+
 /* ---- Install ------------------------------------------------------------- */
 
 static inline void model2b_cop_reset(void) {
@@ -245,6 +259,8 @@ static inline void model2b_cop_install(memory_bus_t *bus, const uint8_t *copro_d
         if (strcmp(r->name, "COPROGRAM") == 0) {
             r->read_cb = m2bc_copro_read_cb;
             r->write_cb = m2bc_copro_write_cb;
+        } else if (strcmp(r->name, "COPRO_SHARC_IOP") == 0) {
+            r->write_cb = m2bc_iop_write_cb;
         } else if (strcmp(r->name, "COPRO_CTL") == 0) {
             r->user = bus;
             r->read_cb = m2bc_ctl_read_cb;
