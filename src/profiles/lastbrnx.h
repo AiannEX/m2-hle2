@@ -23,7 +23,9 @@
  * cabinet's: COIN1 0x01, COIN2 0x02, TEST 0x04, SERVICE 0x08, START1 0x10,
  * START2 0x20.
  *
- * No model table: noclip has none for Last Bronx yet.
+ * No model table in the quirks: noclip found it in the program ROM (0x189B0,
+ * 2544 entries of 16 bytes, sent unchanged by the draws at 0x4370C and
+ * 0xAD930), and the quirks' table is a main_data offset.
  */
 #ifndef PROFILES_LASTBRNX_H
 #define PROFILES_LASTBRNX_H
