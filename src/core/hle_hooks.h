@@ -311,6 +311,23 @@ static inline void hle_interrupt(i960_cpu_t *cpu, uint32_t handler) {
 }
 
 /*
+ * The processor reads the PRCB's interrupt table and interrupt stack when it
+ * takes the PRCB, at the IAC reinitialize, and keeps them: Pilot Kids clears
+ * its RAM PRCB (0x500000) right after, with the rest of work RAM, and its
+ * interrupts still find their table on the board. A profile that starts the
+ * processor on a PRCB in ROM sets only cpu->prcb, and the first interrupt
+ * takes it then (the same words, since ROM does not change).
+ */
+static inline void i960_prcb_cache(i960_cpu_t *cpu, memory_bus_t *bus) {
+    cpu->prcb_cached = cpu->prcb;
+    cpu->intr_table  = mem_read32(bus, cpu->prcb + PRCB_INTR_TABLE);
+    cpu->intr_stack  = mem_read32(bus, cpu->prcb + PRCB_INTR_STACK);
+}
+static inline void i960_prcb_take(i960_cpu_t *cpu, memory_bus_t *bus) {
+    if (cpu->prcb_cached != cpu->prcb) i960_prcb_cache(cpu, bus);
+}
+
+/*
  * The handler the i960 itself would vector interrupt pin 0..3 to, as MAME's
  * i960 does (execute_set_input / take_interrupt): the pin's vector is byte
  * `pin` of the interrupt control register, which the program writes with a
@@ -323,14 +340,15 @@ static inline void hle_interrupt(i960_cpu_t *cpu, uint32_t handler) {
  * STF's own table gives exactly the handlers its profile names (vectors 12-15:
  * 0xC40, 0xD10, 0xD30, 0xDF0); a program that is not STF finds its own here.
  */
-static inline uint32_t hle_irq_vector_handler(const i960_cpu_t *cpu, memory_bus_t *bus, int pin,
+static inline uint32_t hle_irq_vector_handler(i960_cpu_t *cpu, memory_bus_t *bus, int pin,
                                               uint32_t *vector_out) {
     if (pin < 0 || pin > 3 || !cpu->prcb) return 0;
     uint32_t vector = (mem_read32(bus, IAC_BASE + 4) >> (8 * pin)) & 0xFFu;
     if (vector < 8) return 0;
     uint32_t pri = vector >> 3, cur = (cpu->sfr.pc >> 16) & 0x1Fu;
     if (pri != 31 && pri <= cur) return 0;
-    uint32_t table = mem_read32(bus, cpu->prcb + PRCB_INTR_TABLE);
+    i960_prcb_take(cpu, bus);
+    uint32_t table = cpu->intr_table;
     if (vector_out) *vector_out = vector;
     return mem_read32(bus, table + 36 + (vector - 8) * 4);
 }
@@ -351,8 +369,8 @@ static inline uint32_t hle_irq_vector_handler(const i960_cpu_t *cpu, memory_bus_
  */
 static inline void hle_interrupt_on_stack(i960_cpu_t *cpu, memory_bus_t *bus, uint32_t handler,
                                           uint32_t vector) {
-    uint32_t sp = (cpu->sfr.pc & 0x2000u) ? cpu->locals.sp
-                                          : mem_read32(bus, cpu->prcb + PRCB_INTR_STACK);
+    i960_prcb_take(cpu, bus);
+    uint32_t sp = (cpu->sfr.pc & 0x2000u) ? cpu->locals.sp : cpu->intr_stack;
     int d = cpu->frame_depth;
     hle_interrupt(cpu, handler);
     if (cpu->frame_depth != d + 1) return;
