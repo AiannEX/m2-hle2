@@ -364,6 +364,10 @@ int main(void) {
         CHECK(comid_for_game("powsled", b) && strcmp(b, "M2HPWRSLD_00") == 0
               && comid_for_game("Power Sled", c) && strcmp(b, c) == 0,
               "Power Sled has its listed lobby, by profile id and by title");
+        CHECK(comid_for_game("lastbrnx", b) && strcmp(b, "M2HLSTBRX_00") == 0
+              && comid_for_game("lastbrnxj", c) && strcmp(b, c) == 0
+              && comid_for_game("Last Bronx", c) && strcmp(b, c) == 0,
+              "Last Bronx's builds share its listed lobby, by profile id and by title");
         CHECK(comid_yamp_for_game("sfight_console", b) && strcmp(b, "YMPSNCFTR_00") == 0,
               "…and browses YAMP's STF rooms, since YAMP runs the console emulator");
 
