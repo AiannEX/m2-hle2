@@ -15,7 +15,7 @@
 /* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
  * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop, Fighting Vipers,
  * The House of the Dead, Daytona USA, Virtua Fighter 2, Dead or Alive and
- * Air Walkers, Power Sled, Virtua Cop and Last Bronx, with the clones of #1286 (the page's ?game=, web/site/m2hle-games.js). Any other set is only
+ * Air Walkers, Power Sled, Virtua Cop, Last Bronx and Pilot Kids, with the clones of #1286 (the page's ?game=, web/site/m2hle-games.js). Any other set is only
  * download size: left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. */
 #include "srallyc.h"
@@ -31,7 +31,7 @@
 #include "powsled.h"   /* runs since Pinboard #1052, on the site since #1089 */
 #include "vcop.h"      /* runs since Pinboard #1286 */
 #include "lastbrnx.h"  /* runs since Pinboard #1517, on the site since #1535 */
-#include "pltkids.h"   /* runs since Pinboard #1538 */
+#include "pltkids.h"   /* runs since Pinboard #1538, on the site too */
 #ifndef M2HLE_WEB
 #include "m2snake.h"
 #include "sfight_homebrew.h"

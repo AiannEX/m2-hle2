@@ -462,6 +462,33 @@ const m2hleGames = (() => {
         },
       },
     },
+    pltkids: {
+      title: 'Pilot Kids',
+      year: 1998, board: 'Model 2A/2B-CRX', colors: ['#e0461c', '#1a2030'],
+      blurb: 'Psikyo\'s shoot-\'em-up with toy planes: two kid pilots fly over desks and bookshelves. Shot and bomb, one or two players.',
+      /* src/profiles/pltkids.h: the 2B Revision A first, then the 2A build,
+       * a clone of pltkids.zip. */
+      profiles: [
+        { id: 'pltkids', name: 'Rev A', about: 'Model 2B, Revision A' },
+        { id: 'pltkidsa', name: '2A', about: 'Model 2A' },
+      ],
+      romHint: 'Your <code>pltkids.zip</code> (Model 2B), or <code>pltkidsa.zip</code> and its parent <code>pltkids.zip</code>, picked together',
+      /* MAME's INPUT_PORTS(pltkids): B1 shot, B2 bomb. */
+      labels: { b1: 'Shot', b2: 'Bomb', b3: 'Unused', b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'パイロットキッズ',
+          blurb: '彩京のシューティング。2人の子どもパイロットがおもちゃの飛行機で机や本棚の上を飛び回る。ショットとボム、1人または2人プレイ。',
+          profiles: { pltkids: { name: 'リビジョン A', about: 'Model 2B、リビジョン A' },
+                      pltkidsa: { name: '2A', about: 'Model 2A' } },
+          romHint: 'お持ちの <code>pltkids.zip</code>（Model 2B）、または <code>pltkidsa.zip</code> と親セットの <code>pltkids.zip</code> を一緒に',
+          labels: { b1: 'ショット', b2: 'ボム', b3: '未使用', b4: '未使用' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
   /* ?game= names that are another game's set: { game, profile }. */
