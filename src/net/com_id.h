@@ -116,6 +116,9 @@ static const comid_entry_t g_comid_registry[] = {
     { "VF2",                "VRTFT2", "VRTFT2" },
     { "VIRTUAFIGHTER2",     "VRTFT2", "VRTFT2" },
     { "LASTBRONX",          "LSTBRX", NULL },
+    { "LASTBRNX",           "LSTBRX", NULL },   /* its profiles (Pinboard #1535) */
+    { "LASTBRNXU",          "LSTBRX", NULL },
+    { "LASTBRNXJ",          "LSTBRX", NULL },
     { "DOA",                "DEDALV", NULL },
     { "DEADORALIVE",        "DEDALV", NULL },
 

@@ -38,7 +38,7 @@ foreach(game "sfight|Sonic the Fighters" "srallyc|Sega Rally Championship"
              "fvipers|Fighting Vipers" "hotd|The House of the Dead"
              "daytona|Daytona USA" "vcop|Virtua Cop" "vf2|Virtua Fighter 2"
              "doa|Dead or Alive" "airwlkrs|Air Walkers"
-             "powsled|Power Sled")
+             "powsled|Power Sled" "lastbrnx|Last Bronx")
   string(REPLACE "|" ";" game "${game}")
   list(GET game 0 id)
   list(GET game 1 title)

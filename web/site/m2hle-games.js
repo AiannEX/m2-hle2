@@ -431,6 +431,37 @@ const m2hleGames = (() => {
         },
       },
     },
+    lastbrnx: {
+      title: 'Last Bronx',
+      year: 1996, board: 'Model 2B-CRX', colors: ['#b8862b', '#1c1a24'],
+      blurb: 'Eight gang leaders settle Tokyo\'s streets with weapons: tonfa, nunchaku, sai, a bokken, a sledgehammer and more.',
+      /* src/profiles/lastbrnx.h: one program pair per country, the others
+       * clones of lastbrnx.zip. The Japanese page boots Tokyo Bangaichi. */
+      first: { ja: 'lastbrnxj' },
+      profiles: [
+        { id: 'lastbrnx', name: 'Export', about: 'Export, Revision A' },
+        { id: 'lastbrnxu', name: 'USA', about: 'USA, Revision A' },
+        { id: 'lastbrnxj', name: 'Japan', about: 'Tokyo Bangaichi, Japan, Revision A' },
+      ],
+      romHint: 'Your <code>lastbrnx.zip</code> (Export), or <code>lastbrnxu.zip</code> or <code>lastbrnxj.zip</code> (once <code>lastbrnj.zip</code>) and its parent <code>lastbrnx.zip</code>, picked together',
+      /* MAME's INPUT_PORTS(vf2), which the game's input test names the same:
+       * B1 punch, B2 kick, B3 guard. */
+      labels: { b1: 'Punch', b2: 'Kick', b3: 'Guard', b4: 'Unused' },
+      ownReplay: false,
+      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'ラストブロンクス 東京番外地',
+          blurb: '8人のチームリーダーが武器で東京の街の決着をつける。トンファー、ヌンチャク、釵、木刀、ハンマーほか。',
+          profiles: { lastbrnx: { name: '海外版', about: '海外、リビジョン A' },
+                      lastbrnxu: { name: 'USA', about: 'USA、リビジョン A' },
+                      lastbrnxj: { name: '日本版', about: '東京番外地、日本、リビジョン A' } },
+          romHint: 'お持ちの <code>lastbrnx.zip</code>（海外版）、または <code>lastbrnxu.zip</code>、<code>lastbrnxj.zip</code>（旧名 <code>lastbrnj.zip</code>）と親セットの <code>lastbrnx.zip</code> を一緒に',
+          labels: { b1: 'パンチ', b2: 'キック', b3: 'ガード', b4: '未使用' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
   /* ?game= names that are another game's set: { game, profile }. */
