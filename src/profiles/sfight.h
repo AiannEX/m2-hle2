@@ -12,6 +12,10 @@
  * Local override: if files named sfight/epr-19001.15 and sfight/epr-19002.16
  * exist on disk, they're used INSTEAD of the zip's maincpu pair (CRC check
  * skipped) — supports working with hacked ROMs without re-zipping every time.
+ * sfight/epr-19021.31 does the same for the sound board's 68000 program, on
+ * its own: homebrew ships all three the way MAME takes them (a folder named
+ * sfight before the stock zip), and m2-pacman's i960 program pings its own
+ * sound program, so with STF's driver from the zip it ran silent.
  *
  * Per-game install behaviour: copies romset into bus regions, then mirrors
  * romset.main_data[0x01000000..] into bus->xtra_data. The mirror was found
@@ -124,7 +128,11 @@ static inline int sfight_load(romset_t *rs, const char *child, const char *paren
     /* audiocpu (512KB) — byte-swapped on load */
     rs->audiocpu_size = 0x80000;
     rs->audiocpu = (uint8_t *)calloc(1, rs->audiocpu_size);
-    tmp1 = zip_extract_from_set(child, parent, "epr-19021.31", &fsize, 0x0b9f7583);
+    tmp1 = file_load("sfight/epr-19021.31", &fsize);
+    if (tmp1)
+        LOG_INFO("sfight: using hacked audiocpu from sfight/ (%zu bytes; CRC skipped)", fsize);
+    else
+        tmp1 = zip_extract_from_set(child, parent, "epr-19021.31", &fsize, 0x0b9f7583);
     if (!tmp1) { ok = 0; goto done; }
     load_16_word_swap(rs->audiocpu, rs->audiocpu_size, tmp1, fsize, 0);
     free(tmp1); tmp1 = NULL;
