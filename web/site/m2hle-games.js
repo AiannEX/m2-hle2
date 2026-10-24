@@ -299,8 +299,9 @@ const m2hleGames = (() => {
       labels: { b1: 'Trigger', b2: 'Reload', b3: 'Unused', b4: 'Unused' },
       gun: true,
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'バーチャコップ',
@@ -417,7 +418,8 @@ const m2hleGames = (() => {
       labels: { left: 'Left pedal', right: 'Right pedal', up: 'Main: panel button 3', down: 'Unused',
                 b1: 'Entry', b2: 'Call', b3: 'Cancel network check / Main: start race', b4: 'Cancel error' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      /* No shared board: Power Sled keeps no ranking in its backup RAM
+       * (scores.sonicthefighte.rs, Pinboard #1559); its save stays in the browser. */
       arcade: false, keepSave: true,
       i18n: {
         ja: {
@@ -448,8 +450,9 @@ const m2hleGames = (() => {
        * B1 punch, B2 kick, B3 guard. */
       labels: { b1: 'Punch', b2: 'Kick', b3: 'Guard', b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
-      arcade: false, keepSave: true,
+      /* A shared board (arcade/games.mjs); the save stays in the browser too,
+       * even when the arcade cannot be reached (m2hle-page.js). */
+      keepSave: true,
       i18n: {
         ja: {
           title: 'ラストブロンクス 東京番外地',
@@ -476,7 +479,8 @@ const m2hleGames = (() => {
       /* MAME's INPUT_PORTS(pltkids): B1 shot, B2 bomb. */
       labels: { b1: 'Shot', b2: 'Bomb', b3: 'Unused', b4: 'Unused' },
       ownReplay: false,
-      /* No shared board or ranking (arcade/games.mjs); its save stays in the browser. */
+      /* No shared board: Pilot Kids clears its ranking at every boot
+       * (scores.sonicthefighte.rs, Pinboard #1559); its save stays in the browser. */
       arcade: false, keepSave: true,
       i18n: {
         ja: {

@@ -6,6 +6,10 @@
 //   detail(entry)  anything shown beside the time (Sega Rally's car)
 //   score          true when the game ranks by points: `time` is then a key that sorts the
 //                  same way (lower wins), formatTime shows the points
+//   tableEntries   [n per table] when a game's tables keep different counts (Last Bronx's
+//                  survival tables keep 5): the merge keeps that many; `entries` otherwise
+//   tableScore     [bool per table] when only some tables rank by points (Last Bronx's
+//                  survival): the board page names each table's column by it
 //   sets           { profile: ROM set } for a game m2-hle2 runs as several profiles: the
 //                  board goes under each listed profile's own key (m2hle2.nvram.<set>), and
 //                  a profile not listed (another layout, or not checked) plays alone
@@ -23,6 +27,8 @@ import * as daytona from './daytona-ranking.mjs';
 import * as vf2 from './vf2-ranking.mjs';
 import * as doa from './doa-ranking.mjs';
 import * as airwlkrs from './airwlkrs-ranking.mjs';
+import * as vcop from './vcop-ranking.mjs';
+import * as lastbrnx from './lastbrnx-ranking.mjs';
 
 const GAMES = {
   sfight: {
@@ -58,6 +64,11 @@ const MORE = [
   ['vf2', 'Virtua Fighter 2', vf2, { sets: same('vf2', 'vf2b') }],
   ['doa', 'Dead or Alive', doa, { sets: same('doa', 'doab', 'doaa', 'doaab', 'doaae') }],
   ['airwlkrs', 'Air Walkers', airwlkrs, { sets: same('airwlkrs') }],
+  /* Pinboard #1559: the games m2-hle2 added since. Power Sled and Pilot Kids keep no
+   * ranking across power-off (README), so they have no board. vcop's other revision has
+   * no ROMs here; lastbrnxu's program was not checked, so it plays alone. */
+  ['vcop', 'Virtua Cop', vcop, { sets: same('vcop') }],
+  ['lastbrnx', 'Last Bronx', lastbrnx, { sets: same('lastbrnx', 'lastbrnxj') }],
 ];
 for (const [id, title, m, extra] of MORE) GAMES[id] = fromModule(id, title, m, extra);
 
@@ -67,7 +78,7 @@ function fromModule(id, title, m, extra = {}) {
     id, title, nvramKey: m.NVRAM_KEY, backupSize: m.BACKUP_SIZE, entrySize: m.ENTRY_SIZE,
     entries: m.ENTRIES, tables: m.TABLES, parseEntry: m.parseEntry, formatTime: m.formatTime,
     detail: m.detail || (() => ''), readTables: m.readTables, writeTables: m.writeTables,
-    score: !!m.SCORE, ...extra,
+    score: !!m.SCORE, tableEntries: m.TABLE_ENTRIES, tableScore: m.TABLE_SCORE, ...extra,
   };
 }
 
