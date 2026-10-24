@@ -158,6 +158,7 @@ typedef struct {
 
     uint32_t flag[4];
     uint32_t syscon, sysstat, msgr[8], dma_status, extdma_shift;
+    uint32_t iop_write_num, iop_data;           /* the host's halfword pairs */
     shc_dma_t dma[8];
 
     uint32_t ext_latch;     /* the external read done before compute */
@@ -431,6 +432,27 @@ static void shc_iop_w(uint32_t reg, uint32_t v)
         LOG_WARN("sharc: IOP write %02X = %08X at %05X ignored", (unsigned)reg,
                  (unsigned)v, (unsigned)g_shc.pc);
     }
+}
+
+/* MAME external_iop_write: the host writing an IOP register over the
+ * external port (Model 2B: the i960 at 0x8C0000, Last Bronx's upload). With
+ * SYSCON HBW (bit 4) the host bus is 16 bits, so two writes make a register
+ * word, but for EPB0 (0x04), which the DMA unpacks itself. */
+static inline void shc_external_iop_write(uint32_t reg, uint32_t v)
+{
+    if ((g_shc.syscon & 0x10) && reg != 0x04) {
+        if ((g_shc.iop_write_num++ & 1) == 0) {
+            g_shc.iop_data = v & 0xffff;
+            return;
+        }
+        g_shc.iop_data |= (v & 0xffff) << 16;
+    } else {
+        g_shc.iop_data = v;
+    }
+    if (reg == 0x1c)
+        g_shc.dma[6].control = g_shc.iop_data;
+    else
+        shc_iop_w(reg, g_shc.iop_data);
 }
 
 /* ---- Pipeline, stacks ------------------------------------------------------ */

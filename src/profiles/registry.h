@@ -30,6 +30,7 @@
 #include "airwlkrs.h"  /* runs since Pinboard #1063, on the site since #1063 */
 #include "powsled.h"   /* runs since Pinboard #1052, on the site since #1089 */
 #include "vcop.h"      /* runs since Pinboard #1286 */
+#include "lastbrnx.h"  /* runs since Pinboard #1517 */
 #ifndef M2HLE_WEB
 #include "m2snake.h"
 #include "sfight_homebrew.h"
@@ -66,6 +67,9 @@ const game_profile_t *const g_profiles[] = {
     &airwlkrs_profile,
     &powsled_profile,
     &vcop_profile,
+    &lastbrnx_profile,
+    &lastbrnxu_profile,
+    &lastbrnxj_profile,
     /* The clones of #1286, on the site under their game (web/site/m2hle-games.js). */
     &schamp_profile,
     &hotdo_profile,
