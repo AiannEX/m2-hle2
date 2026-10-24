@@ -95,7 +95,8 @@ Fighters (`sfight_console`, `sfight`), Sega Rally Championship (`srallyc`), Virt
 Dynamite Cop / Dynamite Deka 2 (`dynamcop`, `dyndeka2`, `dynamcopb`, `dyndeka2b`, `dynamcopc`),
 Fighting Vipers (`fvipers`), The House of the Dead (`hotd`), Daytona USA (`daytona`), Dead or Alive
 (`doa`, `doab`, `doaa`, `doaab`, `doaae`), Virtua Fighter 2 (`vf2`, `vf2b`, `vf2a`, `vf2o`), Air
-Walkers (`airwlkrs`), Power Sled (`powsled`) and Virtua Cop (`vcop`, with the I/O board's
+Walkers (`airwlkrs`), Power Sled (`powsled`), Last Bronx (`lastbrnx`, `lastbrnxu`, `lastbrnxj`;
+not on the web yet) and Virtua Cop (`vcop`, with the I/O board's
 `model1io2.zip`; the mouse is the gun, a shot off the picture reloads). The desktop build adds the
 homebrew `m2snake` and `sfight_homebrew`.
 
