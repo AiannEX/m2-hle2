@@ -63,8 +63,8 @@ runs the emulator from a directory of its own per port (`<tmp>/m2hle-run-<port>`
 or its `cwd` option), so its log never lands beside the ROM, and finds
 `schamp.zip` beside the `--rom` path. Running from the ROM's folder is also
 wrong for a second reason: the sfight profile loads a loose
-`sfight/epr-19001.15` / `epr-19002.16` from the working directory over the
-zip's, and `claude_mame/mame/roms` has such a folder (a homebrew program).
+`sfight/epr-19001.15` / `epr-19002.16` (and the sound program
+`epr-19021.31`) from the working directory over the zip's, and `claude_mame/mame/roms` has such a folder (a homebrew program).
 The C tests that load STF (`rom_test`, `boot_test`, `geo_test`, `input_test`,
 `snd_replay`, `snd_bench`, `m68k_fuzz`) take `$ROMDIR`, else `$ROMS_DIR`.
 
