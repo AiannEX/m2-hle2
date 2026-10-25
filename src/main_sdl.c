@@ -1694,6 +1694,7 @@ static bool poll_events(void) {
         state.emu.run_state == EMU_STOPPED) {
         emu_mutex_lock(&state.emu.mutex);
         sfight_read_menu_settings(&state.bus, &g_sfight_menu);
+        g_sfight_menu_saved = g_sfight_menu;
         emu_mutex_unlock(&state.emu.mutex);
 
         g_sfight_menu_row = 0;
@@ -2129,7 +2130,8 @@ static void sfight_draw_text_outline(float x, float y,
                                      const char *text,
                                      unsigned char r,
                                      unsigned char g,
-                                     unsigned char b)
+                                     unsigned char b,
+                                     bool changed)
 {
     /* Draw the black outline around the text. */
     sdtx_color3b(0, 0, 0);
@@ -2146,7 +2148,6 @@ static void sfight_draw_text_outline(float x, float y,
     sdtx_pos(x, y + 0.1f);
     sdtx_puts(text);
 
-    /* Draw the actual text in its requested color. */
     sdtx_color3b(r, g, b);
     sdtx_pos(x, y);
     sdtx_puts(text);
@@ -2173,7 +2174,8 @@ static void sfight_menu_draw(int fb_w, int fb_h)
     sfight_draw_text_outline(
         2.0f, 1.0f,
         "SONIC THE FIGHTERS - SETTINGS",
-        255, 220, 64
+        255, 220, 64,
+        false
     );
     char line[96];
     const char *difficulty[] = {
@@ -2202,6 +2204,7 @@ static void sfight_menu_draw(int fb_w, int fb_h)
     for (int i = 0; i < 7; i++) {
         const char *label = "";
         const char *value = "";
+        char barrier_value[16];
         switch (i) {
             case 0: label = "Difficulty"; value = values[0]; break;
             case 1: label = "Rounds"; value = values[1]; break;
@@ -2209,38 +2212,73 @@ static void sfight_menu_draw(int fb_w, int fb_h)
             case 3: label = "Attack Power"; value = values[3]; break;
             case 4:
                 label = "Barriers";
-                snprintf(line, sizeof(line), "%u",
-                         (unsigned)(g_sfight_menu.barriers_idx + 1));
-                value = line;
+                snprintf(barrier_value, sizeof(barrier_value), "%u",
+                        (unsigned)(g_sfight_menu.barriers_idx + 1));
+                value = barrier_value;
                 break;
             case 5: label = "Game Type"; value = values[5]; break;
             case 6: label = "Apply Settings"; break;
         }
-        snprintf(line, sizeof(line), "%c %-16s %s",
-                 i == g_sfight_menu_row ? '>' : ' ',
-                 label, value);
+        bool changed = false;
+
+        switch (i) {
+            case 0:
+                changed = g_sfight_menu.difficulty !=
+                        g_sfight_menu_saved.difficulty;
+                break;
+            case 1:
+                changed = g_sfight_menu.rounds_idx !=
+                        g_sfight_menu_saved.rounds_idx;
+                break;
+            case 2:
+                changed = g_sfight_menu.time_idx !=
+                        g_sfight_menu_saved.time_idx;
+                break;
+            case 3:
+                changed = g_sfight_menu.attack_idx !=
+                        g_sfight_menu_saved.attack_idx;
+                break;
+            case 4:
+                changed = g_sfight_menu.barriers_idx !=
+                        g_sfight_menu_saved.barriers_idx;
+                break;
+            case 5:
+                changed = g_sfight_menu.type_idx !=
+                        g_sfight_menu_saved.type_idx;
+                break;
+        }
+        snprintf(line, sizeof(line), "%c %-16s %s%s",
+            i == g_sfight_menu_row ? '>' : ' ',
+            label, value, changed ? " *" : "");
         sdtx_pos(3.0f, 4.0f + (float)i * 2.0f);
-        sfight_draw_text_outline(
-            3.0f, 4.0f + (float)i * 2.0f,
-            line,
-            i == g_sfight_menu_row ? 255 : 230,
-            i == g_sfight_menu_row ? 220 : 230,
-            i == g_sfight_menu_row ? 64 : 230
-        );
+        if (changed) {
+            sfight_draw_text_outline(
+                3.0f, 4.0f + (float)i * 2.0f,
+                line,
+                255,
+                100,
+                100,
+                changed
+            );
+        } else {
+            sfight_draw_text_outline(
+                3.0f, 4.0f + (float)i * 2.0f,
+                line,
+                i == g_sfight_menu_row ? 255 : 230,
+                i == g_sfight_menu_row ? 220 : 230,
+                i == g_sfight_menu_row ? 64 : 230,
+                changed
+            );
+        }
+        
     }
     sfight_draw_text_outline(
         3.0f, 20.0f,
-        "L1 + R1 + Start: Close menu",
-        200, 200, 200
+        "L1 + R1 + Back/F1: Close menu",
+        200, 200, 200,
+        false
     );
         sdtx_pos(3.0f, 22.0f);
-    if (sfight_menu_has_changes()) {
-        sdtx_color3b(255, 100, 100);
-        sdtx_puts("UNSAVED CHANGES");
-    } else {
-        sdtx_color3b(100, 255, 100);
-        sdtx_puts("SETTINGS UNCHANGED");
-    }
 }
 static void render_screen(int fb_w, int fb_h, int ox, int oy, int w, int h, float lerp_t) {
     /* The lobby is drawn on black, to be read; over a match, on the match. */
