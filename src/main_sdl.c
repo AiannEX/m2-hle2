@@ -1481,6 +1481,12 @@ static bool poll_events(void) {
     bool running = true, pad_changed = false;
 
     while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+            ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+            SDL_Log("Controller event: type=%d button=%d",
+                    (int)ev.type,
+                    (int)ev.gbutton.button);
+        }
         if (link_event(&ev)) continue;
         if (opt.netplay && lobby_event(&ev, &pad_changed)) continue;
         /*
