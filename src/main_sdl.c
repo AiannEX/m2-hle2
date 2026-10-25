@@ -227,6 +227,156 @@ static struct {
 static bool g_sdtx_on;              /* sokol's debug text is set up: --osd, the lobby, a script's text or the link question (link_draw) */
 static bool g_sound_on;             /* the sound board is attached (sound_start succeeded) */
 
+/* ---- Sonic the Fighters settings menu ------------------------------- */
+/* -- extra line for padding --------------------------------------------*/
+static bool g_pause_combo_latched = false;
+static bool g_sfight_menu_open = false;
+static bool g_sfight_menu_waiting = false;
+static bool g_sfight_menu_dirty = false;
+static sfight_menu_settings_t g_sfight_menu;
+static int g_sfight_menu_row = 0;
+#define SFIGHT_MENU_ROWS 7
+static const char *g_sfight_difficulty[] = {
+    "Easy",
+    "Normal",
+    "Hard",
+    "Hardest"
+};
+static const char *g_sfight_rounds[] = {
+    "2",
+    "3",
+    "4",
+    "5"
+};
+static const char *g_sfight_time[] = {
+    "10 Seconds",
+    "30 Seconds",
+    "60 Seconds",
+    "99 Seconds"
+};
+static const char *g_sfight_attack[] = {
+    "-1",
+    "Normal",
+    "+1",
+    "+2",
+    "+3"
+};
+static const char *g_sfight_type[] = {
+    "A (Default)",
+    "B (Hyper Off)",
+    "C (Barrier Reset)",
+    "D (Both)"
+};
+
+/* Pause or resume the emulator at a safe slice boundary. */
+static void toggle_pause(void)
+{
+    if (state.emu.run_state == EMU_RUNNING) {
+        state.emu.request_stop = 1;
+    } else if (state.emu.run_state == EMU_STOPPED) {
+        emu_run(&state.emu);
+    }
+}
+/* Prevent controller inputs from leaking into gameplay after the menu. */
+static bool g_pad_menu_release_wait = false;
+
+static bool sfight_menu_available(void)
+{
+    if (!g_active_profile)
+        return false;
+
+    return !strcmp(g_active_profile->id, "sfight") ||
+           !strcmp(g_active_profile->id, "sfight_console");
+}
+static void sfight_menu_open(void)
+{
+    if (!sfight_menu_available())
+        return;
+
+    g_sfight_menu_waiting = true;
+
+    if (state.emu.run_state == EMU_RUNNING) {
+        state.emu.request_stop = 1;
+        return;
+    }
+
+    emu_mutex_lock(&state.emu.mutex);
+    sfight_read_menu_settings(&state.bus, &g_sfight_menu);
+    emu_mutex_unlock(&state.emu.mutex);
+
+    g_sfight_menu_row = 0;
+    g_sfight_menu_dirty = false;
+    g_sfight_menu_waiting = false;
+    g_sfight_menu_open = true;
+}
+static void sfight_menu_cancel(void)
+{
+    g_sfight_menu_open = false;
+    g_sfight_menu_waiting = false;
+    g_sfight_menu_dirty = false;
+
+    if (state.emu.run_state == EMU_STOPPED)
+        emu_run(&state.emu);
+}
+static void sfight_menu_apply(void)
+{
+    if (!sfight_menu_available())
+        return;
+
+    emu_mutex_lock(&state.emu.mutex);
+
+    sfight_apply_menu_settings(
+        &state.bus,
+        (const uint8_t *)&g_sfight_menu,
+        0
+    );
+
+    emu_mutex_unlock(&state.emu.mutex);
+
+    g_sfight_menu_dirty = false;
+}
+static void sfight_menu_change(int delta)
+{
+    switch (g_sfight_menu_row) {
+        case 0:
+            g_sfight_menu.difficulty =
+                (uint8_t)((g_sfight_menu.difficulty + 4 + delta) % 4);
+            break;
+        case 1:
+            g_sfight_menu.rounds_idx =
+                (uint8_t)((g_sfight_menu.rounds_idx + 4 + delta) % 4);
+            break;
+        case 2:
+            g_sfight_menu.time_idx =
+                (uint8_t)((g_sfight_menu.time_idx + 4 + delta) % 4);
+            break;
+        case 3:
+            g_sfight_menu.attack_idx =
+                (uint8_t)((g_sfight_menu.attack_idx + 5 + delta) % 5);
+            break;
+        case 4:
+            g_sfight_menu.barriers_idx =
+                (uint8_t)((g_sfight_menu.barriers_idx + 10 + delta) % 10);
+            break;
+        case 5:
+            g_sfight_menu.type_idx =
+                (uint8_t)((g_sfight_menu.type_idx + 4 + delta) % 4);
+            break;
+    }
+    g_sfight_menu_dirty = true;
+}
+static void sfight_menu_move(int delta)
+{
+    g_sfight_menu_row += delta;
+
+    if (g_sfight_menu_row < 0)
+        g_sfight_menu_row = SFIGHT_MENU_ROWS - 1;
+
+    if (g_sfight_menu_row >= SFIGHT_MENU_ROWS)
+        g_sfight_menu_row = 0;
+}
+
+
 /* Keyboard, for desktop runs: the debugger's layout (input.h), which is
  * m2emulator's (Pinboard #1347), and its INPUT_KEYS_DRIVING on a racing
  * cabinet. F1 is the lobby here, so the service button is MAME's 9 alone. */
@@ -1018,13 +1168,9 @@ static void netplay_start(void) {
 static void lobby_pad_down(const SDL_Event *ev, bool *toggle, bool *used) {
     SDL_Gamepad *pad = SDL_GetGamepadFromID(ev->gbutton.which);
     int b = ev->gbutton.button;
-    if (b == SDL_GAMEPAD_BUTTON_GUIDE) *toggle = true;
-    else if (pad && ((b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER
-                      && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER))
-                  || (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER
-                      && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER))))
+    if (b == SDL_GAMEPAD_BUTTON_GUIDE) {
         *toggle = true;
-    else if (g_lobby.open) {
+    } else if (g_lobby.open) {
         *used = true;
         if (b == SDL_GAMEPAD_BUTTON_DPAD_UP)   lobby_move(-1);
         if (b == SDL_GAMEPAD_BUTTON_DPAD_DOWN) lobby_move(+1);
@@ -1291,34 +1437,122 @@ static void gun_event(const SDL_Event *ev) {
     }
 }
 
+
+/* Release every controller action so menu inputs cannot leak into the game. */
+static void sfight_pad_release_all(void)
+{
+    for (int a = 0; a < GAME_INPUT_COUNT; a++) {
+        if (g_pad_held[a])
+            input_action_up(a);
+
+        if (g_pad_far_held[a])
+            input_far_up(a);
+
+        g_pad_held[a] = false;
+        g_pad_far_held[a] = false;
+    }
+}
+/* Is any connected gamepad still holding part of L1 + R1 + Start? */
+static bool sfight_combo_held(void)
+{
+    int count = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&count);
+    bool held = false;
+    for (int i = 0; ids && i < count; i++) {
+        SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
+        if (!pad)
+            continue;
+        if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) ||
+            SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) ||
+            SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START)) {
+            held = true;
+            break;
+        }
+    }
+    SDL_free(ids);
+    return held;
+}
+
+
 /* Drain SDL's queue: the keyboard and gamepads into the board's inputs.
  * False once the player asked to quit. */
 static bool poll_events(void) {
     SDL_Event ev;
     bool running = true, pad_changed = false;
+
     while (SDL_PollEvent(&ev)) {
         if (link_event(&ev)) continue;
         if (opt.netplay && lobby_event(&ev, &pad_changed)) continue;
+        /*
+         * L + R + Start pauses/resumes the emulator.
+         * For Sonic the Fighters, it opens/closes the settings menu.
+         */
+        if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+            ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+            SDL_Gamepad *pad = SDL_GetGamepadFromID(ev.gbutton.which);
+            bool combo_down = pad &&
+                SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) &&
+                SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) &&
+                SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START);
+            if (!combo_down) {
+                g_pause_combo_latched = false;
+            } else if (!g_pause_combo_latched) {
+                g_pause_combo_latched = true;
+                /*
+                 * Consume the shortcut and clear held inputs so
+                 * its buttons don't leak into gameplay.
+                 */
+                sfight_pad_release_all();
+                g_pad_menu_release_wait = true;
+                pad_changed = true;
+                if (sfight_menu_available()) {
+                    if (g_sfight_menu_open) {
+                        sfight_menu_cancel();
+                    } else if (!g_sfight_menu_waiting) {
+                        sfight_menu_open();
+                    }
+                } else {
+                    toggle_pause();
+                }
+
+                continue;
+            }
+        }
         gun_event(&ev);
         sdl_pads_event(&ev, &pad_changed);
         switch (ev.type) {
-            case SDL_EVENT_QUIT: running = false; break;
-            case SDL_EVENT_KEY_DOWN:
-                if (ev.key.scancode == SDL_SCANCODE_ESCAPE) running = false;
-                else if (!ev.key.repeat) input_action_down(key_to_action(ev.key.scancode));
+            case SDL_EVENT_QUIT:
+                running = false;
                 break;
+
+            case SDL_EVENT_KEY_DOWN:
+                if (ev.key.scancode == SDL_SCANCODE_ESCAPE)
+                    running = false;
+                else if (!ev.key.repeat)
+                    input_action_down(key_to_action(ev.key.scancode));
+                break;
+
             case SDL_EVENT_KEY_UP:
                 input_action_up(key_to_action(ev.key.scancode));
                 break;
-            default: break;
+
+            default:
+                break;
         }
     }
     pad_resync(&pad_changed);
     if (opt.netplay) lobby_pad_settle(&pad_changed);
     link_pump(&pad_changed);
-    if (pad_changed) pad_refresh();
+
+    if (g_sfight_menu_open || g_sfight_menu_waiting) {
+        sfight_pad_release_all();
+        pad_changed = false;
+    } else if (pad_changed) {
+        pad_refresh();
+    }
     return running;
 }
+
 
 /* ---- The window and the game's target -------------------------------------- */
 

@@ -778,6 +778,62 @@ static inline void sfight_read_settings(memory_bus_t *bus, uint8_t blk[SFIGHT_SE
         blk[i] = (uint8_t)mem_read8(bus, src + i);
 }
 
+/* Convert the game's settings block into the menu's setting indices. */
+static inline void sfight_read_menu_settings(
+    memory_bus_t *bus,
+    sfight_menu_settings_t *out
+) {
+    static const uint8_t time_var[4] = { 0, 2, 5, 9 };
+
+    uint8_t blk[SFIGHT_SETTINGS_LEN];
+    sfight_read_settings(bus, blk);
+
+    uint8_t rounds       = blk[0x01];
+    uint8_t difficulty   = blk[0x02];
+    uint8_t attack_energy = blk[0x03];
+    uint8_t flags        = blk[0x13];
+    uint8_t time         = blk[0x11];
+    uint8_t barriers     = blk[0x18];
+
+    memset(out, 0, sizeof(*out));
+
+    /* Difficulty: Easy, Normal, Hard, Hardest. */
+    out->difficulty = difficulty < 4 ? difficulty : 1;
+
+    /* Rounds: game values 2–5 become menu indices 0–3. */
+    out->rounds_idx =
+        (rounds >= 2 && rounds <= 5) ? rounds - 2 : 0;
+
+    /* Attack strength. */
+    if (flags & 0x80u)
+        out->attack_idx = 4;
+    else if (attack_energy < 4)
+        out->attack_idx = attack_energy;
+    else
+        out->attack_idx = 1;
+
+    /* Time: the game's internal index becomes a menu index. */
+    out->time_idx = 1;
+    for (int i = 0; i < 4; i++) {
+        if (time == time_var[i]) {
+            out->time_idx = (uint8_t)i;
+            break;
+        }
+    }
+
+    /* Barriers: the game uses 1–10; the menu uses 0–9. */
+    out->barriers_idx =
+        (barriers >= 1 && barriers <= 10) ? barriers - 1 : 0;
+
+    /* Game type: A, B, C, D, encoded in bits 3 and 6. */
+    out->type_idx =
+        ((flags & 0x08u) ? 2 : 0) |
+        ((flags & 0x40u) ? 1 : 0);
+
+    out->not_trial = 1;
+    out->reserved = 0;
+}
+
 /*
  * Apply the PS3 menu settings s[8] (sfight_menu_settings_t's layout) to the
  * board: versus = 0 is Settings_ApplyArcade, non-zero Settings_ApplyRoomRules.
