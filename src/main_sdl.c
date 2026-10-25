@@ -1543,7 +1543,19 @@ static bool poll_events(void) {
     pad_resync(&pad_changed);
     if (opt.netplay) lobby_pad_settle(&pad_changed);
     link_pump(&pad_changed);
+    
+    /* Open the SFight menu after the emulator has stopped. */
+    if (g_sfight_menu_waiting &&
+        state.emu.run_state == EMU_STOPPED) {
+        emu_mutex_lock(&state.emu.mutex);
+        sfight_read_menu_settings(&state.bus, &g_sfight_menu);
+        emu_mutex_unlock(&state.emu.mutex);
 
+        g_sfight_menu_row = 0;
+        g_sfight_menu_dirty = false;
+        g_sfight_menu_waiting = false;
+        g_sfight_menu_open = true;
+    }
     if (g_sfight_menu_open || g_sfight_menu_waiting) {
         sfight_pad_release_all();
         pad_changed = false;
