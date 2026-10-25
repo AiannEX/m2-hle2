@@ -53,6 +53,24 @@ typedef struct { const char *name; SDL_GamepadButton button; uint32_t acts; } pa
     { "guide", SDL_GAMEPAD_BUTTON_GUIDE,          0 },                     \
 }
 static pad_bind_t g_pad_binds[] = PAD_BINDS_DEFAULT;
+
+/* L2 and R2 are analog axes, not digital gamepad buttons. */
+typedef struct {
+    const char *name;
+    SDL_GamepadAxis axis;
+    uint32_t acts;
+} pad_trigger_bind_t;
+
+static pad_trigger_bind_t g_pad_trigger_binds[] = {
+    { "l2", SDL_GAMEPAD_AXIS_LEFT_TRIGGER,  0 },
+    { "r2", SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 0 },
+};
+
+#define PAD_TRIGGER_BIND_COUNT \
+    (int)(sizeof g_pad_trigger_binds / sizeof g_pad_trigger_binds[0])
+
+#define TRIGGER_THRESHOLD 16000
+
 #define PAD_BIND_COUNT (int)(sizeof g_pad_binds / sizeof g_pad_binds[0])
 
 /* Which host devices play besides the keyboard (the desktop's Controls
@@ -131,13 +149,28 @@ static bool apply_pad_map(const char *list) {
         *eq = '\0';
         uint32_t acts;
         bool ok = actions_by_name(eq + 1, &acts);
+        
         int b;
         for (b = 0; b < PAD_BIND_COUNT && strcmp(g_pad_binds[b].name, tok); b++) {}
-        if (b == PAD_BIND_COUNT || !ok) {
-            fprintf(stderr, "--pad-map: unknown button or action in '%s=%s'\n", tok, eq + 1);
-            return false;
+
+        if (b < PAD_BIND_COUNT && ok) {
+            g_pad_binds[b].acts = acts;
+            continue;
         }
-        g_pad_binds[b].acts = acts;
+
+        /* L2 and R2 are analog triggers, so check their separate table. */
+        int t;
+        for (t = 0; t < PAD_TRIGGER_BIND_COUNT &&
+                    strcmp(g_pad_trigger_binds[t].name, tok); t++) {}
+
+        if (t < PAD_TRIGGER_BIND_COUNT && ok) {
+            g_pad_trigger_binds[t].acts = acts;
+            continue;
+        }
+
+        fprintf(stderr, "--pad-map: unknown button or action in '%s=%s'\n",
+                tok, eq + 1);
+        return false;
     }
     return true;
 }
@@ -214,6 +247,8 @@ static void sdl_pads_default(void) {
     static const pad_bind_t binds[] = PAD_BINDS_DEFAULT;
     static const wheel_opt_t wheel = WHEEL_OPT_DEFAULT;
     for (int b = 0; b < PAD_BIND_COUNT; b++) g_pad_binds[b].acts = binds[b].acts;
+    for (int t = 0; t < PAD_TRIGGER_BIND_COUNT; t++)
+        g_pad_trigger_binds[t].acts = 0;
     g_wheel_opt = wheel;
     memset(&g_pad_pick, 0, sizeof g_pad_pick);
     g_pad_device = PAD_DEVICE_ANY;
@@ -381,6 +416,17 @@ static void pad_actions(SDL_Gamepad *pad, bool *now) {
         if (!g_pad_binds[b].acts || !SDL_GetGamepadButton(pad, g_pad_binds[b].button)) continue;
         for (int a = 0; a < GAME_INPUT_COUNT; a++)
             if (g_pad_binds[b].acts & ACT(a)) now[a] = true;
+    }
+    /* Apply mapped L2/R2 actions when their analog axes pass the threshold. */
+    for (int t = 0; t < PAD_TRIGGER_BIND_COUNT; t++) {
+        if (!g_pad_trigger_binds[t].acts ||
+            SDL_GetGamepadAxis(pad, g_pad_trigger_binds[t].axis) <= TRIGGER_THRESHOLD)
+            continue;
+
+        for (int a = 0; a < GAME_INPUT_COUNT; a++) {
+            if (g_pad_trigger_binds[t].acts & ACT(a))
+                now[a] = true;
+        }
     }
 }
 
