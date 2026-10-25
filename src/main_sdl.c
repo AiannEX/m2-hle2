@@ -1978,6 +1978,85 @@ static const sg_pass_action g_pass_action = {
 
 /* What the screen pass draws: the game picture (or the lobby's black), the
  * scripts' layer, the OSD, the lobby and the debug text. */
+
+/* Draw the Sonic the Fighters settings menu over the game. */
+static void sfight_menu_draw(int fb_w, int fb_h)
+{
+    if (!g_sfight_menu_open)
+        return;
+    /* Initialize debug text if no other feature has initialized it. */
+    if (!g_sdtx_on) {
+        sdtx_setup(&(sdtx_desc_t){
+            .fonts[0] = sdtx_font_cpc(),
+            .logger.func = slog_func
+        });
+        g_sdtx_on = true;
+    }
+
+    float scale = fb_h >= 720 ? 3.0f : 2.0f;
+    sg_apply_viewport(0, 0, fb_w, fb_h, true);
+    sg_apply_scissor_rect(0, 0, fb_w, fb_h, true);
+    sdtx_canvas((float)fb_w / scale, (float)fb_h / scale);
+    sdtx_origin(0.0f, 0.0f);
+    sdtx_pos(2.0f, 1.0f);
+    sdtx_color3b(255, 220, 64);
+    sdtx_puts("SONIC THE FIGHTERS - SETTINGS");
+    char line[96];
+    const char *difficulty[] = {
+        "Easy", "Normal", "Hard", "Hardest"
+    };
+    const char *rounds[] = { "2", "3", "4", "5" };
+    const char *time[] = {
+        "10 Seconds", "30 Seconds", "60 Seconds", "99 Seconds"
+    };
+    const char *attack[] = {
+        "-1", "Normal", "+1", "+2", "+3"
+    };
+    const char *type[] = {
+        "A (Default)", "B (Hyper Off)",
+        "C (Barrier Reset)", "D (Both)"
+    };
+    const char *values[6] = {
+        difficulty[g_sfight_menu.difficulty % 4],
+        rounds[g_sfight_menu.rounds_idx % 4],
+        time[g_sfight_menu.time_idx % 4],
+        attack[g_sfight_menu.attack_idx % 5],
+        NULL,
+        type[g_sfight_menu.type_idx % 4]
+    };
+
+    for (int i = 0; i < 7; i++) {
+        const char *label = "";
+        const char *value = "";
+        switch (i) {
+            case 0: label = "Difficulty"; value = values[0]; break;
+            case 1: label = "Rounds"; value = values[1]; break;
+            case 2: label = "Round Time"; value = values[2]; break;
+            case 3: label = "Attack Power"; value = values[3]; break;
+            case 4:
+                label = "Barriers";
+                snprintf(line, sizeof(line), "%u",
+                         (unsigned)(g_sfight_menu.barriers_idx + 1));
+                value = line;
+                break;
+            case 5: label = "Game Type"; value = values[5]; break;
+            case 6: label = "Apply Settings"; break;
+        }
+        snprintf(line, sizeof(line), "%c %-16s %s",
+                 i == g_sfight_menu_row ? '>' : ' ',
+                 label, value);
+        sdtx_pos(3.0f, 4.0f + (float)i * 2.0f);
+        sdtx_color3b(
+            i == g_sfight_menu_row ? 255 : 230,
+            i == g_sfight_menu_row ? 220 : 230,
+            i == g_sfight_menu_row ? 64 : 230
+        );
+        sdtx_puts(line);
+    }
+    sdtx_pos(3.0f, 20.0f);
+    sdtx_color3b(200, 200, 200);
+    sdtx_puts("L1 + R1 + Start: Close menu");
+}
 static void render_screen(int fb_w, int fb_h, int ox, int oy, int w, int h, float lerp_t) {
     /* The lobby is drawn on black, to be read; over a match, on the match. */
     if (opt.netplay) lobby_update(SDL_GetTicksNS());
@@ -1995,8 +2074,10 @@ static void render_screen(int fb_w, int fb_h, int ox, int oy, int w, int h, floa
         osd_update(SDL_GetTicksNS());
         osd_draw(fb_w, fb_h);
     }
+    
     if (opt.netplay) lobby_draw(fb_w, fb_h, SDL_GetTicksNS());
     link_draw(fb_w, fb_h);
+    sfight_menu_draw(fb_w, fb_h);
     if (g_sdtx_on) sdtx_draw();
 }
 
