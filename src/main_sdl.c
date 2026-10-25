@@ -234,6 +234,7 @@ static bool g_sfight_menu_open = false;
 static bool g_sfight_menu_waiting = false;
 static bool g_sfight_menu_dirty = false;
 static sfight_menu_settings_t g_sfight_menu;
+static sfight_menu_settings_t g_sfight_menu_saved;
 static int g_sfight_menu_row = 0;
 #define SFIGHT_MENU_ROWS 7
 static const char *g_sfight_difficulty[] = {
@@ -267,6 +268,13 @@ static const char *g_sfight_type[] = {
     "C (Barrier Reset)",
     "D (Both)"
 };
+/* True when the menu values differ from the last loaded/applied settings. */
+static bool sfight_menu_has_changes(void)
+{
+    return memcmp(&g_sfight_menu,
+                  &g_sfight_menu_saved,
+                  sizeof(g_sfight_menu)) != 0;
+}
 
 /* Pause or resume the emulator at a safe slice boundary. */
 static void toggle_pause(void)
@@ -302,6 +310,7 @@ static void sfight_menu_open(void)
 
     emu_mutex_lock(&state.emu.mutex);
     sfight_read_menu_settings(&state.bus, &g_sfight_menu);
+    g_sfight_menu_saved = g_sfight_menu;
     emu_mutex_unlock(&state.emu.mutex);
 
     g_sfight_menu_row = 0;
@@ -333,6 +342,7 @@ static void sfight_menu_apply(void)
 
     emu_mutex_unlock(&state.emu.mutex);
 
+    g_sfight_menu_saved = g_sfight_menu;
     g_sfight_menu_dirty = false;
 }
 static void sfight_menu_change(int delta)
@@ -363,7 +373,7 @@ static void sfight_menu_change(int delta)
                 (uint8_t)((g_sfight_menu.type_idx + 4 + delta) % 4);
             break;
     }
-    g_sfight_menu_dirty = true;
+    g_sfight_menu_dirty = sfight_menu_has_changes();
 }
 static void sfight_menu_move(int delta)
 {
@@ -1464,7 +1474,7 @@ static bool sfight_combo_held(void)
             continue;
         if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) ||
             SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) ||
-            SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START)) {
+            SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK)) {
             held = true;
             break;
         }
@@ -1504,7 +1514,7 @@ static bool poll_events(void) {
             bool combo_down = pad &&
                 SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) &&
                 SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) &&
-                SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START);
+                SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK);
             if (!combo_down) {
                 g_pause_combo_latched = false;
             } else if (!g_pause_combo_latched) {
@@ -1531,6 +1541,7 @@ static bool poll_events(void) {
         }
 
 
+
         /* Handle controller navigation while the SFight menu is open. */
         if (sfight_menu_available() && g_sfight_menu_open) {
             if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
@@ -1553,20 +1564,8 @@ static bool poll_events(void) {
                     case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
                         sfight_menu_change(1);
                         break;
-                    case SDL_GAMEPAD_BUTTON_START:
-                    case SDL_GAMEPAD_BUTTON_NORTH:
-                        if (g_sfight_menu_row == SFIGHT_MENU_ROWS - 1) {
-                            sfight_menu_apply();
-                        } else {
-                            sfight_menu_change(1);
-                        }
-                        break;
-                    case SDL_GAMEPAD_BUTTON_WEST:
-                        if (g_sfight_menu_row == SFIGHT_MENU_ROWS - 1) {
-                            sfight_menu_apply();
-                        } else {
-                            sfight_menu_change(1);
-                        }
+                    case SDL_GAMEPAD_BUTTON_BACK:
+                        sfight_menu_cancel();
                         break;
                     case SDL_GAMEPAD_BUTTON_SOUTH:
                         if (g_sfight_menu_row == SFIGHT_MENU_ROWS - 1) {
@@ -1596,6 +1595,71 @@ static bool poll_events(void) {
                 pad_changed = true;
                 continue;
             }
+        }
+        /* F1 opens/closes the SFight menu and pauses/resumes the emulator. */
+        if (sfight_menu_available() &&
+            ev.type == SDL_EVENT_KEY_DOWN &&
+            ev.key.scancode == SDL_SCANCODE_F1 &&
+            !ev.key.repeat) {
+
+            if (g_sfight_menu_open) {
+                sfight_menu_cancel();
+            } else if (!g_sfight_menu_waiting) {
+                sfight_menu_open();
+            }
+
+            continue;
+        }
+        /* Handle keyboard navigation while the SFight menu is open. */
+        if (sfight_menu_available() && g_sfight_menu_open &&
+            ev.type == SDL_EVENT_KEY_DOWN) {
+
+            if (ev.key.repeat)
+                continue;
+
+            switch (ev.key.scancode) {
+                case SDL_SCANCODE_UP:
+                    g_sfight_menu_row =
+                        (g_sfight_menu_row + SFIGHT_MENU_ROWS - 1)
+                        % SFIGHT_MENU_ROWS;
+                    break;
+
+                case SDL_SCANCODE_DOWN:
+                    g_sfight_menu_row =
+                        (g_sfight_menu_row + 1) % SFIGHT_MENU_ROWS;
+                    break;
+
+                case SDL_SCANCODE_LEFT:
+                    sfight_menu_change(-1);
+                    break;
+
+                case SDL_SCANCODE_RIGHT:
+                    sfight_menu_change(1);
+                    break;
+
+                case SDL_SCANCODE_RETURN:
+                case SDL_SCANCODE_KP_ENTER:
+                    if (g_sfight_menu_row == SFIGHT_MENU_ROWS - 1)
+                        sfight_menu_apply();
+                    else
+                        sfight_menu_change(1);
+                    break;
+
+                case SDL_SCANCODE_ESCAPE:
+                    sfight_menu_cancel();
+                    break;
+
+                default:
+                    break;
+            }
+
+            continue;
+        }
+
+        /* Consume key releases too, so they don't reach gameplay. */
+        if (sfight_menu_available() && g_sfight_menu_open &&
+            ev.type == SDL_EVENT_KEY_UP) {
+            continue;
         }
 
 
@@ -2169,6 +2233,14 @@ static void sfight_menu_draw(int fb_w, int fb_h)
         "L1 + R1 + Start: Close menu",
         200, 200, 200
     );
+        sdtx_pos(3.0f, 22.0f);
+    if (sfight_menu_has_changes()) {
+        sdtx_color3b(255, 100, 100);
+        sdtx_puts("UNSAVED CHANGES");
+    } else {
+        sdtx_color3b(100, 255, 100);
+        sdtx_puts("SETTINGS UNCHANGED");
+    }
 }
 static void render_screen(int fb_w, int fb_h, int ox, int oy, int w, int h, float lerp_t) {
     /* The lobby is drawn on black, to be read; over a match, on the match. */
