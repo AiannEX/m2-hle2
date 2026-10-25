@@ -1490,6 +1490,11 @@ static bool poll_events(void) {
         if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
             ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
             SDL_Gamepad *pad = SDL_GetGamepadFromID(ev.gbutton.which);
+            SDL_Log("Pause test: event=%d button=%d pad=%p profile=%s",
+                (int)ev.type,
+                (int)ev.gbutton.button,
+                (void *)pad,
+                g_active_profile ? g_active_profile->id : "(none)");
             bool combo_down = pad &&
                 SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) &&
                 SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) &&
