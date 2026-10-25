@@ -2,6 +2,7 @@
 # one set up for another generator, so these multiply (build, build_test,
 # ...); the pattern covers the MSBuild .tlog / .vcxproj litter in all of them.
 build/
+build*/
 build_*/
 out/
 bin/
@@ -14,6 +15,10 @@ bin/
 *.ilk
 *.exp
 
+#AiannAdded
+UpdateAll.ps1
+SignScript.ps1
+
 # CMake
 CMakeCache.txt
 CMakeFiles/
@@ -24,6 +29,9 @@ compile_commands.json
 .cmake/
 
 # Visual Studio / VS Code
+.github/
+.git/
+.claude/
 .vs/
 .vscode/
 *.user
