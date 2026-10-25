@@ -1529,6 +1529,76 @@ static bool poll_events(void) {
                 continue;
             }
         }
+
+
+        /* Handle controller navigation while the SFight menu is open. */
+        if (sfight_menu_available() && g_sfight_menu_open) {
+            if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                switch (ev.gbutton.button) {
+                    case SDL_GAMEPAD_BUTTON_DPAD_UP:
+                        g_sfight_menu_row =
+                            (g_sfight_menu_row + SFIGHT_MENU_ROWS - 1)
+                            % SFIGHT_MENU_ROWS;
+                        break;
+
+                    case SDL_GAMEPAD_BUTTON_DPAD_DOWN:
+                        g_sfight_menu_row =
+                            (g_sfight_menu_row + 1) % SFIGHT_MENU_ROWS;
+                        break;
+
+                    case SDL_GAMEPAD_BUTTON_DPAD_LEFT:
+                        sfight_menu_change(-1);
+                        break;
+
+                    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
+                        sfight_menu_change(1);
+                        break;
+                    case SDL_GAMEPAD_BUTTON_START:
+                    case SDL_GAMEPAD_BUTTON_NORTH:
+                        if (g_sfight_menu_row == SFIGHT_MENU_ROWS - 1) {
+                            sfight_menu_apply();
+                        } else {
+                            sfight_menu_change(1);
+                        }
+                        break;
+                    case SDL_GAMEPAD_BUTTON_WEST:
+                        if (g_sfight_menu_row == SFIGHT_MENU_ROWS - 1) {
+                            sfight_menu_apply();
+                        } else {
+                            sfight_menu_change(1);
+                        }
+                        break;
+                    case SDL_GAMEPAD_BUTTON_SOUTH:
+                        if (g_sfight_menu_row == SFIGHT_MENU_ROWS - 1) {
+                            sfight_menu_apply();
+                        } else {
+                            sfight_menu_change(1);
+                        }
+                        break;
+                    case SDL_GAMEPAD_BUTTON_EAST:
+                        if (g_sfight_menu_row == SFIGHT_MENU_ROWS - 1) {
+                            sfight_menu_apply();
+                        } else {
+                            sfight_menu_change(1);
+                        }
+                        break;
+                    default:
+                        break;
+                }
+
+                pad_changed = true;
+                continue;
+            }
+
+            /* Don't let releases or stick movement reach gameplay. */
+            if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP ||
+                ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+                pad_changed = true;
+                continue;
+            }
+        }
+
+
         gun_event(&ev);
         sdl_pads_event(&ev, &pad_changed);
         switch (ev.type) {
@@ -1991,6 +2061,32 @@ static const sg_pass_action g_pass_action = {
  * scripts' layer, the OSD, the lobby and the debug text. */
 
 /* Draw the Sonic the Fighters settings menu over the game. */
+static void sfight_draw_text_outline(float x, float y,
+                                     const char *text,
+                                     unsigned char r,
+                                     unsigned char g,
+                                     unsigned char b)
+{
+    /* Draw the black outline around the text. */
+    sdtx_color3b(0, 0, 0);
+
+    sdtx_pos(x - 0.1f, y);
+    sdtx_puts(text);
+
+    sdtx_pos(x + 0.1f, y);
+    sdtx_puts(text);
+
+    sdtx_pos(x, y - 0.1f);
+    sdtx_puts(text);
+
+    sdtx_pos(x, y + 0.1f);
+    sdtx_puts(text);
+
+    /* Draw the actual text in its requested color. */
+    sdtx_color3b(r, g, b);
+    sdtx_pos(x, y);
+    sdtx_puts(text);
+}
 static void sfight_menu_draw(int fb_w, int fb_h)
 {
     if (!g_sfight_menu_open)
@@ -2010,8 +2106,11 @@ static void sfight_menu_draw(int fb_w, int fb_h)
     sdtx_canvas((float)fb_w / scale, (float)fb_h / scale);
     sdtx_origin(0.0f, 0.0f);
     sdtx_pos(2.0f, 1.0f);
-    sdtx_color3b(255, 220, 64);
-    sdtx_puts("SONIC THE FIGHTERS - SETTINGS");
+    sfight_draw_text_outline(
+        2.0f, 1.0f,
+        "SONIC THE FIGHTERS - SETTINGS",
+        255, 220, 64
+    );
     char line[96];
     const char *difficulty[] = {
         "Easy", "Normal", "Hard", "Hardest"
@@ -2057,16 +2156,19 @@ static void sfight_menu_draw(int fb_w, int fb_h)
                  i == g_sfight_menu_row ? '>' : ' ',
                  label, value);
         sdtx_pos(3.0f, 4.0f + (float)i * 2.0f);
-        sdtx_color3b(
+        sfight_draw_text_outline(
+            3.0f, 4.0f + (float)i * 2.0f,
+            line,
             i == g_sfight_menu_row ? 255 : 230,
             i == g_sfight_menu_row ? 220 : 230,
             i == g_sfight_menu_row ? 64 : 230
         );
-        sdtx_puts(line);
     }
-    sdtx_pos(3.0f, 20.0f);
-    sdtx_color3b(200, 200, 200);
-    sdtx_puts("L1 + R1 + Start: Close menu");
+    sfight_draw_text_outline(
+        3.0f, 20.0f,
+        "L1 + R1 + Start: Close menu",
+        200, 200, 200
+    );
 }
 static void render_screen(int fb_w, int fb_h, int ox, int oy, int w, int h, float lerp_t) {
     /* The lobby is drawn on black, to be read; over a match, on the match. */
