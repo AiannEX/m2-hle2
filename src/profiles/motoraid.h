@@ -124,6 +124,42 @@ static int motoraid_hook_cab_id(i960_cpu_t *cpu, memory_bus_t *bus) {
     return 1;
 }
 
+/*
+ * The region (Pinboard #1628). The settings are the EEPROM block the boot's
+ * loader (0x1F030) reads into 0x518FF0: "SEGA", a check word at +8 over the
+ * GAME ASSIGNMENTS, kept twice (the copy at 0x51901C). COUNTRY is the byte at
+ * 0x519006 (0 JAPAN, 1 USA, 2 EXP, 3 AUSTRALIAN, 4 KOREA: the strings at
+ * 0x96980; the test menu edits it as 0x5194BE), g_region's numbers for the
+ * first three. _InitGameSet takes it into _GAMEASSIGN (0x518EF0), and the
+ * coin settings (0x1A510) go by it too.
+ *
+ * country_default (0x1F138): a block that fails took the ROM's defaults
+ * (0x1F200 copies them from 0x21F1C0, COUNTRY JAPAN) and is about to be
+ * kept (0x1F150). Put g_region there first. Japan (0) is the ROM's
+ * default and MAME's, so --region japan (the graders') leaves the board as it
+ * was.
+ *
+ * settings_checked (0x1F124, the loader's ret, where every path ends): with
+ * g_region_over_saved, put g_region over the COUNTRY a saved block brought.
+ * The EEPROM is erased at every board reset here (eeprom_93c46.h), so today
+ * every boot takes the defaults and this writes what country_default did.
+ */
+#define MOTORAID_COUNTRY 0x00519006u
+
+static int motoraid_hook_country_default(i960_cpu_t *cpu, memory_bus_t *bus) {
+    (void)cpu;
+    mem_write8(bus, MOTORAID_COUNTRY, (uint8_t)g_region);
+    return 1;
+}
+
+static uint32_t motoraid_country(memory_bus_t *bus) { (void)bus; return MOTORAID_COUNTRY; }
+
+static int motoraid_hook_settings_checked(i960_cpu_t *cpu, memory_bus_t *bus) {
+    (void)cpu;
+    if (g_region_over_saved) mem_write8(bus, MOTORAID_COUNTRY, (uint8_t)g_region);
+    return 1;
+}
+
 static inline bool motoraid_link_role(memory_bus_t *bus, game_link_role_t role) {
     (void)bus;
     g_motoraid_link = role == GAME_LINK_MASTER ? 1u : role == GAME_LINK_SLAVE ? 2u : 0u;
@@ -174,10 +210,12 @@ static inline void motoraid_install(const romset_t *rs, i960_cpu_t *cpu, memory_
 static const game_profile_t motoraid_profile = {
     .id = "motoraid", .display_name = "Motor Raid - Twin",
     .board = BOARD_MODEL2A_CRX, .load_fn = motoraid_load, .install_fn = motoraid_install,
-    .hook_count = 2,
+    .hook_count = 4,
     .hooks = {
         { MOTORAID_LINK_ID_AT, motoraid_hook_link_id, "link_id" },
         { MOTORAID_CAB_ID_AT,  motoraid_hook_cab_id,  "cab_id" },
+        { 0x0001F138u, motoraid_hook_country_default,  "country_default" },
+        { 0x0001F124u, motoraid_hook_settings_checked, "settings_checked" },
     },
     .link_role = motoraid_link_role,
     .link_twin = true,   /* GGPO: both cabinets on each machine, one rider on each */
@@ -199,7 +237,8 @@ static const game_profile_t motoraid_profile = {
         .io_5649          = true,
         .wheel = { .left = 0x80000, .right = 0x40000, .accel = 0x10000, .brake = 0x20000,
                    .bike = true },
-        .region = { .kind = REGION_TODO, .why = "the country setting is not found yet" },
+        .region = { .kind = REGION_HOOKED, .factory_default = "country_default",
+                     .over_saved = "settings_checked", .country = motoraid_country },
     },
 };
 

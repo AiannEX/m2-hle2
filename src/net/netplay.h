@@ -231,8 +231,10 @@
  *    P1 ball's mask alone, as its own program does, where it ran STF's 1/8
  *    (Pinboard #1353). 35 is #1347's (PR #505).
  * 37: 35's test/service swap, landing after 36: a 36 build has it the old way.
+ * 38: Motor Raid's COUNTRY is the board region (country_default), where it
+ *    was the ROM's JAPAN on every region (Pinboard #1628).
  */
-#define NETPLAY_PROTO_REV 37
+#define NETPLAY_PROTO_REV 38
 
 /* Room attribute word layout. Bits 28-31 are left alone: the server owns
  * SCE_NP_MATCHING2_ROOM_FLAG_ATTR_FULL (0x20000000) in there and rewrites it.
