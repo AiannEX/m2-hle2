@@ -76,6 +76,7 @@
 typedef struct {
     uint32_t left, right, accel, brake, shift_up, shift_down;
     uint32_t gear[5];
+    bool     bike;       /* a motorbike's channels and ports (see io5649_analog) */
 } io5649_controls_t;
 
 /* The pot adjustment: host settings (--wheel-center, --wheel-range,
@@ -213,6 +214,15 @@ static inline uint8_t io5649_pedal(bool held, int host) {
 
 static inline uint8_t io5649_analog(int ch) {
     uint32_t held = io5649_held();
+    /* A motorbike (MAME manxtt, Motor Raid): 0 the throttle, 1 the brake, 2
+     * the bank, a pot read the other way round (PORT_REVERSE: leaning left
+     * reads high). The handlebar is the wheel's model, centred the same. */
+    if (g_io5649_controls.bike) switch (ch) {
+        case 0:  return io5649_pedal(held & g_io5649_controls.accel, g_io5649_host.accel);
+        case 1:  return io5649_pedal(held & g_io5649_controls.brake, g_io5649_host.brake);
+        case 2:  return (uint8_t)(255 - io5649_clamp(g_io5649.steer, 0, 255));
+        default: return 0x00;
+    }
     switch (ch) {
         case 0:  return (uint8_t)io5649_clamp(g_io5649.steer, 0, 255);
         case 1:  return io5649_pedal(held & g_io5649_controls.accel, g_io5649_host.accel);
@@ -237,8 +247,11 @@ static inline uint8_t io5649_read_byte(mem_region_t *r, uint32_t off) {
              * and a START (bit 6) held then took it to the test menu. */
             return eeprom_in0(in0);
         }
-        case 0x04: io5649_advance(); return io5649_gearbox();
-        case 0x06: return 0x00;                       /* IN2: hand brake, unused */
+        case 0x04: io5649_advance();
+                   /* A motorbike's IN1 is its buttons, active low. */
+                   if (g_io5649_controls.bike) return (uint8_t)~((held >> 8) & 0xFFu);
+                   return io5649_gearbox();
+        case 0x06: return g_io5649_controls.bike ? 0xFF : 0x00;   /* IN2: hand brake, unused */
         case 0x1E: {
             io5649_advance();
             uint8_t v = io5649_analog(g_io5649.channel);

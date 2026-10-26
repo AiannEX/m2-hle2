@@ -364,6 +364,9 @@ int main(void) {
         CHECK(comid_for_game("powsled", b) && strcmp(b, "M2HPWRSLD_00") == 0
               && comid_for_game("Power Sled", c) && strcmp(b, c) == 0,
               "Power Sled has its listed lobby, by profile id and by title");
+        CHECK(comid_for_game("motoraid", b) && strcmp(b, "M2HMTRRAD_00") == 0
+              && comid_for_game("Motor Raid", c) && strcmp(b, c) == 0,
+              "Motor Raid has its listed lobby, by profile id and by title");
         CHECK(comid_for_game("lastbrnx", b) && strcmp(b, "M2HLSTBRX_00") == 0
               && comid_for_game("lastbrnxj", c) && strcmp(b, c) == 0
               && comid_for_game("Last Bronx", c) && strcmp(b, c) == 0,

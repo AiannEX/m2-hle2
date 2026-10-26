@@ -459,7 +459,8 @@ static inline void input_io5649_controls(void) {
     g_io5649_controls = (io5649_controls_t){ q->wheel.left, q->wheel.right, q->wheel.accel,
                                              q->wheel.brake, q->wheel.shift_up, q->wheel.shift_down,
                                              { bits[GAME_INPUT_GEAR_N], bits[GAME_INPUT_GEAR_1], bits[GAME_INPUT_GEAR_2],
-                                               bits[GAME_INPUT_GEAR_3], bits[GAME_INPUT_GEAR_4] } };
+                                               bits[GAME_INPUT_GEAR_3], bits[GAME_INPUT_GEAR_4] },
+                                             q->wheel.bike };
 }
 
 /* A 315-5649 board (a wheel): io_5649.h serves the ports and takes the writes. */
