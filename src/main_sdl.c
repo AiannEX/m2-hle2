@@ -1559,24 +1559,26 @@ static bool poll_events(void) {
                     case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
                         sfight_menu_change(1);
                         break;
-                    case SDL_GAMEPAD_BUTTON_LEFT_STICK:
+                    case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:
                         sfight_menu_cancel();
                         break;
-                    case SDL_GAMEPAD_BUTTON_RIGHT_STICK:
+                    case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:
+                        sfight_menu_cancel();
+                        break;
+                    case SDL_GAMEPAD_AXIS_LEFT_TRIGGER:
+                        sfight_menu_cancel();
+                        break;
+                    case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER:
                         sfight_menu_cancel();
                         break;
                     case SDL_GAMEPAD_BUTTON_SOUTH:
                         if (g_sfight_menu_row == SFIGHT_MENU_ROWS - 1) {
                             sfight_menu_apply();
-                        } else {
-                            sfight_menu_change(1);
                         }
                         break;
                     case SDL_GAMEPAD_BUTTON_EAST:
                         if (g_sfight_menu_row == SFIGHT_MENU_ROWS - 1) {
                             sfight_menu_apply();
-                        } else {
-                            sfight_menu_change(1);
                         }
                         break;
                     default:
@@ -2295,7 +2297,7 @@ static void sfight_menu_draw(int fb_w, int fb_h)
     }
     sfight_draw_text_outline(
         3.0f, 20.0f,
-        "L1 + R1 + Back/F1: Close menu",
+        "L1/R1/L2/R2/F1: Close menu",
         200, 200, 200,
         false
     );
