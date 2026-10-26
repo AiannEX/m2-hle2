@@ -95,7 +95,7 @@ Fighters (`sfight_console`, `sfight`), Sega Rally Championship (`srallyc`), Virt
 Dynamite Cop / Dynamite Deka 2 (`dynamcop`, `dyndeka2`, `dynamcopb`, `dyndeka2b`, `dynamcopc`),
 Fighting Vipers (`fvipers`), The House of the Dead (`hotd`), Daytona USA (`daytona`), Dead or Alive
 (`doa`, `doab`, `doaa`, `doaab`, `doaae`), Virtua Fighter 2 (`vf2`, `vf2b`, `vf2a`, `vf2o`), Air
-Walkers (`airwlkrs`), Power Sled (`powsled`), Last Bronx (`lastbrnx`, `lastbrnxu`, `lastbrnxj`;
+Walkers (`airwlkrs`), Power Sled (`powsled`), Motor Raid (`motoraid`, desktop), Last Bronx (`lastbrnx`, `lastbrnxu`, `lastbrnxj`;
 on the web since Pinboard #1535), Pilot Kids (`pltkids`, `pltkidsa`;
 on the web since Pinboard #1538) and Virtua Cop (`vcop`, with the I/O board's
 `model1io2.zip`; the mouse is the gun, a shot off the picture reloads). The desktop build adds the
@@ -158,6 +158,18 @@ A GGPO match (Pinboard #1095) runs both boards on each machine: the challenger, 
 is the Main and the one who accepts, player 2, rides; only the two players' inputs cross the
 network. A race of two riders (three boards) is not a GGPO match. `tools/powsled-ggpo-pair.mjs`
 races two headless copies that way through a local ggpo-server.
+
+### Motor Raid
+
+`motoraid.zip` (Pinboard #1627) races alone as it is: the cabinet ships set to STAND ALONE.
+Coin twice (`COIN1`), **Start**, then Start through the course and bike pickers. The bike's
+throttle and brake are `P1 B1` and `P1 B2` (analog on a pad's triggers), lean is the stick or
+`P1 Left`/`P1 Right`, Punch `P1 B3` and Kick `P1 B4`.
+
+Two cabinets race each other in a Room Match on RPCN (the owner's board is the link MASTER, the
+guest's the SLAVE; `tools/motoraid-rpcn-pair.mjs`) or a GGPO match, where each machine runs
+both cabinets (`tools/motoraid-ggpo-pair.mjs`). Locally, `--comm-master` and `--comm-slave
+PORT:TOKEN` pair two copies as for Power Sled. The roles need nothing set in the test menu.
 
 ## Layout
 

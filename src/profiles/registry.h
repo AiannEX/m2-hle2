@@ -33,6 +33,7 @@
 #include "lastbrnx.h"  /* runs since Pinboard #1517, on the site since #1535 */
 #include "pltkids.h"   /* runs since Pinboard #1538, on the site too */
 #ifndef M2HLE_WEB
+#include "motoraid.h"   /* Pinboard #1627 */
 #include "m2snake.h"
 #include "sfight_homebrew.h"
 #endif
@@ -84,6 +85,7 @@ const game_profile_t *const g_profiles[] = {
     &daytonata_profile,
     &daytonagtx_profile,
 #ifndef M2HLE_WEB
+    &motoraid_profile,
     &m2snake_profile,
     &sfight_homebrew_profile,
 #endif
