@@ -1478,9 +1478,8 @@ static bool sfight_combo_held(void)
         SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
         if (!pad)
             continue;
-        if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) ||
-            SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) ||
-            SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK)) {
+        if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_STICK) ||
+            SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_STICK)) {
             held = true;
             break;
         }
@@ -1498,11 +1497,7 @@ static bool poll_events(void) {
 
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
-            ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
-            SDL_Log("Controller event: type=%d button=%d",
-                    (int)ev.type,
-                    (int)ev.gbutton.button);
-        }
+            ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {}
         if (link_event(&ev)) continue;
         if (opt.netplay && lobby_event(&ev, &pad_changed)) continue;
         /*
@@ -1512,15 +1507,9 @@ static bool poll_events(void) {
         if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
             ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
             SDL_Gamepad *pad = SDL_GetGamepadFromID(ev.gbutton.which);
-            SDL_Log("Pause test: event=%d button=%d pad=%p profile=%s",
-                (int)ev.type,
-                (int)ev.gbutton.button,
-                (void *)pad,
-                g_active_profile ? g_active_profile->id : "(none)");
             bool combo_down = pad &&
-                SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) &&
-                SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) &&
-                SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK);
+                SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_STICK) &&
+                SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_STICK);
             if (!combo_down) {
                 g_pause_combo_latched = false;
             } else if (!g_pause_combo_latched) {
@@ -1570,7 +1559,10 @@ static bool poll_events(void) {
                     case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
                         sfight_menu_change(1);
                         break;
-                    case SDL_GAMEPAD_BUTTON_BACK:
+                    case SDL_GAMEPAD_BUTTON_LEFT_STICK:
+                        sfight_menu_cancel();
+                        break;
+                    case SDL_GAMEPAD_BUTTON_RIGHT_STICK:
                         sfight_menu_cancel();
                         break;
                     case SDL_GAMEPAD_BUTTON_SOUTH:
