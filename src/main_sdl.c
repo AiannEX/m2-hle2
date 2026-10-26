@@ -2380,10 +2380,12 @@ static void render_frame(void) {
     sgl_matrix_mode_projection();
     sgl_ortho(0.0f, (float)fb_w, (float)fb_h, 0.0f, -1.0f, 1.0f);
     sgl_begin_quads();
-    sgl_v2f_t2f(0.0f,        0.0f,        1.0f, 0.0f);
-    sgl_v2f_t2f((float)fb_w, 0.0f,        1.0f, 1.0f);
-    sgl_v2f_t2f((float)fb_w, (float)fb_h, 0.0f, 1.0f);
-    sgl_v2f_t2f(0.0f,        (float)fb_h, 0.0f, 0.0f);
+    /* Render-target textures use the opposite vertical origin here; flip V
+       while rotating so the final image is not mirrored. */
+    sgl_v2f_t2f(0.0f,        0.0f,        1.0f, 1.0f);
+    sgl_v2f_t2f((float)fb_w, 0.0f,        1.0f, 0.0f);
+    sgl_v2f_t2f((float)fb_w, (float)fb_h, 0.0f, 0.0f);
+    sgl_v2f_t2f(0.0f,        (float)fb_h, 0.0f, 1.0f);
     sgl_end();
     sgl_draw();
     int pzone = hprof_enter(HPROF_PRESENT);   /* host_prof.h */
