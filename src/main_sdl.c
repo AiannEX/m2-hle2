@@ -19,9 +19,6 @@
  *            test none, a racing cabinet's gearn gear1 gear2 gear3 gear4 (one
  *            button a gate, Daytona and Sega Rally), or a combo that holds
  *            several at once (a "macro"), e.g. "north=b1+b2,l3=b1+b2+b3".
- * 
- *  * --pad-map  comma-separated button=action pairs overriding the defaults, e.g.
- *            "south=b1,east=b2,west=b3". 
  *  Buttons: 
  *            south (A), east (B), west (X), north (Y), start, back, l1, r1, l2, r2, l3, r3, guide; 
  *  Actions:
@@ -1911,6 +1908,8 @@ static int gfx_start(void) {
         .logger.func = slog_func,
     });
     if (!sg_isvalid()) { fprintf(stderr, "m2hle: sokol_gfx setup failed\n"); return 1; }
+    /* Sokol GL is also used to present the completed landscape frame rotated. */
+    if (!g_script_img.ready) scripts_images_setup();
     if (opt.stats) { sg_enable_stats(); g_game_frame_gl_counts = true; }   /* the "gl per render" line */
     g_sdtx_on = opt.osd || opt.netplay || g_m2lua.loaded;
     if (g_sdtx_on)
@@ -1936,9 +1935,25 @@ static struct {
     sg_view  color_att, depth_att, texture;
 } g_rt;
 
+/* Full landscape composition, including menus and overlays, before rotation. */
+static struct {
+    sg_image color;
+    sg_view color_att, texture;
+    sg_sampler sampler;
+} g_comp;
+
 static void game_target_make(void) {
     g_rt.w = game_render_wide_width() * opt.render_scale;
     g_rt.h = VIDEO_HEIGHT * opt.render_scale;
+    g_comp.color = sg_make_image(&(sg_image_desc){
+        .usage = { .color_attachment = true }, .width = 640, .height = 480,
+        .pixel_format = SG_PIXELFORMAT_RGBA8, .sample_count = 1,
+        .label = "landscape-composition" });
+    g_comp.color_att = sg_make_view(&(sg_view_desc){ .color_attachment.image = g_comp.color });
+    g_comp.texture = sg_make_view(&(sg_view_desc){ .texture.image = g_comp.color });
+    g_comp.sampler = sg_make_sampler(&(sg_sampler_desc){
+        .min_filter = SG_FILTER_LINEAR, .mag_filter = SG_FILTER_LINEAR,
+        .wrap_u = SG_WRAP_CLAMP_TO_EDGE, .wrap_v = SG_WRAP_CLAMP_TO_EDGE });
     if (opt.render_scale <= 0) return;
     g_rt.color = sg_make_image(&(sg_image_desc){
         .usage = { .color_attachment = true }, .width = g_rt.w, .height = g_rt.h,
@@ -1952,12 +1967,17 @@ static void game_target_make(void) {
 }
 
 static void game_target_destroy(void) {
-    if (opt.render_scale <= 0) return;
-    sg_destroy_view(g_rt.texture);
-    sg_destroy_view(g_rt.depth_att);
-    sg_destroy_view(g_rt.color_att);
-    sg_destroy_image(g_rt.depth);
-    sg_destroy_image(g_rt.color);
+    if (opt.render_scale > 0) {
+        sg_destroy_view(g_rt.texture);
+        sg_destroy_view(g_rt.depth_att);
+        sg_destroy_view(g_rt.color_att);
+        sg_destroy_image(g_rt.depth);
+        sg_destroy_image(g_rt.color);
+    }
+    sg_destroy_sampler(g_comp.sampler);
+    sg_destroy_view(g_comp.texture);
+    sg_destroy_view(g_comp.color_att);
+    sg_destroy_image(g_comp.color);
 }
 
 /* ---- Statistics (--stats, --gl-finish) --------------------------------------- */
@@ -2315,8 +2335,6 @@ static void render_frame(void) {
     float lerp_t = game_frame_lerp();
     game_target_fit();
 
-    int ox, oy, w, h;
-    screen_rect(fb_w, fb_h, &ox, &oy, &w, &h);
     if (opt.render_scale > 0) {
         g_fill_log.n = 0; g_fill_log.uploads = 0; g_fill_log.overflow = false;
         sg_begin_pass(&(sg_pass){
@@ -2335,6 +2353,18 @@ static void render_frame(void) {
         }
         if (opt.verify_fill) verify_fill(g_rt.w, g_rt.h);
     }
+    /* Compose every layer into a landscape 640x480 image first. */
+    int lox, loy, lw, lh;
+    screen_rect(640, 480, &lox, &loy, &lw, &lh);
+    sg_begin_pass(&(sg_pass){
+        .action = { .colors[0] = { .load_action = SG_LOADACTION_CLEAR,
+                                  .clear_value = { 0.0f, 0.0f, 0.0f, 1.0f } } },
+        .attachments = { .colors[0] = g_comp.color_att },
+    });
+    render_screen(640, 480, lox, loy, lw, lh, lerp_t);
+    sg_end_pass();
+
+    /* Present the completed landscape image rotated 90 degrees CCW. */
     sg_begin_pass(&(sg_pass){
         .action = g_pass_action,
         .swapchain = { .width = fb_w, .height = fb_h, .sample_count = 1,
@@ -2342,7 +2372,20 @@ static void render_frame(void) {
                        .depth_format = SG_PIXELFORMAT_DEPTH_STENCIL,
                        .gl.framebuffer = 0 },
     });
-    render_screen(fb_w, fb_h, ox, oy, w, h, lerp_t);
+    sg_apply_viewport(0, 0, fb_w, fb_h, true);
+    sg_apply_scissor_rect(0, 0, fb_w, fb_h, true);
+    sgl_defaults();
+    sgl_enable_texture();
+    sgl_texture(g_comp.texture, g_comp.sampler);
+    sgl_matrix_mode_projection();
+    sgl_ortho(0.0f, (float)fb_w, (float)fb_h, 0.0f, -1.0f, 1.0f);
+    sgl_begin_quads();
+    sgl_v2f_t2f(0.0f,        0.0f,        1.0f, 0.0f);
+    sgl_v2f_t2f((float)fb_w, 0.0f,        1.0f, 1.0f);
+    sgl_v2f_t2f((float)fb_w, (float)fb_h, 0.0f, 1.0f);
+    sgl_v2f_t2f(0.0f,        (float)fb_h, 0.0f, 0.0f);
+    sgl_end();
+    sgl_draw();
     int pzone = hprof_enter(HPROF_PRESENT);   /* host_prof.h */
     sg_end_pass();
     sg_commit();

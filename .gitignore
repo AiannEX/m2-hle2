@@ -18,6 +18,8 @@ bin/
 #AiannAdded
 UpdateAll.ps1
 SignScript.ps1
+RunGame.ps1
+RunGame.sh
 
 # CMake
 CMakeCache.txt
