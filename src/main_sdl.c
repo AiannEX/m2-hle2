@@ -187,6 +187,7 @@ static struct {
     const char *profile;            /* --profile <id>; NULL = the ROM set's default */
     double      render_fps;
     int         win_w, win_h;       /* 0 = fullscreen */
+    int         rotation;           /* --rotation: 0, 90, 180, or 270 degrees CCW */
     bool        stats;
     bool        osd;
     bool        sound;
@@ -219,7 +220,7 @@ static struct {
     bool        no_scripts;
     int         script_opt_count;
     const char *script_opt[MAX_SCRIPT_OPTS];   /* --script-option codes */
-} opt = { .render_fps = 30.0, .render_scale = 1, .linear = true, .pad = -1 };
+} opt = { .render_fps = 30.0, .render_scale = 1, .linear = true, .pad = -1, .rotation = 0 };
 
 static bool g_sdtx_on;              /* sokol's debug text is set up: --osd, the lobby, a script's text or the link question (link_draw) */
 static bool g_sound_on;             /* the sound board is attached (sound_start succeeded) */
@@ -985,6 +986,14 @@ static bool parse_args(int argc, char **argv) {
         }
         else if (!strcmp(a, "--live-timers"))        ;   /* always on now */
         else if (!strcmp(a, "--window") && more)     { if (sscanf(argv[++i], "%dx%d", &opt.win_w, &opt.win_h) != 2) return false; }
+        else if (!strcmp(a, "--rotation") && more) {
+            int r = atoi(argv[++i]);
+            if (r != 0 && r != 90 && r != 180 && r != 270) {
+                fprintf(stderr, "m2hle: --rotation must be 0, 90, 180, or 270\n");
+                return false;
+            }
+            opt.rotation = r;
+        }
         else if (!strcmp(a, "--stats"))              opt.stats = true;
         else if (!strcmp(a, "--sound"))              opt.sound = true;
         else if (!strcmp(a, "--sound-hle"))          g_sound_hle_want = 1;   /* the sound driver in C (sound_hle.h) */
@@ -2379,13 +2388,51 @@ static void render_frame(void) {
     sgl_texture(g_comp.texture, g_comp.sampler);
     sgl_matrix_mode_projection();
     sgl_ortho(0.0f, (float)fb_w, (float)fb_h, 0.0f, -1.0f, 1.0f);
+
+    /* Keep the image's aspect ratio for every rotation. A 90/270 degree
+       rotation swaps the landscape dimensions; 0/180 stays landscape. */
+    float image_w = (opt.rotation == 90 || opt.rotation == 270) ? 480.0f : 640.0f;
+    float image_h = (opt.rotation == 90 || opt.rotation == 270) ? 640.0f : 480.0f;
+    float scale_x = (float)fb_w / image_w;
+    float scale_y = (float)fb_h / image_h;
+    float scale = scale_x < scale_y ? scale_x : scale_y;
+    float draw_w = image_w * scale;
+    float draw_h = image_h * scale;
+    float x0 = ((float)fb_w - draw_w) * 0.5f;
+    float y0 = ((float)fb_h - draw_h) * 0.5f;
+    float x1 = x0 + draw_w;
+    float y1 = y0 + draw_h;
+
     sgl_begin_quads();
-    /* Render-target textures use the opposite vertical origin here; flip V
-       while rotating so the final image is not mirrored. */
-    sgl_v2f_t2f(0.0f,        0.0f,        1.0f, 1.0f);
-    sgl_v2f_t2f((float)fb_w, 0.0f,        1.0f, 0.0f);
-    sgl_v2f_t2f((float)fb_w, (float)fb_h, 0.0f, 0.0f);
-    sgl_v2f_t2f(0.0f,        (float)fb_h, 0.0f, 1.0f);
+    /* UVs account for the render-target's vertical origin. The option is
+       measured counter-clockwise as viewed on screen. */
+    switch (opt.rotation) {
+        case 0:
+            sgl_v2f_t2f(x0, y0, 0.0f, 1.0f);
+            sgl_v2f_t2f(x1, y0, 1.0f, 1.0f);
+            sgl_v2f_t2f(x1, y1, 1.0f, 0.0f);
+            sgl_v2f_t2f(x0, y1, 0.0f, 0.0f);
+            break;
+        case 180:
+            sgl_v2f_t2f(x0, y0, 1.0f, 0.0f);
+            sgl_v2f_t2f(x1, y0, 0.0f, 0.0f);
+            sgl_v2f_t2f(x1, y1, 0.0f, 1.0f);
+            sgl_v2f_t2f(x0, y1, 1.0f, 1.0f);
+            break;
+        case 270:
+            sgl_v2f_t2f(x0, y0, 0.0f, 0.0f);
+            sgl_v2f_t2f(x1, y0, 0.0f, 1.0f);
+            sgl_v2f_t2f(x1, y1, 1.0f, 1.0f);
+            sgl_v2f_t2f(x0, y1, 1.0f, 0.0f);
+            break;
+        case 90:
+        default:
+            sgl_v2f_t2f(x0, y0, 1.0f, 1.0f);
+            sgl_v2f_t2f(x1, y0, 1.0f, 0.0f);
+            sgl_v2f_t2f(x1, y1, 0.0f, 0.0f);
+            sgl_v2f_t2f(x0, y1, 0.0f, 1.0f);
+            break;
+    }
     sgl_end();
     sgl_draw();
     int pzone = hprof_enter(HPROF_PRESENT);   /* host_prof.h */
