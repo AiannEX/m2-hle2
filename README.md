@@ -95,7 +95,7 @@ Fighters (`sfight_console`, `sfight`), Sega Rally Championship (`srallyc`), Virt
 Dynamite Cop / Dynamite Deka 2 (`dynamcop`, `dyndeka2`, `dynamcopb`, `dyndeka2b`, `dynamcopc`),
 Fighting Vipers (`fvipers`), The House of the Dead (`hotd`), Daytona USA (`daytona`), Dead or Alive
 (`doa`, `doab`, `doaa`, `doaab`, `doaae`), Virtua Fighter 2 (`vf2`, `vf2b`, `vf2a`, `vf2o`), Air
-Walkers (`airwlkrs`), Power Sled (`powsled`), Motor Raid (`motoraid`, desktop), Last Bronx (`lastbrnx`, `lastbrnxu`, `lastbrnxj`;
+Walkers (`airwlkrs`), Power Sled (`powsled`), Motor Raid (`motoraid`; on the web since Pinboard #1628), Last Bronx (`lastbrnx`, `lastbrnxu`, `lastbrnxj`;
 on the web since Pinboard #1535), Pilot Kids (`pltkids`, `pltkidsa`;
 on the web since Pinboard #1538) and Virtua Cop (`vcop`, with the I/O board's
 `model1io2.zip`; the mouse is the gun, a shot off the picture reloads). The desktop build adds the
@@ -170,6 +170,9 @@ Two cabinets race each other in a Room Match on RPCN (the owner's board is the l
 guest's the SLAVE; `tools/motoraid-rpcn-pair.mjs`) or a GGPO match, where each machine runs
 both cabinets (`tools/motoraid-ggpo-pair.mjs`). Locally, `--comm-master` and `--comm-slave
 PORT:TOKEN` pair two copies as for Power Sled. The roles need nothing set in the test menu.
+
+On the website it is `motoraid.html` (Pinboard #1628): a tab is one cabinet, racing alone, and
+two tabs race each other in a Room Match, the owner's as the MASTER. `--region` (on the site, the page's language) sets the cabinet's COUNTRY, so the English page plays in English.
 
 ## Layout
 

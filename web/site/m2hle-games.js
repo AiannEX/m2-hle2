@@ -493,6 +493,39 @@ const m2hleGames = (() => {
         },
       },
     },
+    motoraid: {
+      title: 'Motor Raid',
+      year: 1997, board: 'Model 2A-CRX', colors: ['#d8a21d', '#2a1608'],
+      blurb: 'Motorbike racing with fists and boots: punch and kick the other riders off the road. Races alone; for a race against a friend, open a Room Match: its owner\'s bike is the link MASTER cabinet and its guest\'s the SLAVE.',
+      /* src/profiles/motoraid.h: the Twin cabinet, set to STAND ALONE; a
+       * room links two tabs (net/comm_role.h), each one cabinet. */
+      profiles: [
+        { id: 'motoraid', name: 'Twin', about: 'Twin cabinet' },
+        { id: 'motoraiddx', name: 'Twin/DX', about: 'Twin/DX', soon: true },
+      ],
+      romHint: 'Your <code>motoraid.zip</code> (Motor Raid - Twin)',
+      /* MAME's INPUT_PORTS(motoraid): the throttle, brake and bank are the
+       * 315-5649's analog channels (io_5649.h, quirks.wheel.bike), B3 Punch,
+       * B4 Kick. The arrows ride, as in the desktop's driving keys. */
+      labels: { up: 'Unused', down: 'Unused', left: 'Lean left', right: 'Lean right',
+                b1: 'Throttle', b2: 'Brake', b3: 'Punch', b4: 'Kick' },
+      keys: DRIVING_KEYS,
+      ownReplay: false,
+      /* No shared board: no ranking is read out of its backup RAM yet
+       * (arcade/games.mjs); its save stays in the browser. */
+      arcade: false, keepSave: true,
+      i18n: {
+        ja: {
+          title: 'モーターレイド',
+          blurb: '拳と蹴りで戦うバイクレース。ほかのライダーを殴り、蹴り落とせ。一人でもレースでき、友だちとはルームマッチで：オーナーのバイクがリンクのマスター筐体、ゲストがスレーブ筐体になります。',
+          profiles: { motoraid: { name: 'ツイン', about: 'ツイン筐体' },
+                      motoraiddx: { name: 'ツイン/DX', about: 'ツイン/DX' } },
+          romHint: 'お持ちの <code>motoraid.zip</code>（モーターレイド ツイン）',
+          labels: { up: '未使用', down: '未使用', left: '左に傾ける', right: '右に傾ける',
+                    b1: 'スロットル', b2: 'ブレーキ', b3: 'パンチ', b4: 'キック' },
+        },
+      },
+    },
   };
   const HOSTS = { play: 'sfight', srally: 'srallyc' };
   /* ?game= names that are another game's set: { game, profile }. */

@@ -56,7 +56,6 @@ static const struct { const char *id; game_region_kind_t kind; } g_region_unhook
     { "von",             REGION_PROGRAM_ROM },   /* USA Rev B */
     { "hotdp",           REGION_PROGRAM_ROM },   /* runs Japan only (hotd.h) */
     { "powsled",         REGION_TODO },
-    { "motoraid",        REGION_TODO },   /* COUNTRY in GAME ASSIGNMENTS (EEPROM) */
     { "daytona",         REGION_TODO },
     { "daytona93",       REGION_TODO },
     { "daytonase",       REGION_TODO },
