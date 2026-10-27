@@ -641,9 +641,12 @@ static inline tas_input_t tas__pad_input(void) {
     return in;
 }
 
-/* The input frame `f` runs on: the movie's, or (recording) the pad's written in. */
+/* The input frame `f` runs on: the movie's, or (recording) the pad's written in.
+ * A seek asked for and not taken up yet plays too: a movie opened on a
+ * running board had its first frame taken from the pad before the seek began,
+ * and that take cut the rest of the movie (Pinboard #1640). */
 static inline tas_input_t tas__frame_input(uint32_t f) {
-    bool play = g_tas.seeking || (!g_tas.recording && f < g_tas.mv.n);
+    bool play = g_tas.seeking || ((!g_tas.recording || g_tas.seek_req >= 0) && f < g_tas.mv.n);
     if (play || g_tas.mid) return f < g_tas.mv.n ? g_tas.mv.in[f] : (tas_input_t){ 0 };
     tas_input_t in = tas__pad_input();
     if (f < g_tas.mv.n) {
