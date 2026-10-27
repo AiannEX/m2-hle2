@@ -15,7 +15,7 @@
 /* The web build (M2HLE_WEB) registers Sonic the Fighters, which it exists to
  * play over RPCN, Sega Rally, Virtual-On, Dynamite Cop, Fighting Vipers,
  * The House of the Dead, Daytona USA, Virtua Fighter 2, Dead or Alive and
- * Air Walkers, Power Sled, Virtua Cop, Last Bronx and Pilot Kids, with the clones of #1286 (the page's ?game=, web/site/m2hle-games.js). Any other set is only
+ * Air Walkers, Power Sled, Virtua Cop, Last Bronx, Pilot Kids and Motor Raid, with the clones of #1286 (the page's ?game=, web/site/m2hle-games.js). Any other set is only
  * download size: left out, not hidden. See WEB-PORT.md. Both STF profiles are there, since
  * each is its own lobby space. */
 #include "srallyc.h"
@@ -32,8 +32,8 @@
 #include "vcop.h"      /* runs since Pinboard #1286 */
 #include "lastbrnx.h"  /* runs since Pinboard #1517, on the site since #1535 */
 #include "pltkids.h"   /* runs since Pinboard #1538, on the site too */
+#include "motoraid.h"  /* runs since Pinboard #1627, on the site since #1628 */
 #ifndef M2HLE_WEB
-#include "motoraid.h"   /* Pinboard #1627 */
 #include "m2snake.h"
 #include "sfight_homebrew.h"
 #endif
@@ -74,6 +74,7 @@ const game_profile_t *const g_profiles[] = {
     &lastbrnxj_profile,
     &pltkids_profile,
     &pltkidsa_profile,
+    &motoraid_profile,
     /* The clones of #1286, on the site under their game (web/site/m2hle-games.js). */
     &schamp_profile,
     &hotdo_profile,
@@ -85,7 +86,6 @@ const game_profile_t *const g_profiles[] = {
     &daytonata_profile,
     &daytonagtx_profile,
 #ifndef M2HLE_WEB
-    &motoraid_profile,
     &m2snake_profile,
     &sfight_homebrew_profile,
 #endif
