@@ -38,6 +38,7 @@
 #include "rom_loader.h"   /* romset_t — the regions the model decoder reads */
 #include "input.h"     /* g_input.held — drive the game's I/O ports over the bridge */
 #include "objview_cmd.h"  /* the object viewer's commands, shared with the web build */
+#include "game_shot.h"    /* screenshot: the game's picture, from the render thread */
 #include "av_stream.h"    /* the --av-port server, for the "av" block of get_status */
 #include "overlay_host.h" /* ...and the "overlay" block: is the plugin actually running */
 #include "frame_times.h"  /* ...and "render": where the host's frame time goes */
@@ -2842,6 +2843,49 @@ static void mcp_cmd_objview_set(const char *req, char *resp, int cap) {
                       g_objview.last_ok, g_objview.last_err);
 }
 
+/* {"cmd":"screenshot","path":"...","width":W,"height":H,"timeout_ms":N}: the
+ * game's picture as a PNG (game_shot.h), the board's 496x384 unless W x H say
+ * otherwise; no ImGui, no picture filter. Works with the board stopped: the
+ * last frame is drawn again. Blocks until the render thread has written it. */
+static void mcp_cmd_screenshot(const char *req, char *resp, int cap) {
+    char path[GAME_SHOT_PATH_MAX] = {0}, err[192] = {0};
+    uint32_t w = 0, h = 0, timeout_ms = 10000;
+    mcp_json_get_str(req, "path", path, sizeof path);
+    mcp_json_get_u32(req, "width", &w);
+    mcp_json_get_u32(req, "height", &h);
+    mcp_json_get_u32(req, "timeout_ms", &timeout_ms);
+    if (timeout_ms > 120000) timeout_ms = 120000;
+    if (!game_shot_renderer()) {
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"no renderer: --headless draws nothing "
+                 "without --av-port; run with a window (an Xvfb will do)\"}");
+        return;
+    }
+    char esc[2 * GAME_SHOT_PATH_MAX];
+    if (!game_shot_arm(path, (int)w, (int)h, err, sizeof err)) {
+        mcp_json_escape(esc, (int)sizeof esc, err);
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"%s\"}", esc);
+        return;
+    }
+    game_shot_req_t *rq = &g_game_shot.req;
+    uint32_t elapsed = 0;
+    while (!rq->done && elapsed < timeout_ms) { emu_sleep_ms(2); elapsed += 2; }
+    if (!rq->done) {
+        rq->pending = 0;
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"the render thread did not take the shot "
+                 "in %u ms (a minimised window gets no frames)\"}", timeout_ms);
+        return;
+    }
+    if (!rq->ok) {
+        mcp_json_escape(esc, (int)sizeof esc, rq->err);
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"%s\"}", esc);
+        return;
+    }
+    mcp_json_escape(esc, (int)sizeof esc, rq->path);
+    snprintf(resp, (size_t)cap, "{\"ok\":true,\"path\":\"%s\",\"width\":%d,\"height\":%d,"
+             "\"frame\":%u,\"bytes\":%zu,\"elapsed_ms\":%u}",
+             esc, rq->w, rq->h, rq->frame, rq->bytes, elapsed);
+}
+
 static void mcp_cmd_objview_shot(const char *req, char *resp, int cap) {
     char err[192];
     if (!objview_cmd_arm_shot(req, err, sizeof err)) {
@@ -3161,6 +3205,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
     else if (strcmp(cmd, "objview_status")           == 0) mcp_cmd_objview_status(resp, cap);
     else if (strcmp(cmd, "objview_set")              == 0) mcp_cmd_objview_set(req, resp, cap);
     else if (strcmp(cmd, "objview_shot")             == 0) mcp_cmd_objview_shot(req, resp, cap);
+    else if (strcmp(cmd, "screenshot")               == 0) mcp_cmd_screenshot(req, resp, cap);
     else if (strcmp(cmd, "objview_wait_ready")       == 0) mcp_cmd_objview_wait_ready(req, resp, cap);
     else if (strcmp(cmd, "objview_list")             == 0) mcp_cmd_objview_list(req, resp, cap);
     else if (strcmp(cmd, "dump_bones")               == 0) mcp_cmd_dump_bones(resp, cap);

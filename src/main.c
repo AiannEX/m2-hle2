@@ -56,6 +56,7 @@
 #include "debug_window.h"
 #include "av_stream.h"     /* --av-port raw A/V server (transport + the audio tap) */
 #include "av_capture.h"    /* ...and its offscreen target + async GPU readback */
+#include "game_shot.h"     /* the bridge's screenshot: the game's picture as a PNG */
 #include "mcp_bridge.h"    /* --mcp TCP debug server (ported from m2-hle) */
 #include "netplay_window.h"  /* the RPCN netplay front-end */
 #include "replay_window.h"   /* the Replays menu and the playback window */
@@ -902,6 +903,7 @@ static void init_renderer(void) {
     state.file_dialog = IGFD_Create();
     video_init(&state.video);
     game_render_init();
+    game_shot_set_renderer(true);
     post_shader_init();
     shader_ui_load();
     if (g_shader_preset[0] && !post_shader_load(g_shader_preset))
@@ -1175,6 +1177,7 @@ static bool headless_gpu_init(void) {
     });
     if (!sg_isvalid()) { LOG_ERROR("av: sokol_gfx setup failed on the headless device"); return false; }
     game_render_init();
+    game_shot_set_renderer(true);
     video_init(&state.video);
     LOG_INFO("av: headless graphics up (no window, no swapchain); tiles on the %s",
              state.video.gpu ? "GPU" : "CPU");
@@ -1310,6 +1313,7 @@ static bool headless_gpu_init(void) {
     });
     if (!sg_isvalid()) { LOG_ERROR("av: sokol_gfx setup failed on the headless context"); return false; }
     game_render_init();
+    game_shot_set_renderer(true);
     video_init(&state.video);
     LOG_INFO("av: headless graphics up (EGL %d.%d surfaceless, %s, %s); tiles on the %s",
              (int)major, (int)minor, (const char *)glGetString(GL_RENDERER),
@@ -1379,12 +1383,19 @@ static void headless_tray_start(void) {
         kiosk_set_label(g_active_profile->display_name);
 }
 
+/* The bridge's screenshot (game_shot.h): the game across the target, as the
+ * A/V tap draws it, with the frame the renderer last prepared. */
+static void game_shot_draw(int w, int h) {
+    game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
+                    (game_rect_t){0, 0, w, h}, 1.0f);
+}
+
 /* One headless A/V frame, when one is due. */
-static void headless_av_frame(void) {
+static bool headless_av_frame(void) {
     /* One render per board frame, and only while somebody is reading:
      * with no client this is a poll loop and nothing else. */
     uint64_t av_frame = 0, av_sample = 0;
-    if (!(av_capture_due(&av_frame, &av_sample) && av_stream_active())) return;
+    if (!(av_capture_due(&av_frame, &av_sample) && av_stream_active())) return false;
     game_frame_prepare(&state.video, &state.geo3d, &state.bus,
                        &state.romset, true);
     /* With an overlay loaded the board is letterboxed into the
@@ -1408,6 +1419,16 @@ static void headless_av_frame(void) {
     overlay_host_draw();
     sg_end_pass();
     av_capture_submit(av_frame, av_sample);
+    sg_commit();
+    return true;
+}
+
+/* A headless screenshot: the frame the A/V pass just prepared, or one prepared
+ * for it when no client is reading. */
+static void headless_shot(bool prepared) {
+    if (!game_shot_pending()) return;
+    if (!prepared) game_frame_prepare(&state.video, &state.geo3d, &state.bus, &state.romset, true);
+    game_shot_service(game_shot_draw, g_emu_frames);
     sg_commit();
 }
 
@@ -1451,7 +1472,7 @@ static void headless_loop(bool av_on) {
         tray_headless_tick(g_emu_frames);
         link_check_frame(g_emu_frames);   /* the bridge's link_check "test" answer */
         if (av_on) {
-            headless_av_frame();
+            headless_shot(headless_av_frame());
             headless_sleep_ms(1);
         } else {
             emu_sleep_ms(5);
@@ -1798,6 +1819,8 @@ static void frame(void) {
      * MCP request is waiting. */
     if (!draw_ui) g_objview.preview_open = 0;   /* capture mode shows no windows */
     objview_service(&state.romset, &state.bus);
+    /* The bridge's screenshot, the same way: its own offscreen pass. */
+    game_shot_service(game_shot_draw, g_emu_frames);
 
     sg_commit();
 
@@ -1827,6 +1850,7 @@ static void cleanup(void) {
     if (state.file_dialog) { IGFD_Destroy(state.file_dialog); state.file_dialog = NULL; }
     romset_free(&state.romset);
     objview_shutdown();
+    game_shot_shutdown();
     m2lua_ui_shutdown();
     overlay_host_shutdown();   /* before game_render_shutdown: it owns sg images */
     av_capture_shutdown();
