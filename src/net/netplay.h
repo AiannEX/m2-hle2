@@ -102,6 +102,7 @@
 #include "lockstep.h"
 #include "ps3_link.h"
 #include "room.h"
+#include "rpcn_password.h"
 #include "rpcn_session.h"
 
 #include "constants.h"
@@ -725,6 +726,21 @@ typedef struct {
     bool              twitch_wanted;
     bool              twitch_tried_owner;
     char              twitch_synced[sizeof(((netplay_config_t *)0)->twitch_token)];
+
+    /*
+     * The password as it went out (netplay_password_pick). RPCS3 sends a key
+     * derived from the typed password and an account it made accepts nothing
+     * else, but accounts this emulator made before it did the same took the
+     * password as typed. So a refused login is tried once more in the other
+     * form: `password_other` is that second try. `password_plain` is a typed
+     * password the server took as it was, so later logins start with it.
+     * `password_key` caches the key of `password_key_of` (200,000 rounds).
+     */
+    char              password_sent[sizeof(((netplay_config_t *)0)->password)];
+    bool              password_other;
+    char              password_plain[sizeof(((netplay_config_t *)0)->password)];
+    char              password_key_of[sizeof(((netplay_config_t *)0)->password)];
+    char              password_key[RPCN_KEY_HEX_LEN + 1];
 
     /* A Host or Join held back until the server has our address (see
      * netplay_take_room). */
@@ -1649,6 +1665,10 @@ static inline bool netplay_open_url(const char *url) {
  * Twitch flow issue a token instead -- that path clears the password (see
  * NETPLAY_CMD_TWITCH_POLL) and nothing is written.
  *
+ * Once a login works with RPCS3's key (rpcn_password.h), the key replaces the
+ * typed password here, as rpcs3.yml keeps it: it signs in just the same, but
+ * no longer gives away a password the player may use elsewhere.
+ *
  * The file is plain text with no permissions of its own, so it is exactly as
  * private as the directory holding it. The header line below says so, for
  * whoever opens it next.
@@ -2511,6 +2531,32 @@ static inline bool netplay_pick_lobby(const netplay_config_t *cfg, char *com_id,
     return true;
 }
 
+/* RPCS3's key for a typed password, from the cache when it was the last one. */
+static inline const char *netplay_password_key(const char *typed) {
+    if (strcmp(g_netplay.password_key_of, typed) != 0 || !g_netplay.password_key[0]) {
+        rpcn_password_key(typed, g_netplay.password_key);
+        snprintf(g_netplay.password_key_of, sizeof(g_netplay.password_key_of), "%s", typed);
+    }
+    return g_netplay.password_key;
+}
+
+/* The other form of a password is worth a second login: a typed one has its
+ * key, and a key (rpcs3.yml's, or one this file stored) has none. */
+static inline bool netplay_password_has_other(const char *pw) {
+    return pw[0] && !rpcn_password_is_key(pw);
+}
+
+/* The password to send, into g_netplay.password_sent: RPCS3's key first, as
+ * RPCS3 itself sends (rpcn_password.h); as typed for a password the server took
+ * that way before; and the other of the two when `password_other`. */
+static inline const char *netplay_password_pick(const char *pw) {
+    bool plain = strcmp(pw, g_netplay.password_plain) == 0 && pw[0];
+    if (g_netplay.password_other && netplay_password_has_other(pw)) plain = !plain;
+    const char *sent = (plain || !netplay_password_has_other(pw)) ? pw : netplay_password_key(pw);
+    snprintf(g_netplay.password_sent, sizeof(g_netplay.password_sent), "%s", sent);
+    return g_netplay.password_sent;
+}
+
 /* The session's login and lobby, from the settings now in g_netplay.cfg. The
  * relay URL is written into `relay_buf`, which must last until the session starts. */
 static inline void netplay_session_config(rpcn_session_config_t *sc, const char *com_id,
@@ -2543,7 +2589,7 @@ static inline void netplay_session_config(rpcn_session_config_t *sc, const char 
         netplay_twitch_is_for(&g_netplay.cfg, g_netplay.cfg.npid)
         || (netplay_twitch_here(&g_netplay.cfg) && !g_netplay.cfg.password[0]);
     sc->password        = g_netplay.sent_twitch_token ? g_netplay.cfg.twitch_token
-                                                      : g_netplay.cfg.password;
+                                                      : netplay_password_pick(g_netplay.cfg.password);
     sc->token           = g_netplay.cfg.token;
     sc->com_id          = com_id;
     sc->com_id_foreign  = com_id_foreign;
@@ -2675,6 +2721,27 @@ static inline bool netplay_twitch_try_replaced(void) {
         }
     }
     return false;
+}
+
+/*
+ * The server refused the password: the account may want it in the other form
+ * (see `password_other`). An account RPCS3 made takes only the key, one this
+ * emulator made before #548 only the password as typed. One second login, never
+ * more, and only for "wrong password": a wrong name is wrong in either form.
+ */
+static inline void netplay_password_refused(void) {
+    bool second = g_netplay.password_other;
+    g_netplay.password_other = false;
+    if (second || g_netplay.sent_twitch_token) return;
+    if (g_netplay.session.login_error != RPCN_ERR_LOGIN_BAD_PASSWORD) return;
+    if (!netplay_password_has_other(g_netplay.cfg.password)) return;
+    g_netplay.password_other = true;
+    netplay_log("the server refused %s - trying the password %s",
+                strcmp(g_netplay.password_sent, g_netplay.cfg.password) == 0
+                    ? "the password as typed" : "RPCS3's key for that password",
+                strcmp(g_netplay.password_sent, g_netplay.cfg.password) == 0
+                    ? "as RPCS3 sends it" : "as typed (an account made by an older m2hle)");
+    netplay_do_connect(&g_netplay.cfg);
 }
 
 /*
@@ -3150,6 +3217,7 @@ static inline bool netplay_pump_commands(void) {
                  * browser. */
                 g_netplay.twitch_wanted      = false;
                 g_netplay.twitch_tried_owner = false;
+                g_netplay.password_other     = false;
                 netplay_do_connect(&cmd.cfg);
                 break;
             case NETPLAY_CMD_DISCONNECT: netplay_do_disconnect(); break;
@@ -3171,16 +3239,20 @@ static inline bool netplay_pump_commands(void) {
                 else netplay_log("only the room's owner can start a match early");
                 break;
             case NETPLAY_CMD_LEAVE_ROOM: netplay_do_leave_room(); break;
+            /* With RPCS3's key, as RPCS3 makes one: the account then signs in
+             * there with the same password. */
             case NETPLAY_CMD_CREATE_ACCOUNT:
                 rpcn_account_create(&g_netplay.account, cmd.cfg.server, cmd.cfg.port,
                                     netplay_pin_for(cmd.cfg.server, cmd.cfg.fingerprint),
-                                    cmd.cfg.npid, cmd.cfg.password,
+                                    cmd.cfg.npid,
+                                    netplay_password_has_other(cmd.cfg.password)
+                                        ? netplay_password_key(cmd.cfg.password) : cmd.cfg.password,
                                     cmd.cfg.email);
                 break;
             case NETPLAY_CMD_RESEND_TOKEN:
                 rpcn_account_resend(&g_netplay.account, cmd.cfg.server, cmd.cfg.port,
                                     netplay_pin_for(cmd.cfg.server, cmd.cfg.fingerprint),
-                                    cmd.cfg.npid, cmd.cfg.password);
+                                    cmd.cfg.npid, netplay_password_pick(cmd.cfg.password));
                 break;
             case NETPLAY_CMD_TWITCH_START:
                 /* Already signed in? Then this is a login, not a trip to
@@ -3425,6 +3497,18 @@ static inline void netplay_mirror_online(void) {
                      "%s", g_netplay.cfg.npid);
         g_netplay.twitch_wanted      = false;
         g_netplay.twitch_tried_owner = false;
+        /* Which form of the password the server took. RPCS3's key is kept in
+         * place of the typed password (see NETPLAY_CFG_PATH); a password taken
+         * as typed is sent that way first from now on. */
+        if (!g_netplay.sent_twitch_token && netplay_password_has_other(g_netplay.cfg.password)) {
+            if (strcmp(g_netplay.password_sent, g_netplay.cfg.password) == 0)
+                snprintf(g_netplay.password_plain, sizeof(g_netplay.password_plain), "%s",
+                         g_netplay.cfg.password);
+            else
+                snprintf(g_netplay.cfg.password, sizeof(g_netplay.cfg.password), "%s",
+                         g_netplay.password_sent);
+        }
+        g_netplay.password_other = false;
         netplay_settings_save();
     }
     g_netplay.state = NETPLAY_ONLINE;
@@ -3471,6 +3555,7 @@ static inline void netplay_mirror_failed(void) {
         if (drop) netplay_heal_note_room();
         g_netplay.state = NETPLAY_FAILED;
         netplay_twitch_refused();
+        netplay_password_refused();
         if (drop) {
             if (!g_netplay.heal_tries)
                 netplay_log("lost the connection to the server (%s); signing back in",

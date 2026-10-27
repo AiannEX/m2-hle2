@@ -36,6 +36,14 @@ are **silently wrong** rather than loudly wrong when you get them half right.
   list as u16 shifts every entry two bytes and yields plausible-but-wrong world ids.
 - **Every room REPLY is `[u32 LE length][protobuf]`** (`Client::add_data_packet`). Strip it, or the
   length parses as a tag and the message reads as empty.
+- **Login's password is RPCS3's KEY, not what the player typed** (#548). RPCS3 sends
+  PBKDF2-HMAC-SHA3-256 of it (200,000 rounds, salt "No matter where you go, everybody's connected.",
+  64 uppercase hex: `derive_password`, `rpcn_settings_dialog.cpp`) at sign-up and login alike, so an
+  account RPCS3 made refuses the typed password as ErrorType=8. `rpcn_password.h` makes the key;
+  `netplay_password_pick` sends it first, and once more the other form after a refusal
+  (`netplay_password_refused`), since accounts m2hle made before took the password as typed. A
+  64-hex password is already a key (rpcs3.yml's) and goes as is; a working key replaces the typed
+  password in the settings file.
 - **Login's third string is the e-mail verification token, not a second password**, and the server
   compares it only when it has e-mail validation on (off by default). Empty is the normal value.
 - **When two peers share a public IPv4, RPCN hands out the peer's LOCAL address with port 3658
