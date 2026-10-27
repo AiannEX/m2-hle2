@@ -231,6 +231,8 @@ are **silently wrong** rather than loudly wrong when you get them half right.
   MASTER's m2hle starts a second one (`--versus-slave PORT:TOKEN`) and the two link as a room's
   pair does: the same `comm_link.h` datagrams, role boot and pace, over a UDP socket on
   127.0.0.1 with no RPCN. The MASTER sends nothing until the SLAVE's hello (magic and the token
-  from its command line) pins its port, then takes datagrams from that port only. The child dies
+  from its command line) pins its port, then takes datagrams from that port only, until that
+  port has been quiet 2 s (`COMM_LOCAL_GONE_MS`): then a hello with the token re-pins it, so a
+  SLAVE closed and started again links again, as a cable pulled and put back (Pinboard #1632). The child dies
   with its parent (`PR_SET_PDEATHSIG`; a kill-on-close job on Windows) and the MASTER quits when
   it is gone. No board path changes, so the proto does not move.
