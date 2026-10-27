@@ -31,6 +31,7 @@
 #include "lockstep.h"
 #include "protobuf.h"
 #include "room.h"
+#include "rpcn_password.h"
 #include "rpcn_session.h"
 
 static int g_fail = 0;
@@ -789,6 +790,25 @@ int main(void) {
             rpcn_session_stop(&s);
         }
         net_close(&held);
+    }
+
+    /* ---- (H) RPCS3's password key (#548) ---------------------------------
+     * Python's hashlib.pbkdf2_hmac('sha3_256', ...) gave the expected keys. */
+    {
+        uint8_t d[SHA3_256_BYTES];
+        sha3_256("", 0, d);
+        CHECK(d[0] == 0xA7 && d[1] == 0xFF && d[31] == 0x4A, "(H) SHA3-256 of nothing");
+        char key[RPCN_KEY_HEX_LEN + 1];
+        rpcn_password_key("test1", key);
+        CHECK(strcmp(key, "EC7A0AAD3E74382DAE1F8006A0EE6CDDEB7030C85D8602483596A106459B9737") == 0,
+              "(H) RPCS3's key for \"test1\"");
+        char longer[300];
+        memset(longer, 'x', sizeof(longer) - 1);
+        longer[sizeof(longer) - 1] = '\0';
+        rpcn_password_key(longer, key);
+        CHECK(strcmp(key, "39B91EFE0CDA3533A937EAC9DE7ECE958E14F643219F44C571974F1BAEBB5701") == 0,
+              "(H) a password longer than a SHA-3 block is hashed first");
+        CHECK(rpcn_password_is_key(key) && !rpcn_password_is_key("test1"), "(H) a key is told from a password");
     }
 
     printf("\n%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED", g_fail, g_fail == 1 ? "" : "s");
