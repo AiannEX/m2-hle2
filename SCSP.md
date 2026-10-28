@@ -403,27 +403,42 @@ header comment. What differs from STF's for timing:
   becomes 4850, 7300 with two), and a note-on frees one for a drum retrigger
   or, through sub_600F88's look over all 32, for a steal (4780 more).
   A streamed key-on window is 9600, 11850 with a free, 16600 with a steal.
+- *Timer A's handler opens up.* The queue's put (sub_602AB4) ends with
+  `move.w #$2000,sr`, so after its first event (717 clocks in) the rest of
+  the handler runs open to B and to the next A. A handler longer than the
+  period (hotd: 25 events, 13.2k clocks, once every 1.81 s) lets the next A
+  in; that one reloads the timer, finds `$C3E` set and goes back (228
+  clocks), and the sequencers miss the tick. That lost tick was hotd's whole
+  "fast after 55 s": 14 ticks over 32 s. `a_busy_until`, `crx_a_level`.
+- *The sample swap is masked.* SoundCmd 05 (sub_60209C) copies its set into
+  sound RAM at SR $2200: timer A waits out the copy (hotdp at 81.6 s: 80k
+  words, 165 ms).
 
 Measured on hotd's board (`SND_TRACE` 50-55, 60-65, 70-75 s): timer A median
 period 12701, handler 884 + 481 a queued event; timer B 2590; note-on 300 + 45
 a track looked at + 1300 a track that plays + its key-ons (1500 in RAM, 8300
 streamed); note-off masked from 480 in; rte to the loop's look at the queue
-261 median (450 holds the drift best). What sets the drift is how often and
-how deep timer A lands in a window: at 70-75 s the board has 86 late entries
-(81.8k clocks/s), the HLE 90 (57.5k/s); the windows' lengths and counts match,
-the board's start later after an A.
+261 median (450 still holds the drift best: 261 takes hotd to 96.4%). With
+the lost ticks in, the sequencers play each note on the board's tick (the
+tick count h-b stays put to 80 s); what is left is timer A landing less deep
+in the windows: in hotd's 60-80 s the board's A is 10-25 clocks a tick later.
 
 On the games' own captured commands (`tools/grade-sound-hle.py --crx`, 90 s
-of attract from power-on; key-ons within 30 ms, median, p95 |err| in ms):
+of attract from power-on; key-ons within 30 ms, median, p95 |err| in ms;
+before #1788's two rules above in brackets):
 
 | set | within 30 ms | median / p95 | drift |
 |---|---|---|---|
-| dynamcop | 100.0% | -2.3 / 13.4 | within 16 ms |
-| motoraid | 99.9% | -2.7 / 17.7 | -18 ms at 55 s, back by 70 s |
-| hotd | 91.2% | -1.7 / 34.0 | +-4 ms to 55 s, then fast: -35 ms at 80 s |
+| dynamcop | 100.0% | -1.2 / 10.6 | within 13 ms |
+| motoraid | 99.9% | -2.1 / 17.2 | -18 ms at 56 s, back by 58 s |
+| hotd | 100.0% (91.2%) | -2.5 / 23.0 (-1.7 / 34.0) | -23 ms at 78 s, back by 84 s |
+| hotdp | 100.0% (93.4%) | -2.1 / 15.3 (-6.9 / 30.5) | -15 ms at 76 s |
+
+hotdp (the prototype, its own sndpgm0.31) runs the same code as hotd with
+other songs, so it is a second hotd to grade on.
 
 The i960 cannot tell: det_digest is frame for frame the 68000's on all seven
-sets (`--sound-hle`, 1200-1800 frames). The sound board costs 39% less in
+sets and hotdp (`--sound-hle`, 1200-1800 frames). The sound board costs 39% less in
 hotd (90 s replay: 3.19 s of CPU on the 68000, 1.95 s in C) and 43% less in
 dynamcop (3.13 to 1.79).
 

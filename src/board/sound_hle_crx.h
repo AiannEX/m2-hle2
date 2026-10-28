@@ -96,6 +96,8 @@
 #define CRX_RELOAD_AT_B  70u
 #define CRX_DUR_A        884u      /* the sequencers, before the events they queue */
 #define CRX_DUR_EVENT    481u
+#define CRX_A_UNMASK     717u      /* ...to its first event queued (sub_602AB4 leaves SR 0x2000) */
+#define CRX_DUR_A_NESTED 228u      /* an A inside A's handler: the reload, then $C3E sends it back */
 #define CRX_DUR_B        2590u     /* the countdowns and the LFO over 32 voices */
 #define CRX_COST_EVENT   2900u
 #define CRX_COST_KEYON   1500u
@@ -1091,8 +1093,10 @@ static void crx_swap_restore(void) {
     }
 }
 
+/* sub_60209C runs at SR 0x2200: timer A waits out the copy (hotdp at 81.6 s: 165 ms) */
 static void crx_swap(uint8_t d0) {
     if (d0 == shle_rb(CRX_SWAPSET)) return;
+    uint32_t from = g_shle.cost;
     crx_swap_restore();
     shle_wb(CRX_SWAPSET, d0);
     uint32_t a1 = shle_ml(CRX_P(0x20));
@@ -1112,6 +1116,7 @@ static void crx_swap(uint8_t d0) {
         g_shle.stall = true;
         dst += len + (len & 1);
     }
+    crx_mask(from, g_shle.cost);
 }
 
 /* sub_6023A6: a scene: volume, DSP program, EFSDL, sample set and tracks */
@@ -1787,7 +1792,7 @@ static void crx_boot(uint64_t at) {
     g_shle.restart_at = 0;
     g_shle.busy_until = g_shle.stall_until = 0;
     g_shle.l2_free = 0;
-    g_shle.a_ack = 0;
+    g_shle.a_ack = g_shle.a_busy_until = 0;
     g_shle.amask_n = 0;
     g_shle.refill_at = 0;
     g_shle.refill_n = 0;
@@ -1880,6 +1885,16 @@ static void crx_suspend(uint64_t e, uint32_t dur) {
         } else if (g_shle.amask_win[i][1] > e) {
             g_shle.amask_win[i][1] += dur;          /* MIDI (level 3) went in: the mask lasts longer */
         }
+    if (e < g_shle.a_busy_until) g_shle.a_busy_until += dur;   /* ...and so does an A it went into */
+}
+
+/* Timer A's handler at e, dur long, holds off levels 1-2 till its first event goes in the
+ * queue: sub_602AB4 leaves SR 0x2000. The rest runs open to B and to the next A, which finds
+ * $C3E set and only reloads (hotd: one tick of 25 events every 1.8 s, the music falls behind). */
+static void crx_a_level(uint64_t e, uint32_t dur) {
+    uint64_t end = e + (g_shle.enq ? CRX_A_UNMASK : dur);
+    if (g_shle.l2_free < end) g_shle.l2_free = end;
+    if (g_shle.enq) g_shle.a_busy_until = e + dur;
 }
 
 static bool crx_events_boot(uint64_t now) {
@@ -1890,6 +1905,7 @@ static bool crx_events_boot(uint64_t now) {
     if (now < g_shle.boot_at) return false;
     scsp_t *s = &g_sound.scsp;
     g_shle.booted = true;
+    g_shle.amask_n = 0;                                 /* the boot scene's swap: cost offsets, not times */
     shle_sw8(0x401, 0x0F);
     crx_ctrl(crx_hb(0x68));
     for (int k = 0; k < 4; k++)                         /* four reads of MIBUF */
@@ -1928,14 +1944,15 @@ static bool crx_events_timer(uint64_t now) {
     if (a) {
         uint16_t w = crx_hb(0x6A) << 8 | crx_hb(0x6B);
         g_shle.due_a = (e + CRX_RELOAD_AT_A + shle_period((uint8_t)w, (w >> 8) & 7)) * SHLE_T16;
-        crx_timer_a_body();
-        dur = CRX_DUR_A + g_shle.enq * CRX_DUR_EVENT;
+        bool nested = e < g_shle.a_busy_until;          /* the sequencers miss this tick */
+        if (!nested) crx_timer_a_body();
+        dur = nested ? CRX_DUR_A_NESTED : CRX_DUR_A + g_shle.enq * CRX_DUR_EVENT;
     } else {
         g_shle.due_b = (e + CRX_RELOAD_AT_B + shle_period(0xC6, 3)) * SHLE_T16;
         dur = CRX_DUR_B + crx_timer_b_body() * CRX_COST_FREE;
     }
-    if (a) g_shle.l2_free = e + dur;                    /* B is level 1: A goes in over it */
     crx_suspend(e, dur);
+    if (a) crx_a_level(e, dur);
     crx_dispatch(now);
     return true;
 }

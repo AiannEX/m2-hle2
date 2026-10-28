@@ -219,6 +219,7 @@ typedef struct {
     uint64_t busy_until;     /* clock period the main loop is free to take the next event */
     uint64_t l2_free;        /* clock period no level 2 or 3 handler is running any more */
     uint64_t a_ack;          /* clock period Interrupt1 acknowledges timer A, which hides B and C until then */
+    uint64_t a_busy_until;   /* CRX: a timer A handler that queued events, at SR 0x2000, runs till then */
     uint64_t amask_from, amask_until;   /* the main loop has timer A masked: a MIDI event's tracks */
     uint64_t amask_win[20][2];   /* CRX: the windows a MIDI event's tracks mask levels 1-2 */
     uint32_t amask_n;
