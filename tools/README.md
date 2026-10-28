@@ -905,7 +905,15 @@ program is not listed runs on the interpreter. `scsp_dsp_test` holds each
 compiled program against the reference step. A compiled program checks its delay
 ring against the end of sound RAM once a sample (`ring_ok`) and reads and writes
 the ring directly inside it; a ring past the end takes `scsp_ram_w/ww` as the
-interpreter does (#1474, PERF-PROFILE.md).
+interpreter does (#1474, PERF-PROFILE.md). Nine programs are listed: STF/FV's
+reverb and, since #1713, those of House of the Dead (Dynamite Cop's is the same),
+Motor Raid, VF2, Virtual-On, DOA, Last Bronx, Air Walkers and Power Sled. Sega
+Rally, Virtua Cop and Pilot Kids start none in attract (Daytona's Model 1 sound
+board has no SCSP). To find
+ a game's, dump MPRO
+from `g_sound.scsp.dsp.mpro` after a few hundred frames of attract (a throwaway
+`det_digest` that writes it out does) and `--add` it.
+
 
 ### Over a long session it drifts, and 70 seconds does not show it
 
