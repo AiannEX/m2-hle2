@@ -62,6 +62,56 @@ static void ref_dsp_decode(const scsp_dsp_t *d, ref_op_t *ops) {
 
 static uint16_t ref_dsp_pack(int32_t val);
 
+/* A step's input: MEMS, MIXS or EXTS by IRA, false for an IRA that ends the
+ * program; IWT writes MEMS first. */
+static bool ref_dsp_inputs(scsp_dsp_t *d, const ref_op_t *o, int32_t memval, int32_t *out) {
+    int32_t inputs;
+    if (o->ira <= 0x1F)      inputs = d->mems[o->ira];
+    else if (o->ira <= 0x2F) inputs = d->mixs[o->ira - 0x20] * 16;
+    else if (o->ira <= 0x31) inputs = d->exts[o->ira - 0x30] * 256;
+    else return false;
+    inputs = scsp_sext(inputs, 24);
+    if (o->iwt) {
+        d->mems[o->iwa] = memval;
+        if (o->ira == o->iwa) inputs = memval;
+    }
+    *out = inputs;
+    return true;
+}
+
+static int32_t ref_dsp_y(const scsp_dsp_t *d, const ref_op_t *o, int32_t frc, int32_t yreg) {
+    int32_t y = 0;
+    if (o->ysel == 0)      y = frc;
+    else if (o->ysel == 1) y = d->coef[o->coef] >> 3;
+    else if (o->ysel == 2) y = (yreg >> 11) & 0x1FFF;
+    else                   y = (yreg >> 4) & 0x0FFF;
+    return y;
+}
+
+static int32_t ref_dsp_shift(int32_t acc, int sh) {
+    int32_t shifted;
+    if (sh == 0)      shifted = acc < -0x800000 ? -0x800000 : acc > 0x7FFFFF ? 0x7FFFFF : acc;
+    else if (sh == 1) { int64_t v2 = (int64_t)acc * 2; shifted = v2 < -0x800000 ? -0x800000 : v2 > 0x7FFFFF ? 0x7FFFFF : (int32_t)v2; }
+    else if (sh == 2) shifted = scsp_sext((int32_t)((uint32_t)acc * 2u), 24);
+    else              shifted = scsp_sext(acc, 24);
+    return shifted;
+}
+
+/* The delay memory's read and write for a step with MRD or MWT. */
+static void ref_dsp_memory(scsp_t *s, const ref_op_t *o, int st, int32_t shifted, uint32_t adrs, int32_t *memval) {
+    scsp_dsp_t *d = &s->dsp;
+    uint32_t addr = d->madrs[o->masa];
+    if (!o->table) addr += d->dec;
+    if (o->adreb)  addr += adrs & 0x0FFF;
+    if (o->nxadr)  addr++;
+    addr &= o->table ? 0xFFFFu : d->rbl - 1;
+    addr += d->rbp << 12;
+    addr <<= 1;
+    /* MAME: the delay memory is only touched on odd steps */
+    if (o->mrd && (st & 1)) *memval = o->nofl ? scsp_ram_w(s, addr) << 8 : scsp_dsp_unpack(scsp_ram_w(s, addr));
+    if (o->mwt && (st & 1)) scsp_ram_ww(s, addr, o->nofl ? (uint16_t)(shifted >> 8) : ref_dsp_pack(shifted));
+}
+
 static void ref_dsp_step(scsp_t *s, const ref_op_t *ops) {
     scsp_dsp_t *d = &s->dsp;
     if (d->stopped) return;
@@ -72,15 +122,7 @@ static void ref_dsp_step(scsp_t *s, const ref_op_t *ops) {
         const ref_op_t *o = &ops[st];
 
         int32_t inputs;
-        if (o->ira <= 0x1F)      inputs = d->mems[o->ira];
-        else if (o->ira <= 0x2F) inputs = d->mixs[o->ira - 0x20] * 16;
-        else if (o->ira <= 0x31) inputs = d->exts[o->ira - 0x30] * 256;
-        else return;
-        inputs = scsp_sext(inputs, 24);
-        if (o->iwt) {
-            d->mems[o->iwa] = memval;
-            if (o->ira == o->iwa) inputs = memval;
-        }
+        if (!ref_dsp_inputs(d, o, memval, &inputs)) return;
 
         int32_t b = 0;
         if (!o->zero) {
@@ -88,18 +130,10 @@ static void ref_dsp_step(scsp_t *s, const ref_op_t *ops) {
             if (o->negb) b = -b;
         }
         int32_t x = o->xsel ? inputs : scsp_sext(d->temp[(o->tra + d->dec) & 0x7F], 24);
-        int32_t y = 0;
-        if (o->ysel == 0)      y = frc;
-        else if (o->ysel == 1) y = d->coef[o->coef] >> 3;
-        else if (o->ysel == 2) y = (yreg >> 11) & 0x1FFF;
-        else                   y = (yreg >> 4) & 0x0FFF;
+        int32_t y = ref_dsp_y(d, o, frc, yreg);
         if (o->yrl) yreg = inputs;
 
-        int32_t shifted;
-        if (o->sh == 0)      shifted = acc < -0x800000 ? -0x800000 : acc > 0x7FFFFF ? 0x7FFFFF : acc;
-        else if (o->sh == 1) { int64_t v2 = (int64_t)acc * 2; shifted = v2 < -0x800000 ? -0x800000 : v2 > 0x7FFFFF ? 0x7FFFFF : (int32_t)v2; }
-        else if (o->sh == 2) shifted = scsp_sext((int32_t)((uint32_t)acc * 2u), 24);
-        else                 shifted = scsp_sext(acc, 24);
+        int32_t shifted = ref_dsp_shift(acc, o->sh);
 
         y = scsp_sext(y, 13);
         acc = (int32_t)(((int64_t)x * (int64_t)y) >> 12) + b;
@@ -107,18 +141,7 @@ static void ref_dsp_step(scsp_t *s, const ref_op_t *ops) {
         if (o->twt) d->temp[(o->twa + d->dec) & 0x7F] = shifted;
         if (o->frcl) frc = o->sh == 3 ? (shifted & 0x0FFF) : ((shifted >> 11) & 0x1FFF);
 
-        if (o->mrd || o->mwt) {
-            uint32_t addr = d->madrs[o->masa];
-            if (!o->table) addr += d->dec;
-            if (o->adreb)  addr += adrs & 0x0FFF;
-            if (o->nxadr)  addr++;
-            addr &= o->table ? 0xFFFFu : d->rbl - 1;
-            addr += d->rbp << 12;
-            addr <<= 1;
-            /* MAME: the delay memory is only touched on odd steps */
-            if (o->mrd && (st & 1)) memval = o->nofl ? scsp_ram_w(s, addr) << 8 : scsp_dsp_unpack(scsp_ram_w(s, addr));
-            if (o->mwt && (st & 1)) scsp_ram_ww(s, addr, o->nofl ? (uint16_t)(shifted >> 8) : ref_dsp_pack(shifted));
-        }
+        if (o->mrd || o->mwt) ref_dsp_memory(s, o, st, shifted, adrs, &memval);
         if (o->adrl) adrs = o->sh == 3 ? (uint32_t)((shifted >> 12) & 0xFFF) : (uint32_t)(inputs >> 16);
         if (o->ewt) d->efreg[o->ewa] = (int16_t)(d->efreg[o->ewa] + (shifted >> 8));
     }

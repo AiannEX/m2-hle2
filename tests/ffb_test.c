@@ -29,7 +29,9 @@ static ffb_out_t play(uint8_t cmd) {
     return ffb_poll();
 }
 
-int main(void) {
+static game_profile_t prof;
+
+static void test_decode(void) {
     drive_effect_t e = drive_board_decode(0x27);
     CHECK(e.kind == DRIVE_CLUTCH && e.level == 7, "0x27: clutch 7 (standing)");
     e = drive_board_decode(0x3B);
@@ -45,8 +47,9 @@ int main(void) {
     CHECK(drive_board_decode(0x71).kind == DRIVE_NONE && drive_board_decode(0xFF).kind == DRIVE_NONE
           && drive_board_decode(0x07).kind == DRIVE_NONE && drive_board_decode(0x07).level == 0,
           "set-up bytes 0x07 0x71 0xFF: no force");
+}
 
-    static game_profile_t prof;
+static void test_play(void) {
     static const uint8_t rom[1];
     g_active_profile = &prof;
     g_model1io_rom = rom;
@@ -63,10 +66,13 @@ int main(void) {
     CHECK(o.weak > o.strong && o.spring == -0x2FFF && !o.push && !o.damper,
           "uncentring 2: a spring the wrong way round, the weak motor");
     CHECK(play(0x40).spring < 0 && play(0x47).spring == -0x7FFF, "uncentring 0 still pushes, 7 the most");
+}
+
+static void test_push_gain(void) {
     ffb_out_t lo = play(0x60), hi = play(0x67);
     CHECK(hi.strong > lo.strong && lo.strong > 0 && hi.push < lo.push && lo.push < 0,
           "push left: stronger with the level, negative force");
-    o = play(0x57);
+    ffb_out_t o = play(0x57);
     CHECK(o.push > 0 && o.strong == hi.strong, "push right: the same kick, positive force");
 
     CHECK(ffb_option("--ffb-gain", "50") && g_ffb_gain == 50, "--ffb-gain 50");
@@ -76,16 +82,20 @@ int main(void) {
     CHECK(!o.strong && !o.weak && !o.push && o.effect.kind == DRIVE_PUSH, "gain 0: off, the command still read");
     CHECK(!ffb_option("--wheel-range", "1"), "other options are not ffb's");
     ffb_option("--ffb-gain", "100");
+}
 
-    /* Sega Rally: the 315-5649's port E (IO+0x08). */
-    e = drive_board_decode_srally(0x80);
+/* Sega Rally: the 315-5649's port E (IO+0x08). */
+static void test_rally_decode(void) {
+    drive_effect_t e = drive_board_decode_srally(0x80);
     CHECK(e.kind == DRIVE_TORQUE && e.dir == +1 && e.level == 1, "rally 0x80: torque right 1");
     e = drive_board_decode_srally(0xDF);
     CHECK(e.kind == DRIVE_TORQUE && e.dir == -1 && e.level == 32, "rally 0xDF: torque left 32");
     CHECK(drive_board_decode_srally(0x00).kind == DRIVE_NONE && drive_board_decode_srally(0x15).kind == DRIVE_NONE
           && drive_board_decode_srally(0xFF).kind == DRIVE_NONE && drive_board_decode_srally(0xA0).kind == DRIVE_NONE,
           "rally 0x00 0x15 0xA0 0xFF: no force");
+}
 
+static void test_rally_poll(void) {
     static uint8_t io[0x40];
     memset(io, 0xFF, sizeof io);
     prof.quirks.model1_io = false;
@@ -94,7 +104,7 @@ int main(void) {
     g_model1io.drive = 0x57;   /* Daytona's board is not this game's */
     CHECK(ffb_poll().effect.kind == DRIVE_NONE, "rally: port E 0xFF before the first write, no force");
     io[0x08] = 0x8F;
-    o = ffb_poll();
+    ffb_out_t o = ffb_poll();
     CHECK(o.effect.kind == DRIVE_TORQUE && o.push > 0 && !o.strong && !o.weak, "rally torque 16 right: a wheel's push, no rumble");
     io[0x08] = 0xD0;
     ffb_out_t t17 = ffb_poll();
@@ -104,6 +114,14 @@ int main(void) {
           "rally torque left 17 / 32: rumble from 17, full push at 32");
     g_io5649_regs = NULL;
     CHECK(ffb_poll().effect.kind == DRIVE_NONE, "rally: no I/O board yet, no force");
+}
+
+int main(void) {
+    test_decode();
+    test_play();
+    test_push_gain();
+    test_rally_decode();
+    test_rally_poll();
 
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;

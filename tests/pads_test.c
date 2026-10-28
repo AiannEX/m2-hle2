@@ -64,22 +64,24 @@ static void button(SDL_JoystickID id, int b, bool down) {
     SDL_SetJoystickVirtualButton(SDL_GetJoystickFromID(id), b, down);
 }
 
-int main(void) {
-    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "0");
-    if (!SDL_Init(SDL_INIT_GAMEPAD)) { printf("FAIL: SDL_Init: %s\n", SDL_GetError()); return 1; }
+/* The five devices every group plays with. */
+static SDL_JoystickID base, pedals, stick, pad1, pad2;
 
-    SDL_JoystickID base   = attach("Test Wheel Base", SDL_JOYSTICK_TYPE_WHEEL, 1, 2, 16);
-    SDL_JoystickID pedals = attach("Test Pedals", SDL_JOYSTICK_TYPE_UNKNOWN, 2, 3, 0);
-    SDL_JoystickID stick  = attach("Test Odd Wheel", SDL_JOYSTICK_TYPE_UNKNOWN, 3, 3, 8);
-    SDL_JoystickID pad1   = attach("Test Pad One", SDL_JOYSTICK_TYPE_GAMEPAD, 4, 6, 15);
-    SDL_JoystickID pad2   = attach("Test Pad Two", SDL_JOYSTICK_TYPE_GAMEPAD, 5, 6, 15);
+static void attach_devices(void) {
+    base   = attach("Test Wheel Base", SDL_JOYSTICK_TYPE_WHEEL, 1, 2, 16);
+    pedals = attach("Test Pedals", SDL_JOYSTICK_TYPE_UNKNOWN, 2, 3, 0);
+    stick  = attach("Test Odd Wheel", SDL_JOYSTICK_TYPE_UNKNOWN, 3, 3, 8);
+    pad1   = attach("Test Pad One", SDL_JOYSTICK_TYPE_GAMEPAD, 4, 6, 15);
+    pad2   = attach("Test Pad Two", SDL_JOYSTICK_TYPE_GAMEPAD, 5, 6, 15);
     CHECK(base && pedals && stick && pad1 && pad2, "five virtual devices attached");
     pump();
     CHECK(SDL_GetJoystickFromID(pedals) && SDL_GetJoystickFromID(stick),
           "every joystick is opened, not only the ones SDL calls wheels");
     CHECK(SDL_IsGamepad(pad1) && SDL_IsGamepad(pad2), "the virtual gamepads are gamepads");
+}
 
-    /* No picks: SDL's wheel is the wheel, its own axes 1 and 2 the pedals. */
+/* No picks: SDL's wheel is the wheel, its own axes 1 and 2 the pedals. */
+static void test_no_pick(void) {
     CHECK(wheel_is(base) && !wheel_is(pedals) && !wheel_is(stick), "no pick: the device SDL calls a wheel");
     axis(base, 0, 20000);
     pump();
@@ -87,8 +89,10 @@ int main(void) {
     axis(pedals, 1, 32767);
     pump();
     CHECK(g_io5649_host.accel == 0, "no pick: the pedal device is not read");
+}
 
-    /* The pedals on their own device, resting at the bottom of their axes. */
+/* The pedals on their own device, resting at the bottom of their axes. */
+static void test_pedals_pick(void) {
     pad_pick_set(&g_wheel_opt.pedals, pedals);
     g_wheel_opt.accel = 1; g_wheel_opt.brake = 2;
     g_wheel_opt.rest[0] = g_wheel_opt.rest[1] = -32768;
@@ -109,8 +113,10 @@ int main(void) {
     pump();
     CHECK(g_io5649_host.accel == 0, "pedals picked: the base's own axis 1 is not the accelerator");
     axis(base, 1, 0); axis(pedals, 2, -32768);
+}
 
-    /* A joystick SDL does not call a wheel, picked as the wheel. */
+/* A joystick SDL does not call a wheel, picked as the wheel. */
+static void test_wheel_pick(void) {
     pad_pick_set(&g_wheel_opt.dev, stick);
     pump();
     CHECK(wheel_is(stick) && !wheel_is(base), "wheel picked: the picked joystick and not SDL's wheel");
@@ -122,8 +128,10 @@ int main(void) {
     CHECK(g_pad_held[GAME_INPUT_P1_B3], "wheel picked: its buttons press (0 = button 3)");
     button(stick, 0, false);
     axis(stick, 0, 0); axis(base, 0, 0);
+}
 
-    /* The gamepad pick. */
+/* The gamepad pick. */
+static void test_gamepad_pick(void) {
     memset(&g_wheel_opt.dev, 0, sizeof g_wheel_opt.dev);
     pump();
     button(pad1, SDL_GAMEPAD_BUTTON_SOUTH, true);
@@ -138,13 +146,17 @@ int main(void) {
     pump();
     CHECK(g_pad_held[GAME_INPUT_P1_B1], "gamepad picked: it plays");
     button(pad2, SDL_GAMEPAD_BUTTON_SOUTH, false);
+}
 
-    /* A gamepad picked as the wheel is the wheel, not a gamepad. */
+/* A gamepad picked as the wheel is the wheel, not a gamepad. */
+static void test_gamepad_as_wheel(void) {
     pad_pick_set(&g_wheel_opt.dev, pad2);
     pump();
     CHECK(wheel_is(pad2) && !gamepad_is(pad2), "a gamepad picked as the wheel stops being a gamepad");
+}
 
-    /* A pick's file text reads back; anything not a GUID is no pick. */
+/* A pick's file text reads back; anything not a GUID is no pick. */
+static void test_pick_text(void) {
     char txt[112];
     pad_pick_t back;
     pad_pick_format(&g_wheel_opt.pedals, txt, sizeof txt);
@@ -152,8 +164,10 @@ int main(void) {
     CHECK(!strcmp(back.guid, g_wheel_opt.pedals.guid) && !strcmp(back.name, "Test Pedals"), "a pick's text reads back");
     pad_pick_parse(&back, "any");
     CHECK(!back.guid[0], "text that is not a GUID is no pick");
+}
 
-    /* Unplugged: the picked pedals read nothing, and no device is found. */
+/* Unplugged: the picked pedals read nothing, and no device is found. */
+static void test_unplug(void) {
     memset(&g_wheel_opt.dev, 0, sizeof g_wheel_opt.dev);
     axis(pedals, 1, 32767);
     pump();
@@ -165,10 +179,12 @@ int main(void) {
     sdl_pads_default();
     CHECK(!g_pad_pick.guid[0] && !g_wheel_opt.dev.guid[0] && !g_wheel_opt.pedals.guid[0] && !g_wheel_opt.rest_set[0],
           "the defaults drop every pick");
+}
 
-    /* A Fanatec base SDL has no word for (0EB7:0E07, in the SDK's base table,
-     * not on SDL's wheel list) is the wheel; Fanatec's pedals on their own
-     * lead (0EB7:183B) are not. */
+/* A Fanatec base SDL has no word for (0EB7:0E07, in the SDK's base table,
+ * not on SDL's wheel list) is the wheel; Fanatec's pedals on their own
+ * lead (0EB7:183B) are not. */
+static void test_fanatec_base(void) {
     SDL_DetachVirtualJoystick(base);
     SDL_JoystickID fbase = attach_vid("FANATEC Wheel", SDL_JOYSTICK_TYPE_UNKNOWN, 0x0EB7, 0x0E07, 3, 16);
     SDL_JoystickID fped = attach_vid("FANATEC ClubSport Pedals", SDL_JOYSTICK_TYPE_UNKNOWN, 0x0EB7, 0x183B, 3, 0);
@@ -181,9 +197,11 @@ int main(void) {
     SDL_DetachVirtualJoystick(fbase);
     SDL_DetachVirtualJoystick(fped);
     pump();
+}
 
-    /* A GT DD Pro (0EB7:0020, on SDL's list) listed twice, the copy that
-     * never moves first: the one that moves steers. */
+/* A GT DD Pro (0EB7:0020, on SDL's list) listed twice, the copy that
+ * never moves first: the one that moves steers. */
+static void test_fanatec_twice(void) {
     SDL_JoystickID dead = attach_vid("FANATEC Wheel", SDL_JOYSTICK_TYPE_WHEEL, 0x0EB7, 0x0020, 3, 16);
     pump();
     SDL_JoystickID live = attach_vid("FANATEC Wheel", SDL_JOYSTICK_TYPE_WHEEL, 0x0EB7, 0x0020, 3, 16);
@@ -195,10 +213,12 @@ int main(void) {
     SDL_DetachVirtualJoystick(dead);
     SDL_DetachVirtualJoystick(live);
     pump();
+}
 
-    /* A G25 (046D:C299: 4 axes, 19 buttons, the shifter's d-pad as a hat)
-     * gets its own layout while the built-in one is untouched (Pinboard
-     * #1446), and its d-pad is four more buttons. */
+/* A G25 (046D:C299: 4 axes, 19 buttons, the shifter's d-pad as a hat)
+ * gets its own layout while the built-in one is untouched (Pinboard
+ * #1446), and its d-pad is four more buttons. */
+static void test_g25(void) {
     sdl_pads_default();
     SDL_VirtualJoystickDesc g;
     SDL_INIT_INTERFACE(&g);
@@ -236,6 +256,23 @@ int main(void) {
     CHECK(g_wheel_opt.accel == 1 && !g_wheel_opt.button[6], "G25: a changed layout stays as it is");
     SDL_DetachVirtualJoystick(g25);
     pump();
+}
+
+int main(void) {
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "0");
+    if (!SDL_Init(SDL_INIT_GAMEPAD)) { printf("FAIL: SDL_Init: %s\n", SDL_GetError()); return 1; }
+
+    attach_devices();
+    test_no_pick();
+    test_pedals_pick();
+    test_wheel_pick();
+    test_gamepad_pick();
+    test_gamepad_as_wheel();
+    test_pick_text();
+    test_unplug();
+    test_fanatec_base();
+    test_fanatec_twice();
+    test_g25();
 
     SDL_Quit();
     printf("%s (%d failures)\n", g_fail ? "FAILED" : "ALL PASS", g_fail);
