@@ -1329,32 +1329,49 @@ static inline void scsp_dsp_wake(scsp_t *s) {
     s->dsp_check_in = 0;
 }
 
-/* Everything the DSP could read is within the margin: the state it filters. */
-static int scsp_dsp_quiet(const scsp_t *s) {
-    const scsp_dsp_t *d = &s->dsp;
-    if (s->coupled || d->stopped) return 0;
+/* The DSP's inputs and registers are within the margin. */
+static int scsp_dsp_regs_quiet(const scsp_dsp_t *d) {
     for (int i = 0; i < 16; i++) if (d->mixs[i]) return 0;
     if (d->exts[0] || d->exts[1]) return 0;
     for (int i = 0; i < 16; i++) if (d->efreg[i] > SCSP_DSP_QUIET_EF || d->efreg[i] < -SCSP_DSP_QUIET_EF) return 0;
     for (int i = 0; i < 128; i++) if (d->temp[i] > SCSP_DSP_QUIET || d->temp[i] < -SCSP_DSP_QUIET) return 0;
     for (int i = 0; i < 32; i++) if (d->mems[i] > SCSP_DSP_QUIET || d->mems[i] < -SCSP_DSP_QUIET) return 0;
+    return 1;
+}
+
+/* How the program uses delay memory: 0 not at all, 1 only the ring of packed
+ * floats, -1 some other way (a TABLE or NOFL access) the scan cannot vouch for. */
+static int scsp_dsp_ring_use(const scsp_dsp_t *d) {
     int ring = 0;
     for (int st = 1; st < d->last_step; st += 2) {         /* only odd steps touch delay memory (MAME) */
         const uint16_t *p = d->mpro + st * 4;
         if (!((p[2] >> 13) & 3)) continue;                 /* no MRD, no MWT */
-        if ((p[2] >> 15) & 1) return 0;                    /* TABLE: MADRS + ADRS, anywhere in RAM */
-        if ((p[2] >> 8) & 1) return 0;                     /* NOFL: a raw word, not a packed float */
+        if ((p[2] >> 15) & 1) return -1;                   /* TABLE: MADRS + ADRS, anywhere in RAM */
+        if ((p[2] >> 8) & 1) return -1;                    /* NOFL: a raw word, not a packed float */
         ring = 1;
     }
-    if (ring) {
-        uint32_t lo = d->rbp << 13;
-        if ((uint64_t)lo + 2u * d->rbl > s->ram_size) return 0;
-        for (uint32_t i = 0; i < d->rbl; i++) {
-            int32_t v = scsp_dsp_unpack(scsp_ram_w(s, lo + 2u * i));
-            if (v > SCSP_DSP_QUIET || v < -SCSP_DSP_QUIET) return 0;
-        }
+    return ring;
+}
+
+/* The delay ring's samples are within the margin. */
+static int scsp_dsp_ring_quiet(const scsp_t *s) {
+    const scsp_dsp_t *d = &s->dsp;
+    uint32_t lo = d->rbp << 13;
+    if ((uint64_t)lo + 2u * d->rbl > s->ram_size) return 0;
+    for (uint32_t i = 0; i < d->rbl; i++) {
+        int32_t v = scsp_dsp_unpack(scsp_ram_w(s, lo + 2u * i));
+        if (v > SCSP_DSP_QUIET || v < -SCSP_DSP_QUIET) return 0;
     }
     return 1;
+}
+
+/* Everything the DSP could read is within the margin: the state it filters. */
+static int scsp_dsp_quiet(const scsp_t *s) {
+    const scsp_dsp_t *d = &s->dsp;
+    if (s->coupled || d->stopped || !scsp_dsp_regs_quiet(d)) return 0;
+    int ring = scsp_dsp_ring_use(d);
+    if (ring < 0) return 0;
+    return !ring || scsp_dsp_ring_quiet(s);
 }
 
 /* Whether this sample's DSP step runs. nz: any MIXS input this sample. */

@@ -446,8 +446,14 @@ const m2hleNetplay = (() => {
 
   function renderSignin() {
     const tw = st.twitch || {};
-    const acct = st.account || {};
-    const returning = ((tw.signed_in && tw.npid) || (st.npid && st.has_password)) && !/token/.test(dismissedFailure);
+    renderReturning(tw);
+    renderAccount(st.account || {});
+  }
+
+  /* A player who has signed in before (an account or Twitch), the server, and
+   * Twitch's error. */
+  function renderReturning(tw) {
+    const returning = ((tw.signed_in && tw.npid) || (st.npid && st.has_password)) && !dismissedFailure.includes('token');
     $('np-returning').hidden = !returning;
     $('np-fresh').hidden = !!returning;
     if (returning) setText('np-returning-name', tw.signed_in && tw.npid ? tw.npid : st.npid);
@@ -458,7 +464,33 @@ const m2hleNetplay = (() => {
       if ($('np-server').value !== want) $('np-server').value = want;
     }
     errorText('np-twitch-error', tw.state === 4 /* failed */ ? t('np.twitch.error', { error: tw.error }) : '');
+  }
 
+  /* Made. Move to the sign-in form with the details filled in and the code
+   * box open, and try signing in: a server that verifies by e-mail refuses
+   * that first try and has mailed a code, one that does not lets it
+   * through. Either way the next step is already on screen. */
+  function accountMade() {
+    const c = pendingCreate;
+    pendingCreate = null;
+    setText('np-create-status', '');
+    $('np-signin-name').value = c.npid;
+    $('np-signin-password').value = c.password;
+    $('np-code-box').open = true;
+    selectTab('signin');
+    setText('np-signin-note', t('np.created'));
+    $('np-signin-note').hidden = false;
+    post('connect', { npid: c.npid, password: c.password, server: c.server });
+  }
+
+  function signinNote(text) {
+    resending = false;
+    setText('np-signin-note', text);
+    $('np-signin-note').hidden = false;
+  }
+
+  /* An account being made, or a code being mailed again. */
+  function renderAccount(acct) {
     /* A resend is only answered once it has been seen running: until the queued
      * command reaches the emulator, the state is still the sign-up's DONE. */
     if (resending === 1 && acct.state === ACCOUNT_WORKING) resending = 2;
@@ -468,28 +500,9 @@ const m2hleNetplay = (() => {
       setText('np-create-status', '');
       errorText('np-create-error', acct.error);
     } else if (acct.state === ACCOUNT_DONE && pendingCreate) {
-      /* Made. Move to the sign-in form with the details filled in and the code
-       * box open, and try signing in: a server that verifies by e-mail refuses
-       * that first try and has mailed a code, one that does not lets it
-       * through. Either way the next step is already on screen. */
-      const c = pendingCreate;
-      pendingCreate = null;
-      setText('np-create-status', '');
-      $('np-signin-name').value = c.npid;
-      $('np-signin-password').value = c.password;
-      $('np-code-box').open = true;
-      selectTab('signin');
-      setText('np-signin-note', t('np.created'));
-      $('np-signin-note').hidden = false;
-      post('connect', { npid: c.npid, password: c.password, server: c.server });
+      accountMade();
     } else if (acct.state === ACCOUNT_DONE && resending === 2) {
-      resending = false;
-      setText('np-signin-note', t('np.sent'));
-      $('np-signin-note').hidden = false;
-    } else if (acct.state === ACCOUNT_FAILED && resending === 2) {
-      resending = false;
-      setText('np-signin-note', acct.error);
-      $('np-signin-note').hidden = false;
+      signinNote(t('np.sent'));
     }
   }
 
@@ -514,42 +527,47 @@ const m2hleNetplay = (() => {
     if (list.dataset.key === key) return;
     list.dataset.key = key;
     list.textContent = '';
-    for (const r of rows) {
-      const li = document.createElement('li');
-      li.className = 'np-room' + (r.why ? ' np-room-off' : '');
-      const who = document.createElement('span');
-      who.className = 'np-who';
-      who.textContent = r.owner || t('np.room.someone');
-      const what = document.createElement('span');
-      what.className = 'np-what';
-      what.textContent = r.why ? r.why
-                       : t(r.members >= r.slots ? 'np.room.full' : r.password ? 'np.room.private' : 'np.room.waiting');
-      if (!r.why) {
-        /* The estimated ping, coloured by how this room's input delay copes with it. */
-        const est = estimateMs(r);
-        const ping = document.createElement('span');
-        if (est === null) {
-          ping.className = 'np-ping';
-          ping.textContent = t('np.room.ping.unknown');
-          ping.title = t('np.room.ping.unknown.title');
-        } else {
-          const p = pace(est, r.delay);
-          ping.className = 'np-ping np-ping-' + p;
-          ping.textContent = '~' + est + ' ms';
-          ping.title = t('np.room.ping.title', { owner: r.owner || t('np.room.host'), pace: paceText(p), delay: r.delay });
-        }
-        what.append(' · ', ping);
-      }
-      li.append(who, what);
-      if (!r.why && r.members < r.slots) {
-        const b = document.createElement('button');
-        b.className = 'tool primary';
-        b.textContent = t('np.room.play');
-        b.addEventListener('click', () => join(r));
-        li.append(b);
-      }
-      list.append(li);
+    for (const r of rows) list.append(roomRow(r));
+  }
+
+  /* The estimated ping, coloured by how this room's input delay copes with it. */
+  function roomPing(r) {
+    const est = estimateMs(r);
+    const ping = document.createElement('span');
+    if (est === null) {
+      ping.className = 'np-ping';
+      ping.textContent = t('np.room.ping.unknown');
+      ping.title = t('np.room.ping.unknown.title');
+    } else {
+      const p = pace(est, r.delay);
+      ping.className = 'np-ping np-ping-' + p;
+      ping.textContent = '~' + est + ' ms';
+      ping.title = t('np.room.ping.title', { owner: r.owner || t('np.room.host'), pace: paceText(p), delay: r.delay });
     }
+    return ping;
+  }
+
+  /* A room in the list: who made it, how it stands, and Play if it can be joined. */
+  function roomRow(r) {
+    const li = document.createElement('li');
+    li.className = 'np-room' + (r.why ? ' np-room-off' : '');
+    const who = document.createElement('span');
+    who.className = 'np-who';
+    who.textContent = r.owner || t('np.room.someone');
+    const what = document.createElement('span');
+    what.className = 'np-what';
+    what.textContent = r.why ? r.why
+                     : t(r.members >= r.slots ? 'np.room.full' : r.password ? 'np.room.private' : 'np.room.waiting');
+    if (!r.why) what.append(' · ', roomPing(r));
+    li.append(who, what);
+    if (!r.why && r.members < r.slots) {
+      const b = document.createElement('button');
+      b.className = 'tool primary';
+      b.textContent = t('np.room.play');
+      b.addEventListener('click', () => join(r));
+      li.append(b);
+    }
+    return li;
   }
 
   /* The line above the room's members. */
