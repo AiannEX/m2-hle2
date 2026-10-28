@@ -155,21 +155,27 @@ static void fanatec__find(void) {
     SDL_hid_free_enumeration(list);
 }
 
+/* The rev LEDs to mask: the base's, the rim's and a multi base's RGB ones;
+ * false if a report did not go. */
+static bool fanatec__send_revs(uint16_t mask) {
+    uint8_t r[FANATEC_REPORT64];
+    fanatec_base_revs(r, g_fanatec.multi, mask);
+    if (!fanatec__send(r, FANATEC_REPORT)) return false;
+    fanatec_rim_revs(r, g_fanatec.multi, mask);
+    if (!fanatec__send(r, FANATEC_REPORT)) return false;
+    if (g_fanatec.multi && g_fanatec.dev64) {
+        fanatec_rgb_revs(r, mask);
+        if (!fanatec__send(r, FANATEC_REPORT64)) return false;
+    }
+    return true;
+}
+
 /* The LEDs dark and the display back to the wheel's menu; the base stays
  * open (it shows nothing of ours until fanatec_update has a dashboard). */
 static void fanatec_release(void) {
     if (!g_fanatec.dev) return;
     uint8_t r[FANATEC_REPORT64];
-    if (g_fanatec.mask) {
-        fanatec_base_revs(r, g_fanatec.multi, 0);
-        if (!fanatec__send(r, FANATEC_REPORT)) return;
-        fanatec_rim_revs(r, g_fanatec.multi, 0);
-        if (!fanatec__send(r, FANATEC_REPORT)) return;
-        if (g_fanatec.multi && g_fanatec.dev64) {
-            fanatec_rgb_revs(r, 0);
-            if (!fanatec__send(r, FANATEC_REPORT64)) return;
-        }
-    }
+    if (g_fanatec.mask && !fanatec__send_revs(0)) return;
     if (g_fanatec.display) {
         fanatec_display(r, g_fanatec.multi, "   ");
         if (!fanatec__send(r, FANATEC_REPORT)) return;
@@ -180,59 +186,58 @@ static void fanatec_release(void) {
     g_fanatec.display = false;
 }
 
-/* Once a drawn frame: the game's meters to the base. */
-static void fanatec_update(memory_bus_t *bus) {
-    game_dash_t d = { .speed = -1, .gear = -1 };
-    bool dash = g_fanatec_mode != FANATEC_OFF && g_active_profile && g_active_profile->dash && bus;
-    if (!dash) { fanatec_release(); return; }
+/* HID up and a base open: false while there is none (looked for again when
+ * a device comes or goes, or every few seconds where SDL cannot tell). */
+static bool fanatec__ready(void) {
     if (!g_fanatec.hid) {
-        if (SDL_hid_init() != 0) { g_fanatec_mode = FANATEC_OFF; return; }
+        if (SDL_hid_init() != 0) { g_fanatec_mode = FANATEC_OFF; return false; }
         g_fanatec.hid = true;
         g_fanatec.changes = SDL_hid_device_change_count();
         fanatec__find();
         g_fanatec.looked_ms = SDL_GetTicks();
     }
-    if (!g_fanatec.dev) {
-        /* Look again when a device comes or goes, or every few seconds where
-         * SDL cannot tell (change count 0). */
-        Uint32 ch = SDL_hid_device_change_count();
-        Uint64 now = SDL_GetTicks();
-        if (ch == g_fanatec.changes && (ch || now - g_fanatec.looked_ms < 3000)) return;
-        g_fanatec.changes = ch;
-        g_fanatec.looked_ms = now;
-        fanatec__find();
-        if (!g_fanatec.dev) return;
-    }
-    g_active_profile->dash(bus, &d);
+    if (g_fanatec.dev) return true;
+    Uint32 ch = SDL_hid_device_change_count();
+    Uint64 now = SDL_GetTicks();
+    if (ch == g_fanatec.changes && (ch || now - g_fanatec.looked_ms < 3000)) return false;
+    g_fanatec.changes = ch;
+    g_fanatec.looked_ms = now;
+    fanatec__find();
+    return g_fanatec.dev != NULL;
+}
 
-    uint8_t r[FANATEC_REPORT64];
-    int mask = fanatec_rev_mask(&d, SDL_GetTicks() / 125 & 1);
-    if (mask != g_fanatec.mask) {
-        fanatec_base_revs(r, g_fanatec.multi, (uint16_t)mask);
-        if (!fanatec__send(r, FANATEC_REPORT)) return;
-        fanatec_rim_revs(r, g_fanatec.multi, (uint16_t)mask);
-        if (!fanatec__send(r, FANATEC_REPORT)) return;
-        if (g_fanatec.multi && g_fanatec.dev64) {
-            fanatec_rgb_revs(r, (uint16_t)mask);
-            if (!fanatec__send(r, FANATEC_REPORT64)) return;
-        }
-        g_fanatec.mask = mask;
-    }
-
-    if (d.on && !g_fanatec.display) {
+/* The display: on when the game shows a meter, its text when that changed. */
+static void fanatec__show(const game_dash_t *d) {
+    if (d->on && !g_fanatec.display) {
         if (!fanatec__cmd(fanatec_display_mode, true)) return;
         g_fanatec.display = true;
         memcpy(g_fanatec.text, "???", 4);
     }
-    if (!d.on && g_fanatec.display) { fanatec_release(); return; }
+    if (!d->on && g_fanatec.display) { fanatec_release(); return; }
     if (!g_fanatec.display) return;
     char text[4];
-    fanatec_dash_text(&d, g_fanatec_mode == FANATEC_SPEED, text);
+    fanatec_dash_text(d, g_fanatec_mode == FANATEC_SPEED, text);
     if (memcmp(text, g_fanatec.text, 3) != 0) {
+        uint8_t r[FANATEC_REPORT64];
         fanatec_display(r, g_fanatec.multi, text);
         if (!fanatec__send(r, FANATEC_REPORT)) return;
         memcpy(g_fanatec.text, text, 4);
     }
+}
+
+/* Once a drawn frame: the game's meters to the base. */
+static void fanatec_update(memory_bus_t *bus) {
+    game_dash_t d = { .speed = -1, .gear = -1 };
+    bool dash = g_fanatec_mode != FANATEC_OFF && g_active_profile && g_active_profile->dash && bus;
+    if (!dash) { fanatec_release(); return; }
+    if (!fanatec__ready()) return;
+    g_active_profile->dash(bus, &d);
+    int mask = fanatec_rev_mask(&d, SDL_GetTicks() / 125 & 1);
+    if (mask != g_fanatec.mask) {
+        if (!fanatec__send_revs((uint16_t)mask)) return;
+        g_fanatec.mask = mask;
+    }
+    fanatec__show(&d);
 }
 
 /* The run ends: everything back to the wheel, the base closed. */

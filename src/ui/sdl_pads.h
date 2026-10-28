@@ -384,80 +384,81 @@ static void pad_actions(SDL_Gamepad *pad, bool *now) {
     }
 }
 
-static void pad_refresh(void) {
-    bool now[GAME_INPUT_COUNT] = {0}, far_now[GAME_INPUT_COUNT] = {0};
-    int count = 0, here = 0;
-    /* The wheel and pedals for a driving game: a racing wheel's, else a
-     * gamepad's left stick and triggers (R2 accelerator, L2 brake). */
-    bool an_on = false, an_wheel = false, an_moved = false;
-    int an_steer = 0, an_accel = 0, an_brake = 0;
-    SDL_JoystickID *jids = pad_device_takes(true) ? SDL_GetJoysticks(&count) : NULL;
-    for (int i = 0, w = 0; jids && i < count; i++) {
-        if (!wheel_is(jids[i])) continue;
-        SDL_Joystick *joy = SDL_GetJoystickFromID(jids[i]);
-        if (!joy || !pad_plays_here(w++)) continue;
-        /* The pedals: their own device when one is picked (none while it is
-         * unplugged), else the wheel's. */
-        SDL_JoystickID pid = jids[i];
-        if (g_wheel_opt.pedals.guid[0] && !pad_pick_is(&g_wheel_opt.pedals, jids[i])) pid = pad_pick_find(&g_wheel_opt.pedals);
-        SDL_Joystick *pj = pid ? SDL_GetJoystickFromID(pid) : NULL;
-        const int pax[2] = { g_wheel_opt.accel, g_wheel_opt.brake };
-        int ped[2] = { 0, 0 };
-        for (int k = 0; pj && k < 2; k++)
-            ped[k] = wheel_host_pedal(SDL_GetJoystickAxis(pj, pax[k]),
-                                      g_wheel_opt.rest_set[k] ? g_wheel_opt.rest[k] : joy_rest(pid, pax[k]));
-        Sint16 raw = SDL_GetJoystickAxis(joy, g_wheel_opt.steer);
-        int st = g_wheel_opt.center_set ? wheel_host_steer_centred(raw, g_wheel_opt.center) : wheel_host_steer(raw, 0);
-        int ac = ped[0], br = ped[1];
-        /* The first wheel steers, or the first that has moved. */
-        bool moved = wheel_moved(jids[i], raw);
-        if (!an_wheel || (moved && !an_moved)) { an_steer = st; an_moved = moved; }
-        an_on = an_wheel = true;
-        if (ac > an_accel) an_accel = ac;
-        if (br > an_brake) an_brake = br;
-        /* What a session or a replay reads: the turn past half, a pedal past half. */
-        now[GAME_INPUT_P1_LEFT]  |= st < -16000;
-        now[GAME_INPUT_P1_RIGHT] |= st >  16000;
-        now[GAME_INPUT_P1_B1]    |= ac >  16000;
-        now[GAME_INPUT_P1_B2]    |= br >  16000;
-        for (int b = 0; b < WHEEL_BUTTONS; b++) {
-            if (!g_wheel_opt.button[b] || !wheel_button_down(joy, b)) continue;
-            for (int a = 0; a < GAME_INPUT_COUNT; a++)
-                if (g_wheel_opt.button[b] & ACT(a)) now[a] = true;
-        }
+/* The wheel and pedals for a driving game: a racing wheel's, else a
+ * gamepad's left stick and triggers (R2 accelerator, L2 brake). */
+typedef struct {
+    bool on, wheel, moved;
+    int  steer, accel, brake;
+} pad_analog_t;
+
+/* The pedals' two axes: their own device when one is picked (none while it
+ * is unplugged), else the wheel's. */
+static void wheel_pedals(SDL_JoystickID wheel, int ped[2]) {
+    SDL_JoystickID pid = wheel;
+    if (g_wheel_opt.pedals.guid[0] && !pad_pick_is(&g_wheel_opt.pedals, wheel)) pid = pad_pick_find(&g_wheel_opt.pedals);
+    SDL_Joystick *pj = pid ? SDL_GetJoystickFromID(pid) : NULL;
+    const int pax[2] = { g_wheel_opt.accel, g_wheel_opt.brake };
+    ped[0] = ped[1] = 0;
+    for (int k = 0; pj && k < 2; k++)
+        ped[k] = wheel_host_pedal(SDL_GetJoystickAxis(pj, pax[k]),
+                                  g_wheel_opt.rest_set[k] ? g_wheel_opt.rest[k] : joy_rest(pid, pax[k]));
+}
+
+/* One racing wheel that plays here into an and now[]. */
+static void pad_wheel_read(SDL_JoystickID jid, SDL_Joystick *joy, bool *now, pad_analog_t *an) {
+    int ped[2];
+    wheel_pedals(jid, ped);
+    Sint16 raw = SDL_GetJoystickAxis(joy, g_wheel_opt.steer);
+    int st = g_wheel_opt.center_set ? wheel_host_steer_centred(raw, g_wheel_opt.center) : wheel_host_steer(raw, 0);
+    int ac = ped[0], br = ped[1];
+    /* The first wheel steers, or the first that has moved. */
+    bool moved = wheel_moved(jid, raw);
+    if (!an->wheel || (moved && !an->moved)) { an->steer = st; an->moved = moved; }
+    an->on = an->wheel = true;
+    if (ac > an->accel) an->accel = ac;
+    if (br > an->brake) an->brake = br;
+    /* What a session or a replay reads: the turn past half, a pedal past half. */
+    now[GAME_INPUT_P1_LEFT]  |= st < -16000;
+    now[GAME_INPUT_P1_RIGHT] |= st >  16000;
+    now[GAME_INPUT_P1_B1]    |= ac >  16000;
+    now[GAME_INPUT_P1_B2]    |= br >  16000;
+    for (int b = 0; b < WHEEL_BUTTONS; b++) {
+        if (!g_wheel_opt.button[b] || !wheel_button_down(joy, b)) continue;
+        for (int a = 0; a < GAME_INPUT_COUNT; a++)
+            if (g_wheel_opt.button[b] & ACT(a)) now[a] = true;
     }
-    SDL_free(jids);
-    SDL_JoystickID *ids = pad_device_takes(false) ? SDL_GetGamepads(&count) : NULL;
-    for (int i = 0, g = 0; ids && i < count; i++) {
-        if (!gamepad_is(ids[i]) || !pad_plays_here(g++)) continue;
-        SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
-        if (!pad) continue;
-        int nth = here++;
-        if (nth >= 2 && nth < 4 && input_four_players()) {
-            bool p1[GAME_INPUT_COUNT] = {0};
-            pad_actions(pad, p1);
-            const int to = nth == 2 ? 0 : GAME_INPUT_P2_UP - GAME_INPUT_P1_UP;
-            for (int a = GAME_INPUT_P1_UP; a <= GAME_INPUT_P1_COIN; a++) if (p1[a]) far_now[a + to] = true;
-            continue;
-        }
-        int ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
-        if (!an_wheel) {
-            int st = wheel_host_steer(ax, WHEEL_HOST_STICK_DEAD);
-            if (!an_on || abs(st) > abs(an_steer)) an_steer = st;
-        }
-        int ac = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
-        int br = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
-        if (ac > an_accel) an_accel = ac;
-        if (br > an_brake) an_brake = br;
-        an_on = true;
-        if (wheel_host_on()) {   /* the triggers as the pedals' buttons, for a session */
-            now[GAME_INPUT_P1_B1] |= ac > 16000;
-            now[GAME_INPUT_P1_B2] |= br > 16000;
-        }
-        pad_actions(pad, now);
+}
+
+/* The third and fourth gamepads of a four-player cabinet: players 3 and 4. */
+static void pad_far_read(SDL_Gamepad *pad, int nth, bool *far_now) {
+    bool p1[GAME_INPUT_COUNT] = {0};
+    pad_actions(pad, p1);
+    const int to = nth == 2 ? 0 : GAME_INPUT_P2_UP - GAME_INPUT_P1_UP;
+    for (int a = GAME_INPUT_P1_UP; a <= GAME_INPUT_P1_COIN; a++) if (p1[a]) far_now[a + to] = true;
+}
+
+/* A gamepad's stick and triggers into an (a wheel, if any, steers), and its
+ * buttons into now[]. */
+static void pad_gamepad_read(SDL_Gamepad *pad, bool *now, pad_analog_t *an) {
+    int ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
+    if (!an->wheel) {
+        int st = wheel_host_steer(ax, WHEEL_HOST_STICK_DEAD);
+        if (!an->on || abs(st) > abs(an->steer)) an->steer = st;
     }
-    SDL_free(ids);
-    wheel_host_set(an_on, an_steer, an_accel, an_brake);
+    int ac = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    int br = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+    if (ac > an->accel) an->accel = ac;
+    if (br > an->brake) an->brake = br;
+    an->on = true;
+    if (wheel_host_on()) {   /* the triggers as the pedals' buttons, for a session */
+        now[GAME_INPUT_P1_B1] |= ac > 16000;
+        now[GAME_INPUT_P1_B2] |= br > 16000;
+    }
+    pad_actions(pad, now);
+}
+
+/* Press and let go what changed since the last refresh. */
+static void pad_publish(const bool *now, const bool *far_now) {
     for (int a = 0; a < GAME_INPUT_COUNT; a++) {
         if (now[a] && !g_pad_held[a]) input_action_down(a);
         if (!now[a] && g_pad_held[a]) input_action_up(a);
@@ -466,6 +467,38 @@ static void pad_refresh(void) {
         if (!far_now[a] && g_pad_far_held[a]) input_far_up(a);
         g_pad_far_held[a] = far_now[a];
     }
+}
+
+/* Every racing wheel that plays here. */
+static void pad_wheels_read(bool *now, pad_analog_t *an) {
+    int count = 0;
+    SDL_JoystickID *jids = pad_device_takes(true) ? SDL_GetJoysticks(&count) : NULL;
+    for (int i = 0, w = 0; jids && i < count; i++) {
+        if (!wheel_is(jids[i])) continue;
+        SDL_Joystick *joy = SDL_GetJoystickFromID(jids[i]);
+        if (!joy || !pad_plays_here(w++)) continue;
+        pad_wheel_read(jids[i], joy, now, an);
+    }
+    SDL_free(jids);
+}
+
+static void pad_refresh(void) {
+    bool now[GAME_INPUT_COUNT] = {0}, far_now[GAME_INPUT_COUNT] = {0};
+    int count = 0, here = 0;
+    pad_analog_t an = {0};
+    pad_wheels_read(now, &an);
+    SDL_JoystickID *ids = pad_device_takes(false) ? SDL_GetGamepads(&count) : NULL;
+    for (int i = 0, g = 0; ids && i < count; i++) {
+        if (!gamepad_is(ids[i]) || !pad_plays_here(g++)) continue;
+        SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
+        if (!pad) continue;
+        int nth = here++;
+        if (nth >= 2 && nth < 4 && input_four_players()) pad_far_read(pad, nth, far_now);
+        else                                             pad_gamepad_read(pad, now, &an);
+    }
+    SDL_free(ids);
+    wheel_host_set(an.on, an.steer, an.accel, an.brake);
+    pad_publish(now, far_now);
 }
 
 /* Let go of everything the pad holds, as the game sees it: the netplay lobby
@@ -574,31 +607,49 @@ static void ffb_haptic_play(int s, const ffb_out_t *o) {
     }
 }
 
-static void ffb_update(void) {
-    ffb_out_t o = ffb_poll();
-    bool rumble = o.strong || o.weak, changed = o.effect.cmd != g_ffb_last;
-    if (!changed && !rumble && !g_ffb_rumbling) return;
-    /* The gamepads and the racing wheels (wheel_is) that play here. */
-    int count = 0;
-    SDL_JoystickID *ids = SDL_GetJoysticks(&count);
-    for (int s = 0; s < FFB_PADS; s++) {   /* forget the pads that went */
+/* Close the slots of the pads that went. */
+static void ffb_forget_gone(const SDL_JoystickID *ids, int count) {
+    for (int s = 0; s < FFB_PADS; s++) {
         bool here = false;
         for (int i = 0; ids && i < count && !here; i++) here = ids[i] == g_ffb_pad[s].id;
         if (g_ffb_pad[s].id && !here) ffb_close_pad(s);
     }
+}
+
+/* The slot of pad id, given one (and its haptic opened) if it has none yet;
+ * -1 when all are taken. */
+static int ffb_pad_slot(SDL_JoystickID id, SDL_Joystick *joy) {
+    int s = 0;
+    while (s < FFB_PADS && g_ffb_pad[s].id != id) s++;
+    if (s < FFB_PADS) return s;
+    for (s = 0; s < FFB_PADS && g_ffb_pad[s].id; s++) {}
+    if (s == FFB_PADS) return -1;
+    g_ffb_pad[s].id = id;
+    ffb_open_haptic(s, joy);
+    return s;
+}
+
+/* Device id's joystick, if it is a gamepad or a racing wheel (wheel_is) that
+ * plays here; np and nw count the gamepads and wheels seen. */
+static SDL_Joystick *ffb_joystick(SDL_JoystickID id, int *np, int *nw) {
+    SDL_Gamepad  *pad = gamepad_is(id) ? SDL_GetGamepadFromID(id) : NULL;
+    SDL_Joystick *joy = pad ? SDL_GetGamepadJoystick(pad)
+                      : wheel_is(id) ? SDL_GetJoystickFromID(id) : NULL;
+    if (!joy || !pad_plays_here(pad ? (*np)++ : (*nw)++) || !pad_device_takes(!pad)) return NULL;
+    return joy;
+}
+
+static void ffb_update(void) {
+    ffb_out_t o = ffb_poll();
+    bool rumble = o.strong || o.weak, changed = o.effect.cmd != g_ffb_last;
+    if (!changed && !rumble && !g_ffb_rumbling) return;
+    int count = 0;
+    SDL_JoystickID *ids = SDL_GetJoysticks(&count);
+    ffb_forget_gone(ids, count);
     for (int i = 0, np = 0, nw = 0; ids && i < count; i++) {
-        SDL_Gamepad  *pad = gamepad_is(ids[i]) ? SDL_GetGamepadFromID(ids[i]) : NULL;
-        SDL_Joystick *joy = pad ? SDL_GetGamepadJoystick(pad)
-                          : wheel_is(ids[i]) ? SDL_GetJoystickFromID(ids[i]) : NULL;
-        if (!joy || !pad_plays_here(pad ? np++ : nw++) || !pad_device_takes(!pad)) continue;
-        int s = 0;
-        while (s < FFB_PADS && g_ffb_pad[s].id != ids[i]) s++;
-        if (s == FFB_PADS) {
-            for (s = 0; s < FFB_PADS && g_ffb_pad[s].id; s++) {}
-            if (s == FFB_PADS) continue;
-            g_ffb_pad[s].id = ids[i];
-            ffb_open_haptic(s, joy);
-        }
+        SDL_Joystick *joy = ffb_joystick(ids[i], &np, &nw);
+        int s = joy ? ffb_pad_slot(ids[i], joy) : -1;
+        if (s < 0) continue;
         if (g_ffb_pad[s].haptic) { if (changed) ffb_haptic_play(s, &o); }
         else SDL_RumbleJoystick(joy, o.strong, o.weak, rumble ? 100 : 0);
     }

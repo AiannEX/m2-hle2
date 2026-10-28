@@ -103,49 +103,41 @@ static inline void controls_defaults(const game_profile_t *p) {
 #endif
 }
 
-/* One line of a controls file. */
-static inline void controls_apply_line(char *line) {
-    char *eq = strchr(line, '=');
-    if (line[0] == '#' || !eq) return;
-    *eq = '\0';
-    const char *k = line, *v = eq + 1;
-    if (!strncmp(k, "key.", 4)) {
-        int a = input_action_by_name(k + 4);
-        if (a < 0) return;
-        char buf[64];
-        snprintf(buf, sizeof buf, "%s", v);
-        int s = 0;
-        for (char *tok = strtok(buf, ","); tok && s < INPUT_KEY_SLOTS; tok = strtok(NULL, ",")) {
-            int kc = input_keycode_by_name(tok);
-            if (kc > 0) g_input_keys[a][s++] = kc;
-        }
-        while (s < INPUT_KEY_SLOTS) g_input_keys[a][s++] = 0;
-        return;
+/* key.<action>=<key>,<key>...: the action's keys, the rest of its slots cleared. */
+static inline void controls_key_line(int a, const char *v) {
+    char buf[64];
+    snprintf(buf, sizeof buf, "%s", v);
+    int s = 0;
+    for (char *tok = strtok(buf, ","); tok && s < INPUT_KEY_SLOTS; tok = strtok(NULL, ",")) {
+        int kc = input_keycode_by_name(tok);
+        if (kc > 0) g_input_keys[a][s++] = kc;
     }
+    while (s < INPUT_KEY_SLOTS) g_input_keys[a][s++] = 0;
+}
+
 #if M2HLE_PADS
-    if (!strcmp(k, "device")) {
-        for (int d = 0; d < PAD_DEVICE_COUNT; d++) if (!strcmp(v, g_pad_device_names[d])) g_pad_device = d;
-    } else if (!strcmp(k, "pad.device")) {
-        pad_pick_parse(&g_pad_pick, v);
-    } else if (!strcmp(k, "wheel.device")) {
+/* wheel.rest=<accel>,<brake>: each a raw axis value or auto. */
+static inline void controls_wheel_rest(const char *v) {
+    char buf[64];
+    snprintf(buf, sizeof buf, "%s", v);
+    char *b = strchr(buf, ',');
+    if (!b) return;
+    *b++ = '\0';
+    const char *r[2] = { buf, b };
+    for (int i = 0; i < 2; i++) {
+        g_wheel_opt.rest_set[i] = strcmp(r[i], "auto") != 0;
+        g_wheel_opt.rest[i] = g_wheel_opt.rest_set[i] ? atoi(r[i]) : 0;
+    }
+}
+
+/* A wheel.* line: its device, pedals, axes, centre, turn, or a button's actions. */
+static inline void controls_wheel_line(const char *k, const char *v) {
+    if (!strcmp(k, "wheel.device")) {
         pad_pick_parse(&g_wheel_opt.dev, v);
     } else if (!strcmp(k, "wheel.pedals")) {
         pad_pick_parse(&g_wheel_opt.pedals, v);
     } else if (!strcmp(k, "wheel.rest")) {
-        char buf[64];
-        snprintf(buf, sizeof buf, "%s", v);
-        char *b = strchr(buf, ',');
-        if (!b) return;
-        *b++ = '\0';
-        const char *r[2] = { buf, b };
-        for (int i = 0; i < 2; i++) {
-            g_wheel_opt.rest_set[i] = strcmp(r[i], "auto") != 0;
-            g_wheel_opt.rest[i] = g_wheel_opt.rest_set[i] ? atoi(r[i]) : 0;
-        }
-    } else if (!strncmp(k, "pad.", 4)) {
-        uint32_t acts;
-        for (int b = 0; b < PAD_BIND_COUNT; b++)
-            if (!strcmp(k + 4, g_pad_binds[b].name) && actions_by_name(v, &acts)) g_pad_binds[b].acts = acts;
+        controls_wheel_rest(v);
     } else if (!strcmp(k, "wheel.axes")) {
         int st, ac, br;
         if (sscanf(v, "%d,%d,%d", &st, &ac, &br) == 3 && st >= 0 && ac >= 0 && br >= 0) {
@@ -157,10 +149,36 @@ static inline void controls_apply_line(char *line) {
     } else if (!strcmp(k, "wheel.range")) {
         int r = atoi(v);
         g_lg4ff_range = r <= 0 ? 0 : lg4ff_clamp_range(r);
-    } else if (!strncmp(k, "wheel.", 6)) {
+    } else {
         uint32_t acts;
         int b = atoi(k + 6);
         if (b >= 0 && b < WHEEL_BUTTONS && actions_by_name(v, &acts)) g_wheel_opt.button[b] = acts;
+    }
+}
+#endif
+
+/* One line of a controls file. */
+static inline void controls_apply_line(char *line) {
+    char *eq = strchr(line, '=');
+    if (line[0] == '#' || !eq) return;
+    *eq = '\0';
+    const char *k = line, *v = eq + 1;
+    if (!strncmp(k, "key.", 4)) {
+        int a = input_action_by_name(k + 4);
+        if (a >= 0) controls_key_line(a, v);
+        return;
+    }
+#if M2HLE_PADS
+    if (!strcmp(k, "device")) {
+        for (int d = 0; d < PAD_DEVICE_COUNT; d++) if (!strcmp(v, g_pad_device_names[d])) g_pad_device = d;
+    } else if (!strcmp(k, "pad.device")) {
+        pad_pick_parse(&g_pad_pick, v);
+    } else if (!strncmp(k, "pad.", 4)) {
+        uint32_t acts;
+        for (int b = 0; b < PAD_BIND_COUNT; b++)
+            if (!strcmp(k + 4, g_pad_binds[b].name) && actions_by_name(v, &acts)) g_pad_binds[b].acts = acts;
+    } else if (!strncmp(k, "wheel.", 6)) {
+        controls_wheel_line(k, v);
     }
 #endif
 }
@@ -728,11 +746,8 @@ static inline void controls_wheel_actions(SDL_Joystick *joy, bool pads_on) {
     igEndTable();
 }
 
-static inline void controls_tab_wheel(bool pads_on) {
-    igTextWrapped("Pick the wheel, and the pedals if they have their own USB lead (they are a second "
-                  "device then). Detect: click it, then turn the wheel or press the pedal all the way. "
-                  "Centre: hold the wheel straight and click it.");
-    if (!pads_on) { igTextDisabled("No wheels this run."); return; }
+/* The Wheel and Pedals pickers. */
+static inline void controls_wheel_picks(bool pads_on) {
     if (controls_pick_combo("Wheel", &g_wheel_opt.dev, "Any device SDL calls a wheel", false)) {
         g_ctl.det_role = -1;
         controls_pads_changed(pads_on);
@@ -744,83 +759,78 @@ static inline void controls_tab_wheel(bool pads_on) {
         controls_pads_changed(pads_on);
         controls_save();
     }
-    SDL_Joystick *joy = controls_first_wheel();
-    SDL_JoystickID wid = joy ? SDL_GetJoystickID(joy) : 0, pid = wid;
-    if (g_wheel_opt.pedals.guid[0] && !pad_pick_is(&g_wheel_opt.pedals, wid)) pid = pad_pick_find(&g_wheel_opt.pedals);
-    SDL_Joystick *pj = pid ? SDL_GetJoystickFromID(pid) : NULL;
-    int naxes = joy ? SDL_GetNumJoystickAxes(joy) : 0, nbut = joy ? SDL_GetNumJoystickButtons(joy) : 0;
-    if (joy) igText("Wheel: %s (%d axes, %d buttons)", SDL_GetJoystickName(joy), naxes, nbut);
-    else     igTextDisabled("No wheel is connected.");
-    if (g_wheel_opt.pedals.guid[0] && !pj) igTextDisabled("The pedals are not connected.");
-    controls_detect_poll(pads_on);
+}
+
+/* The wheel's straight: where it reads held straight, if that is not the
+ * axis's middle (the car steers by itself otherwise). */
+static inline void controls_wheel_centre(int raw, bool pads_on) {
+    igSameLine();
+    if (igButton(g_wheel_opt.center_set ? "Centre*" : "Centre")) {
+        controls_edit_begin();
+        g_wheel_opt.center = raw;
+        g_wheel_opt.center_set = true;
+        snprintf(g_ctl.status, sizeof g_ctl.status, "The wheel is straight at %d.", raw);
+        controls_pads_changed(pads_on);
+        controls_save();
+    }
+    if (igIsItemClickedEx(ImGuiMouseButton_Right) && g_wheel_opt.center_set) {
+        controls_edit_begin();
+        g_wheel_opt.center_set = false;
+        g_wheel_opt.center = 0;
+        controls_pads_changed(pads_on);
+        controls_save();
+    }
+    if (igIsItemHovered(0))
+        igSetTooltip("Hold the wheel straight and click: that is where it steers straight.\n"
+                     "Right-click: back to the axis's middle.");
+}
+
+/* Axis k's meter (0 the wheel, 1 and 2 the pedals) on device dj, id did. */
+static inline void controls_wheel_meter(int k, SDL_Joystick *dj, SDL_JoystickID did, int axis, bool pads_on) {
+    igSameLine();
+    int raw = SDL_GetJoystickAxis(dj, axis);
+    float f;
+    if (k == 0)
+        f = ((g_wheel_opt.center_set ? wheel_host_steer_centred(raw, g_wheel_opt.center)
+                                     : wheel_host_steer(raw, 0)) + 32767.0f) / 65534.0f;
+    else {
+        int rest = g_wheel_opt.rest_set[k - 1] ? g_wheel_opt.rest[k - 1] : joy_rest(did, axis);
+        f = wheel_host_pedal(raw, rest) / (float)IO5649_AXIS_MAX;
+    }
+    igProgressBar(f, (ImVec2){ 140.0f, 0 }, "");
+    if (k == 0) controls_wheel_centre(raw, pads_on);
+}
+
+/* One axis row: its number, Detect, the meter. */
+static inline void controls_wheel_axis(int k, SDL_Joystick *dj, SDL_JoystickID did, bool pads_on) {
     int *ax[3] = { &g_wheel_opt.steer, &g_wheel_opt.accel, &g_wheel_opt.brake };
     static const char *const ax_name[3] = { "Wheel axis", "Accelerator axis", "Brake axis" };
-    for (int k = 0; k < 3; k++) {
-        SDL_Joystick *dj = k ? pj : joy;
-        SDL_JoystickID did = k ? pid : wid;
-        int v = *ax[k];
-        igPushIDInt(k);
-        igSetNextItemWidth(120.0f);
-        if (igInputIntEx(ax_name[k], &v, 1, 1, 0) && v >= 0 && v < 16) {
-            controls_edit_begin();
-            *ax[k] = v;
-            if (k) g_wheel_opt.rest_set[k - 1] = false;
-            controls_pads_changed(pads_on);
-            controls_save();
-        }
-        /* SameLine only before an item, or the next axis joins this row. */
-        if (g_ctl.det_role == k) {
-            igSameLine();
-            if (igButton("Waiting... (cancel)")) g_ctl.det_role = -1;
-        } else if (dj && (igSameLine(), igButton("Detect"))) {
-            g_ctl.det_role = k;
-            g_ctl.det_id = (uint32_t)did;
-            int n = SDL_GetNumJoystickAxes(dj);
-            for (int a = 0; a < 16; a++) g_ctl.det_start[a] = a < n ? SDL_GetJoystickAxis(dj, a) : 0;
-        }
-        if (dj && *ax[k] < SDL_GetNumJoystickAxes(dj)) {
-            igSameLine();
-            int raw = SDL_GetJoystickAxis(dj, *ax[k]);
-            float f;
-            if (k == 0)
-                f = ((g_wheel_opt.center_set ? wheel_host_steer_centred(raw, g_wheel_opt.center)
-                                             : wheel_host_steer(raw, 0)) + 32767.0f) / 65534.0f;
-            else {
-                int rest = g_wheel_opt.rest_set[k - 1] ? g_wheel_opt.rest[k - 1] : joy_rest(did, *ax[k]);
-                f = wheel_host_pedal(raw, rest) / (float)IO5649_AXIS_MAX;
-            }
-            igProgressBar(f, (ImVec2){ 140.0f, 0 }, "");
-            /* The wheel's straight: where it reads held straight, if that is
-             * not the axis's middle (the car steers by itself otherwise). */
-            if (k == 0) {
-                igSameLine();
-                if (igButton(g_wheel_opt.center_set ? "Centre*" : "Centre")) {
-                    controls_edit_begin();
-                    g_wheel_opt.center = raw;
-                    g_wheel_opt.center_set = true;
-                    snprintf(g_ctl.status, sizeof g_ctl.status, "The wheel is straight at %d.", raw);
-                    controls_pads_changed(pads_on);
-                    controls_save();
-                }
-                if (igIsItemClickedEx(ImGuiMouseButton_Right) && g_wheel_opt.center_set) {
-                    controls_edit_begin();
-                    g_wheel_opt.center_set = false;
-                    g_wheel_opt.center = 0;
-                    controls_pads_changed(pads_on);
-                    controls_save();
-                }
-                if (igIsItemHovered(0))
-                    igSetTooltip("Hold the wheel straight and click: that is where it steers straight.\n"
-                                 "Right-click: back to the axis's middle.");
-            }
-        }
-        igPopID();
+    int v = *ax[k];
+    igPushIDInt(k);
+    igSetNextItemWidth(120.0f);
+    if (igInputIntEx(ax_name[k], &v, 1, 1, 0) && v >= 0 && v < 16) {
+        controls_edit_begin();
+        *ax[k] = v;
+        if (k) g_wheel_opt.rest_set[k - 1] = false;
+        controls_pads_changed(pads_on);
+        controls_save();
     }
-    controls_wheel_range(joy);
-    controls_wheel_readout();
-    controls_wheel_actions(joy, pads_on);
-    igSpacing();
-    if (!igCollapsingHeader("Each button's actions (combos)", 0)) return;
+    /* SameLine only before an item, or the next axis joins this row. */
+    if (g_ctl.det_role == k) {
+        igSameLine();
+        if (igButton("Waiting... (cancel)")) g_ctl.det_role = -1;
+    } else if (dj && (igSameLine(), igButton("Detect"))) {
+        g_ctl.det_role = k;
+        g_ctl.det_id = (uint32_t)did;
+        int n = SDL_GetNumJoystickAxes(dj);
+        for (int a = 0; a < 16; a++) g_ctl.det_start[a] = a < n ? SDL_GetJoystickAxis(dj, a) : 0;
+    }
+    if (dj && *ax[k] < SDL_GetNumJoystickAxes(dj)) controls_wheel_meter(k, dj, did, *ax[k], pads_on);
+    igPopID();
+}
+
+/* Each button's actions, the d-pad's after them. */
+static inline void controls_wheel_binds(SDL_Joystick *joy, int nbut, bool pads_on) {
     int rows = nbut > 12 ? nbut : 12;
     if (rows > WHEEL_HAT) rows = WHEEL_HAT;
     bool hat = joy && SDL_GetNumJoystickHats(joy) > 0;
@@ -844,6 +854,29 @@ static inline void controls_tab_wheel(bool pads_on) {
         if (controls_acts_combo(id, &g_wheel_opt.button[b])) { controls_pads_changed(pads_on); controls_save(); }
     }
     igEndTable();
+}
+
+static inline void controls_tab_wheel(bool pads_on) {
+    igTextWrapped("Pick the wheel, and the pedals if they have their own USB lead (they are a second "
+                  "device then). Detect: click it, then turn the wheel or press the pedal all the way. "
+                  "Centre: hold the wheel straight and click it.");
+    if (!pads_on) { igTextDisabled("No wheels this run."); return; }
+    controls_wheel_picks(pads_on);
+    SDL_Joystick *joy = controls_first_wheel();
+    SDL_JoystickID wid = joy ? SDL_GetJoystickID(joy) : 0, pid = wid;
+    if (g_wheel_opt.pedals.guid[0] && !pad_pick_is(&g_wheel_opt.pedals, wid)) pid = pad_pick_find(&g_wheel_opt.pedals);
+    SDL_Joystick *pj = pid ? SDL_GetJoystickFromID(pid) : NULL;
+    int naxes = joy ? SDL_GetNumJoystickAxes(joy) : 0, nbut = joy ? SDL_GetNumJoystickButtons(joy) : 0;
+    if (joy) igText("Wheel: %s (%d axes, %d buttons)", SDL_GetJoystickName(joy), naxes, nbut);
+    else     igTextDisabled("No wheel is connected.");
+    if (g_wheel_opt.pedals.guid[0] && !pj) igTextDisabled("The pedals are not connected.");
+    controls_detect_poll(pads_on);
+    for (int k = 0; k < 3; k++) controls_wheel_axis(k, k ? pj : joy, k ? pid : wid, pads_on);
+    controls_wheel_range(joy);
+    controls_wheel_readout();
+    controls_wheel_actions(joy, pads_on);
+    igSpacing();
+    if (igCollapsingHeader("Each button's actions (combos)", 0)) controls_wheel_binds(joy, nbut, pads_on);
 }
 #endif
 
