@@ -123,9 +123,10 @@ static int  g_no_pads    = 0;      /* --no-pads: no gamepads or wheels (and no S
  * the graders must leave it on. A netplay reset attaches the sound board
  * regardless (netplay_reset_board_cb): the other machine runs one. */
 static int  g_no_sound_board = 0;
-/* --sound-hle (or M2HLE_SOUND_HLE=1): run the sound driver in C instead of on
- * the 68000 (board/sound_hle.h), where the program ROM is one it knows (STF's);
- * the SCSP is the same chip either way. The i960 sees the same UART line, so
+/* The sound driver runs in C instead of on the 68000 (board/sound_hle.h) where
+ * the program ROM is one it knows; --sound-68k (or M2HLE_SOUND_HLE=0) keeps the
+ * 68000 for every game (--sound-hle, the old switch, is the default now). The
+ * SCSP is the same chip either way. The i960 sees the same UART line, so
  * the game runs the same frames (det_digest --sound-hle); what changes is when
  * the notes land, by a millisecond or two, and the cost: about half the sound
  * board's. --sound-synth (M2HLE_SOUND_SYNTH=1) takes the driver in C and plays
@@ -1941,7 +1942,7 @@ static void event(const sapp_event* ev) {
 /* The switches the environment can set too (a script's or a service's). */
 static void env_switches(void) {
     { const char *e = getenv("M2HLE_NO_SOUND_BOARD"); if (e && e[0] == '1') g_no_sound_board = 1; }
-    { const char *e = getenv("M2HLE_SOUND_HLE"); if (e && e[0] == '1') g_sound_hle_want = 1; }
+    { const char *e = getenv("M2HLE_SOUND_HLE"); if (e && (e[0] == '0' || e[0] == '1')) g_sound_hle_want = e[0] == '1'; }
     { const char *e = getenv("M2HLE_SOUND_SYNTH"); if (e && e[0] == '1') g_sound_synth_want = 1; }
     { const char *e = getenv("M2HLE_SCSP_EXACT"); if (e && e[0] == '1') g_scsp_exact = 1; }
     { const char *e = getenv("M2HLE_TEXLOAD_HLE"); if (e && e[0] == '0') g_texload_hle = 0; }
@@ -2115,6 +2116,8 @@ static void parse_args(int argc, char **argv) {
             g_no_sound_board = 1;
         } else if (strcmp(argv[i], "--sound-hle") == 0) {
             g_sound_hle_want = 1;
+        } else if (strcmp(argv[i], "--sound-68k") == 0) {    /* the game's sound program on the 68000 */
+            g_sound_hle_want = 0;
         } else if (strcmp(argv[i], "--sound-synth") == 0) {   /* and the voices in C (sound_synth.h) */
             g_sound_synth_want = 1;
         } else if (strcmp(argv[i], "--scsp-exact") == 0) {   /* the DSP every sample (scsp.h, "A quiet DSP") */

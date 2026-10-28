@@ -192,6 +192,7 @@ static void report(uint32_t n, uint32_t nm, size_t next) {
 }
 
 int main(int argc, char **argv) {
+    g_sound_hle_want = 0;   /* the board unless SND_HLE=1: what the C driver is graded against */
     if (argc < 3) { fprintf(stderr, "usage: snd_replay <mame-capture-prefix> <out-prefix> [seconds]\n"); return 2; }
     const char *in = argv[1], *out = argv[2];
     double seconds = argc > 3 ? atof(argv[3]) : 0.0;

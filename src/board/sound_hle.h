@@ -235,8 +235,11 @@ typedef struct {
 } shle_t;
 
 static shle_t g_shle;
-/* A host's switch: take the HLE when the driver is one it knows. */
-static int g_sound_hle_want;
+/* A host's switch: take the HLE when the driver is one it knows (on unless the host
+ * asks for the 68000: --sound-68k, M2HLE_SOUND_HLE=0). A program ROM it does not
+ * know runs on the 68000 whatever this says. The test tools that hold the port
+ * to the board (det_digest, snd_replay, snd_bench) start with it off. */
+static int g_sound_hle_want = 1;
 
 /* ---- memory ------------------------------------------------------------------ */
 

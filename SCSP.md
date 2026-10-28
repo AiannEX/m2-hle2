@@ -248,12 +248,14 @@ Looked at and left: skipping inaudible voices (TL/EG under one LSB) is ~2%
 of voice samples; the loud reverb's 84 steps all feed EF0/EF1 through the ring
 and TEMP, so no step is dead.
 
-## The driver in C (`--sound-hle`)
+## The driver in C (the default; `--sound-68k` for the 68000)
 
 `src/board/sound_hle.h` is STF's sound driver ported to C, run in place of the
-68000 when the host asks for it (`--sound-hle`, `M2HLE_SOUND_HLE=1`, the
-libretro option "Sound driver"; Pinboard #173). Off by default: the 68000 stays
-the board, the oracle, and the only path for any other program ROM. It takes
+68000 (Pinboard #173). Since Pinboard #1802 it is the default wherever it knows
+the program ROM; `--sound-68k`, `M2HLE_SOUND_HLE=0`, the libretro option "Sound
+driver" = 68000 or the web page's "Sound CPU" put the 68000 back. The 68000
+stays the oracle -- det_digest, snd_replay and snd_bench start on it and take
+`--sound-hle` / `SND_HLE=1` -- and the only path for any other program ROM. It takes
 the builds of the driver it knows, by a hash of their code (`k_shle_drvs`,
 "Other games' builds" below) -- m2-pacman talks back over MIDI out, and
 nothing but the 68000 answers that.

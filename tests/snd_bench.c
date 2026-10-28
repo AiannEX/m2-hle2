@@ -104,6 +104,7 @@ static void bench_dsp(long dsp_iters) {
 }
 
 int main(int argc, char **argv) {
+    g_sound_hle_want = 0;   /* the board unless SND_HLE=1 */
     if (argc < 2) { fprintf(stderr, "usage: snd_bench <mame-capture-prefix> [seconds] [dsp_iters]\n"); return 2; }
     double seconds = argc > 2 ? atof(argv[2]) : 30.0;
     long dsp_iters = argc > 3 ? atol(argv[3]) : 400000;

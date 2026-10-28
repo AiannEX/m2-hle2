@@ -244,10 +244,10 @@ static struct retro_core_option_v2_definition option_defs[] = {
       "In C: ported to C, playing through the same sound chip; about half the sound board's work, so cooler on a "
       "handheld. In C, voices too: the driver's notes played in C as well, in place of the chip's voices; the same "
       "sound, to the bit. The game and online play are the same either way; notes can land a millisecond or two apart. "
-      "Sonic the Fighters only (other games keep the 68000). Takes effect when the game is next loaded.",
+      "Games whose sound program it does not know keep the 68000. Takes effect when the game is next loaded.",
       NULL, NULL,
-      { { "68000", "68000 (the board)" }, { "c", "In C (lighter)" }, { "synth", "In C, voices too" }, { NULL, NULL } },
-      "68000" },
+      { { "c", "In C (lighter)" }, { "68000", "68000 (the board)" }, { "synth", "In C, voices too" }, { NULL, NULL } },
+      "c" },
     { "m2hle_gems_i960", "Gems C: main CPU functions", NULL,
       "Run about 45 of the game's heaviest main-CPU functions as Sega's own C from Sonic Gems Collection, in "
       "place of the arcade program. Lighter, but not the board: each counts as one instruction, so the game's "
@@ -492,7 +492,7 @@ static void lr_set_options(void) {
         { "m2hle_resolution", "Internal resolution; " LR_DEFAULT_RES "|native|double|triple|quadruple|fullscreen" },
         { "m2hle_stf_version", "Sonic the Fighters version; console|arcade" },
         { "m2hle_sound",      "Sound board; " LR_DEFAULT_SOUND "|enabled|disabled" },
-        { "m2hle_sound_driver", "Sound driver; 68000|c|synth" },
+        { "m2hle_sound_driver", "Sound driver; c|68000|synth" },
         { "m2hle_gems_i960",  "Gems C: main CPU functions; disabled|enabled" },
         { "m2hle_gems_cop",   "Gems C: coprocessor; disabled|enabled" },
         { "m2hle_sound_thread", "Sound board on its own core; enabled|disabled" },
