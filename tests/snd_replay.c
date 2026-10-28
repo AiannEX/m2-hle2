@@ -13,6 +13,8 @@
  *   writes <out>.bin/.ram.bin/.regs.bin/.json and <out>.wav (44.1 kHz stereo)
  *   $ROMDIR (else $ROMS_DIR): directory with sfight.zip and schamp.zip
  *     (default: the claude_mame oracle's roms)
+ *   $SND_SET: another game's board instead, a directory of region images
+ *     (m2hle --export-roms; only audiocpu.bin and samples.bin are read)
  */
 #define NDEBUG 1
 #include "test_rom_dir.h"
@@ -93,8 +95,9 @@ static int load_board(const char *romdir) {
     char child[1024], parent[1024];
     snprintf(child, sizeof child, "%s/sfight.zip", romdir);
     snprintf(parent, sizeof parent, "%s/schamp.zip", romdir);
-    if (sfight_load(&rs, child, parent) != 0 || !rs.audiocpu || !rs.samples) {
-        fprintf(stderr, "ROM load failed (%s)\n", romdir); return 1;
+    const char *set = getenv("SND_SET");
+    if ((set ? romset_load_dir(&rs, set) : sfight_load(&rs, child, parent)) != 0 || !rs.audiocpu || !rs.samples) {
+        fprintf(stderr, "ROM load failed (%s)\n", set ? set : romdir); return 1;
     }
     if (getenv("SND_HLE")) g_sound_hle_want = atoi(getenv("SND_HLE"));
     if (getenv("SND_SYNTH")) g_sound_synth_want = atoi(getenv("SND_SYNTH"));   /* the voices in C too (sound_synth.h) */

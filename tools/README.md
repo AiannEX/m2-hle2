@@ -1163,6 +1163,14 @@ det_digest <merged zip> --frames 20000 --script "..." --out a.txt              #
 det_digest <merged zip> --frames 20000 --script "..." --sound-hle --out b.txt  # ...and with the driver in C
 ```
 
+Another game on a driver build it knows (SCSP.md "Other games' builds"):
+`SND_SET=<dir>`, the set's region images from `m2hle --export-roms` (only
+`audiocpu.bin` and `samples.bin` are read), in place of `$ROMDIR`:
+
+```sh
+SND_SET=roms-out/doa python tools/grade-sound-hle.py build/Release/snd_replay.exe cap/doa stim/bgm stim/sfx stim/sys stim/fuzz --seconds 60
+```
+
 The first five columns of the two `det_digest` outputs (frame, check, work
 RAM, buffer RAM, COP) must be identical: the i960 only sees the UART, which
 board time clocks. `--pcm FILE` writes each run's audio, for a gameplay

@@ -253,8 +253,9 @@ and TEMP, so no step is dead.
 `src/board/sound_hle.h` is STF's sound driver ported to C, run in place of the
 68000 when the host asks for it (`--sound-hle`, `M2HLE_SOUND_HLE=1`, the
 libretro option "Sound driver"; Pinboard #173). Off by default: the 68000 stays
-the board, the oracle, and the only path for any other program ROM (it takes
-only STF's, by a hash of its code) -- m2-pacman talks back over MIDI out, and
+the board, the oracle, and the only path for any other program ROM. It takes
+the builds of the driver it knows, by a hash of their code (`k_shle_drvs`,
+"Other games' builds" below) -- m2-pacman talks back over MIDI out, and
 nothing but the 68000 answers that.
 
 **What it is.** The driver, routine by routine, from the IDA listing in
@@ -314,6 +315,69 @@ Cortex-A55 60 s of it in 4.40 s against 8.21 s (effects storm 5.36 against
 its return is exactly zero (measured by muting it), which the DSP shortcut
 under "What is left" would take.
 
+### Other games' builds (Pinboard #1737)
+
+STF's driver is one build of a driver that Sega used across Model 2: the same
+code layout, the game's data behind the pointer block at 0x608000. The port
+takes eight builds, each a `shle_drv_t` (where its own tables sit in the code,
+the bank bits it ORs into the sound control register, and what changed):
+
+- **sfight** (Sonic the Fighters; Fighting Vipers is the same code),
+  **skytargt**, **von** and **gunblade**: STF's tables, von and gunblade with
+  bank bit 0x20.
+- **vcop2**: the restart (MIDI 0xFF) keeps sound RAM and the DSP program.
+- **doa**, **airwlkrs** (and Behind Enemy Lines, same code): a 512-event queue
+  with a word count, each full-queue test against its own value; "everything
+  stops" empties the queue.
+- **manxtt**: the engine (A?7x) records are 0x12 bytes with a volume cut
+  (A?76), the sends are re-evaluated after A?72..76, DISDL 0xC0, the engine's
+  effect scan is capped at byte_60807C, and a stray MIDI data byte is dropped.
+
+None of them writes MIDI out (every 0x405 in their code is a MIBUF read), so,
+as for STF, the i960 sees only the UART and cannot tell.
+
+Grading another game: `snd_replay` takes `$SND_SET`, a directory of the set's
+region images (`m2hle --export-roms`), and the same stimuli or a capture of the
+game's own commands. 60 s per input, timing median / p95 |err| in ms, % of the
+board's key-ons matched within 30 ms:
+
+| build | bgm | sfx | sys | fuzz |
+|---|---|---|---|---|
+| sfight | 100.0%, -0.9 / 4.5 | 99.7%, -5.0 / 8.5 | 99.8%, -0.9 / 3.0 | 100.0%, -2.9 / 5.4 |
+| skytargt | 99.7%, -1.3 / 5.0 | 99.6%, -4.7 / 6.7 | 99.2%, -1.3 / 5.6 | 100.0%, -5.9 / 9.5 |
+| von | 100.0%, -3.0 / 6.9 | 99.9%, -3.1 / 9.2 | 100.0%, -3.4 / 7.8 | 100.0%, -4.5 / 5.7 |
+| gunblade | 100.0%, -2.5 / 6.6 | 100.0%, -9.3 / 14.9 | 99.7%, -2.5 / 6.8 | 100.0%, -5.0 / 8.5 |
+| vcop2 | 100.0%, -0.9 / 2.7 | 99.6%, -10.7 / 17.6 | 100.0%, +0.3 / 3.8 | 100.0%, -3.9 / 4.9 |
+| airwlkrs | 99.6%, -0.9 / 4.1 | 99.5%, -1.7 / 5.3 | 99.8%, -1.1 / 10.4 | 100.0%, -0.9 / 1.2 |
+| bel | 100.0%, -2.1 / 9.3 | 97.5%, -1.7 / 15.3 | 100.0%, -2.3 / 7.8 | 100.0%, -0.8 / 0.9 |
+
+Manx TT on its engine inputs (`eng`, `engo`, `eng2`): 100% each, -1.1 / 2.8,
+-1.2 / 3.3, -1.1 / 3.2. Dead or Alive on 180 s of its own captured commands:
+3311 key-ons, 99.9%, +1.65 / 6.5. Two known differences:
+
+- bel's sfx: 822 key-ons in C against the board's 767. They are all its
+  placeholder effect (sample 0x7800 at TL 119, near silence), which STF's
+  effect numbers land on, and how many get through is queue order.
+- airwlkrs's fuzz: 6% quieter for 8 s with the same notes and registers: two
+  voices on the same sample keyed 1.4 ms apart instead of 0.9 (one event per
+  main-loop pass), so they interfere differently.
+
+**What made the timing.** The timers drift with the driver's load, and three
+board facts set it (all `SND_TRACE` measurements):
+
+- *A pass over the slots is longer when it copies.* Only a real refill (a whole
+  chunk, a loop end, the last chunk) takes the 16 `movem.l` block; a stream
+  waiting on the chip's half is a few instructions. Dead or Alive's board
+  passes every ~61 samples, not 43, and the stream step's pacing is per pass,
+  so the copy rate follows (`shle_refill_pass`, `pass_rem`).
+- *Timer A hides B and C.* The SCSP raises level 1 for the first pending
+  enabled source in the order A, B, C, MIDI, so a B behind a pending A enters
+  225 cycles after A's handler does (`SHLE_ACK_A`: its ack is that far in).
+- *The main loop masks timer A during a MIDI event* (`move.w #$2100,sr` round
+  the channel-event dispatch, STF 0x601A78): an A that comes then waits for
+  the event, and a B behind it with it -- the board's 2,000-6,700-cycle B
+  latencies. `amask_from`/`amask_until`; A0-status commands are not masked.
+
 ## The voices in C (`--sound-synth`)
 
 `src/board/sound_synth.h` takes the next step (Pinboard #1737): under the
@@ -322,7 +386,7 @@ keys a note and the synth plays the sample at its pitch, through its envelope,
 LFO and pan, straight into the mix: `--sound-synth`, `M2HLE_SOUND_SYNTH=1`,
 the libretro option "Sound driver" = "In C, voices too", `SND_SYNTH=1` in
 `snd_replay`/`snd_bench`. It implies `--sound-hle` and, like it, takes only
-STF's program ROM; anything else stays on the 68000 and the chip.
+the driver builds that one knows; anything else stays on the 68000 and the chip.
 
 **What stays the chip's.** The reverb DSP, its MIXS inputs, the direct outs'
 sum, MVOL and the DAC: common and DSP register writes still go to
