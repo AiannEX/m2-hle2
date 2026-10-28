@@ -208,19 +208,8 @@ static inline void controls_load(const game_profile_t *p) {
 #endif
 }
 
-static inline void controls_save(void) {
-    char path[640], name[16], acts[64], pick[112];
-    if (!controls_path(g_ctl.loaded, path, sizeof path)) return;
-    FILE *f = fopen(path, "w");
-    if (!f) {
-        LOG_WARN("controls: cannot write %s", path);
-        snprintf(g_ctl.status, sizeof g_ctl.status, "Cannot write the controls file (see m2hle.log).");
-        return;
-    }
-    fprintf(f, "# m2hle controls for %s\n", g_ctl.loaded->display_name);
-#if M2HLE_PADS
-    fprintf(f, "device=%s\n", g_pad_device_names[g_pad_device]);
-#endif
+static inline void controls_save_keys(FILE *f) {
+    char name[16];
     for (int a = 0; a < GAME_INPUT_COUNT; a++) {
         fprintf(f, "key.%s=", g_input_action_names[a]);
         int n = 0;
@@ -229,13 +218,22 @@ static inline void controls_save(void) {
                 fprintf(f, "%s%s", n++ ? "," : "", name);
         fprintf(f, "%s\n", n ? "" : "none");
     }
+}
+
 #if M2HLE_PADS
-    for (int b = 0; b < PAD_BIND_COUNT; b++)
-        fprintf(f, "pad.%s=%s\n", g_pad_binds[b].name, input_combo_format(g_pad_binds[b].acts, acts, sizeof acts));
+static inline void controls_save_pick(FILE *f, const char *key, const pad_pick_t *p) {
+    char pick[112];
+    if (!p->guid[0]) return;
+    pad_pick_format(p, pick, sizeof pick);
+    fprintf(f, "%s=%s\n", key, pick);
+}
+
+static inline void controls_save_wheel(FILE *f) {
+    char acts[64];
     fprintf(f, "wheel.axes=%d,%d,%d\n", g_wheel_opt.steer, g_wheel_opt.accel, g_wheel_opt.brake);
-    if (g_pad_pick.guid[0])        { pad_pick_format(&g_pad_pick, pick, sizeof pick);        fprintf(f, "pad.device=%s\n", pick); }
-    if (g_wheel_opt.dev.guid[0])    { pad_pick_format(&g_wheel_opt.dev, pick, sizeof pick);    fprintf(f, "wheel.device=%s\n", pick); }
-    if (g_wheel_opt.pedals.guid[0]) { pad_pick_format(&g_wheel_opt.pedals, pick, sizeof pick); fprintf(f, "wheel.pedals=%s\n", pick); }
+    controls_save_pick(f, "pad.device", &g_pad_pick);
+    controls_save_pick(f, "wheel.device", &g_wheel_opt.dev);
+    controls_save_pick(f, "wheel.pedals", &g_wheel_opt.pedals);
     if (g_wheel_opt.rest_set[0] || g_wheel_opt.rest_set[1]) {
         fprintf(f, "wheel.rest=");
         for (int i = 0; i < 2; i++)
@@ -248,6 +246,28 @@ static inline void controls_save(void) {
     for (int b = 0; b < WHEEL_BUTTONS; b++)
         if (g_wheel_opt.button[b])
             fprintf(f, "wheel.%d=%s\n", b, input_combo_format(g_wheel_opt.button[b], acts, sizeof acts));
+}
+#endif
+
+static inline void controls_save(void) {
+    char path[640];
+    if (!controls_path(g_ctl.loaded, path, sizeof path)) return;
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        LOG_WARN("controls: cannot write %s", path);
+        snprintf(g_ctl.status, sizeof g_ctl.status, "Cannot write the controls file (see m2hle.log).");
+        return;
+    }
+    fprintf(f, "# m2hle controls for %s\n", g_ctl.loaded->display_name);
+#if M2HLE_PADS
+    fprintf(f, "device=%s\n", g_pad_device_names[g_pad_device]);
+#endif
+    controls_save_keys(f);
+#if M2HLE_PADS
+    char acts[64];
+    for (int b = 0; b < PAD_BIND_COUNT; b++)
+        fprintf(f, "pad.%s=%s\n", g_pad_binds[b].name, input_combo_format(g_pad_binds[b].acts, acts, sizeof acts));
+    controls_save_wheel(f);
 #endif
     fclose(f);
 }
@@ -519,34 +539,40 @@ static inline bool controls_pick_combo(const char *label, pad_pick_t *p, const c
     return changed;
 }
 
-static inline void controls_devices(bool pads_on) {
+/* What a connected device does this run, for the Devices list. */
+static inline const char *controls_joy_role(SDL_JoystickID id) {
+    if (wheel_is(id)) return pad_device_takes(true) ? "the wheel" : "the wheel, not playing";
+    if (pedals_is(id)) return pad_device_takes(true) ? "the pedals" : "the pedals, not playing";
+    if (gamepad_is(id)) return pad_device_takes(false) ? "a gamepad" : "a gamepad, not playing";
+    return SDL_IsGamepad(id) ? "a gamepad, not picked" : "unused: pick it in the Wheel tab";
+}
+
+static inline void controls_device_combo(bool pads_on) {
     static const char *const label[PAD_DEVICE_COUNT] = {
         "Keyboard + any gamepad or wheel", "Keyboard only", "Keyboard + gamepad", "Keyboard + racing wheel",
     };
     igSetNextItemWidth(260.0f);
-    if (igBeginCombo("Devices", label[g_pad_device], 0)) {
-        for (int d = 0; d < PAD_DEVICE_COUNT; d++)
-            if (igSelectableEx(label[d], g_pad_device == d, 0, (ImVec2){ 0, 0 }) && g_pad_device != d) {
-                controls_edit_begin();
-                g_pad_device = d;
-                controls_pads_changed(pads_on);
-                controls_save();
-            }
-        igEndCombo();
-    }
+    if (!igBeginCombo("Devices", label[g_pad_device], 0)) return;
+    for (int d = 0; d < PAD_DEVICE_COUNT; d++)
+        if (igSelectableEx(label[d], g_pad_device == d, 0, (ImVec2){ 0, 0 }) && g_pad_device != d) {
+            controls_edit_begin();
+            g_pad_device = d;
+            controls_pads_changed(pads_on);
+            controls_save();
+        }
+    igEndCombo();
+}
+
+static inline void controls_devices(bool pads_on) {
+    controls_device_combo(pads_on);
     if (!pads_on) { igTextDisabled("No gamepads or wheels this run (--no-pads, capture mode, or SDL failed)."); return; }
     int count = 0;
     SDL_JoystickID *ids = SDL_GetJoysticks(&count);
     if (!count) igTextDisabled("No gamepad or wheel is connected.");
     for (int i = 0; ids && i < count; i++) {
         SDL_JoystickID id = ids[i];
-        bool wheel = wheel_is(id), pedals = pedals_is(id), pad = gamepad_is(id);
         const char *name = SDL_GetJoystickNameForID(id);
-        const char *role = wheel ? (pad_device_takes(true) ? "the wheel" : "the wheel, not playing")
-                         : pedals ? (pad_device_takes(true) ? "the pedals" : "the pedals, not playing")
-                         : pad ? (pad_device_takes(false) ? "a gamepad" : "a gamepad, not playing")
-                         : SDL_IsGamepad(id) ? "a gamepad, not picked" : "unused: pick it in the Wheel tab";
-        igBulletText("%s (%s) - %s", name ? name : "?", controls_joy_kind(id), role);
+        igBulletText("%s (%s) - %s", name ? name : "?", controls_joy_kind(id), controls_joy_role(id));
     }
     SDL_free(ids);
 }
@@ -690,6 +716,61 @@ static inline void controls_wheel_learn_poll(SDL_Joystick *joy, bool pads_on) {
     controls_save();
 }
 
+/* Action a's wheel buttons as text into list; *lit if one is held. */
+static inline size_t controls_wheel_act_list(int a, uint64_t held, char *list, size_t cap, bool *lit) {
+    char bn[16];
+    size_t n = 0;
+    *lit = false;
+    list[0] = '\0';
+    for (int b = 0; b < WHEEL_BUTTONS && n < cap; b++)
+        if (g_wheel_opt.button[b] & ACT(a)) {
+            n += (size_t)snprintf(list + n, cap - n, "%s%s", n ? ", " : "",
+                                  controls_wheel_button_name(b, bn, sizeof bn));
+            *lit |= (held >> b) & 1;
+        }
+    return n;
+}
+
+/* Action a's Set button (right-click clears its buttons; n of them). */
+static inline void controls_wheel_act_set(SDL_Joystick *joy, int a, const char *label, uint64_t held, size_t n,
+                                          bool pads_on) {
+    if (g_ctl.learn_act == a) {
+        if (igButtonEx("Press a button...", (ImVec2){ -1.0f, 0.0f })) g_ctl.learn_act = -1;
+    } else if (igButtonEx("Set", (ImVec2){ -1.0f, 0.0f })) {
+        if (joy) {
+            g_ctl.learn_act = a;
+            g_ctl.learn_held = held;
+            g_ctl.det_role = -1;
+            snprintf(g_ctl.status, sizeof g_ctl.status, "Press the wheel's button for %s.", label);
+        } else snprintf(g_ctl.status, sizeof g_ctl.status, "No wheel is connected.");
+    }
+    if (igIsItemClickedEx(ImGuiMouseButton_Right) && n) {
+        controls_edit_begin();
+        for (int b = 0; b < WHEEL_BUTTONS; b++) g_wheel_opt.button[b] &= ~ACT(a);
+        controls_pads_changed(pads_on);
+        controls_save();
+    }
+}
+
+/* One action's row: its name, its wheel buttons, Set. */
+static inline void controls_wheel_act_row(SDL_Joystick *joy, int a, uint64_t held, bool pads_on) {
+    char label[48], list[96];
+    bool lit;
+    size_t n = controls_wheel_act_list(a, held, list, sizeof list, &lit);
+    igTableNextRow();
+    if (lit) igTableSetBgColor(ImGuiTableBgTarget_RowBg1, 0x6000C000u, -1);
+    igTableSetColumnIndex(0);
+    controls_action_label(a, label, sizeof label);
+    if (g_active_profile && !g_active_profile->input.bits[a]) igTextDisabled("%s", label);
+    else igTextUnformatted(label);
+    igTableSetColumnIndex(1);
+    igTextUnformatted(n ? list : "-");
+    igTableSetColumnIndex(2);
+    igPushIDInt(a);
+    controls_wheel_act_set(joy, a, label, held, n, pads_on);
+    igPopID();
+}
+
 static inline void controls_wheel_actions(SDL_Joystick *joy, bool pads_on) {
     controls_wheel_learn_poll(joy, pads_on);
     igSeparatorText("Buttons");
@@ -705,43 +786,7 @@ static inline void controls_wheel_actions(SDL_Joystick *joy, bool pads_on) {
         int a = g_ctl_wheel_acts[i];
         if (a >= GAME_INPUT_GEAR_N && !gears) continue;
         if (a >= GAME_INPUT_P2_UP && a <= GAME_INPUT_P2_COIN && !controls_view_button(a)) continue;
-        char label[48], list[96], bn[16];
-        size_t n = 0;
-        bool lit = false;
-        list[0] = '\0';
-        for (int b = 0; b < WHEEL_BUTTONS && n < sizeof list; b++)
-            if (g_wheel_opt.button[b] & ACT(a)) {
-                n += (size_t)snprintf(list + n, sizeof list - n, "%s%s", n ? ", " : "",
-                                      controls_wheel_button_name(b, bn, sizeof bn));
-                lit |= (held >> b) & 1;
-            }
-        igTableNextRow();
-        if (lit) igTableSetBgColor(ImGuiTableBgTarget_RowBg1, 0x6000C000u, -1);
-        igTableSetColumnIndex(0);
-        controls_action_label(a, label, sizeof label);
-        if (g_active_profile && !g_active_profile->input.bits[a]) igTextDisabled("%s", label);
-        else igTextUnformatted(label);
-        igTableSetColumnIndex(1);
-        igTextUnformatted(n ? list : "-");
-        igTableSetColumnIndex(2);
-        igPushIDInt(a);
-        if (g_ctl.learn_act == a) {
-            if (igButtonEx("Press a button...", (ImVec2){ -1.0f, 0.0f })) g_ctl.learn_act = -1;
-        } else if (igButtonEx("Set", (ImVec2){ -1.0f, 0.0f })) {
-            if (joy) {
-                g_ctl.learn_act = a;
-                g_ctl.learn_held = held;
-                g_ctl.det_role = -1;
-                snprintf(g_ctl.status, sizeof g_ctl.status, "Press the wheel's button for %s.", label);
-            } else snprintf(g_ctl.status, sizeof g_ctl.status, "No wheel is connected.");
-        }
-        if (igIsItemClickedEx(ImGuiMouseButton_Right) && n) {
-            controls_edit_begin();
-            for (int b = 0; b < WHEEL_BUTTONS; b++) g_wheel_opt.button[b] &= ~ACT(a);
-            controls_pads_changed(pads_on);
-            controls_save();
-        }
-        igPopID();
+        controls_wheel_act_row(joy, a, held, pads_on);
     }
     igEndTable();
 }
@@ -880,6 +925,29 @@ static inline void controls_tab_wheel(bool pads_on) {
 }
 #endif
 
+static inline void controls_tabs(bool pads_on) {
+    (void)pads_on;
+    if (!igBeginTabBar("ctltabs", 0)) return;
+    if (igBeginTabItem("Keyboard", NULL, 0)) { controls_tab_keyboard(); igEndTabItem(); }
+#if M2HLE_PADS
+    if (igBeginTabItem("Gamepad", NULL, 0)) { controls_tab_gamepad(pads_on); igEndTabItem(); }
+    if (igBeginTabItem("Wheel", NULL, 0))   { controls_tab_wheel(pads_on); igEndTabItem(); }
+#endif
+    igEndTabBar();
+}
+
+/* Reset to defaults: p's file goes, its built-in controls come back. */
+static inline void controls_reset(const game_profile_t *p, bool pads_on) {
+    char path[640];
+    g_ctl.cli_n = 0;
+    g_ctl.det_role = -1;
+    g_ctl.learn_act = -1;
+    if (controls_path(p, path, sizeof path)) remove(path);
+    controls_load(p);
+    controls_pads_changed(pads_on);
+    snprintf(g_ctl.status, sizeof g_ctl.status, "Back to the built-in controls.");
+}
+
 static inline void controls_window_draw(bool *open, bool pads_on) {
     if (!*open) { g_ctl.cap_action = -1; g_ctl.learn_act = -1; return; }
     igSetNextWindowSize((ImVec2){ 520.0f, 620.0f }, ImGuiCond_FirstUseEver);
@@ -897,24 +965,9 @@ static inline void controls_window_draw(bool *open, bool pads_on) {
 #endif
     if (g_ctl.status[0]) igTextColored((ImVec4){ 1, 0.8f, 0.3f, 1 }, "%s", g_ctl.status);
     igSeparator();
-    if (igBeginTabBar("ctltabs", 0)) {
-        if (igBeginTabItem("Keyboard", NULL, 0)) { controls_tab_keyboard(); igEndTabItem(); }
-#if M2HLE_PADS
-        if (igBeginTabItem("Gamepad", NULL, 0)) { controls_tab_gamepad(pads_on); igEndTabItem(); }
-        if (igBeginTabItem("Wheel", NULL, 0))   { controls_tab_wheel(pads_on); igEndTabItem(); }
-#endif
-        igEndTabBar();
-    }
+    controls_tabs(pads_on);
     igSeparator();
-    if (igButton("Reset to defaults") && p) {
-        g_ctl.cli_n = 0;
-        g_ctl.det_role = -1;
-        g_ctl.learn_act = -1;
-        if (controls_path(p, path, sizeof path)) remove(path);
-        controls_load(p);
-        controls_pads_changed(pads_on);
-        snprintf(g_ctl.status, sizeof g_ctl.status, "Back to the built-in controls.");
-    }
+    if (igButton("Reset to defaults") && p) controls_reset(p, pads_on);
     igEnd();
 }
 
