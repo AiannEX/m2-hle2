@@ -54,6 +54,24 @@ static inline void lightgun_ui_aim_at(float mx, float my) {
     lightgun_host_aim(0, mx, my, (float)r->x, (float)r->y, (float)r->w, (float)r->h);
 }
 
+/* The left button pulls P1's trigger, the right one reloads. */
+static inline void lightgun_ui_click(const sapp_event *ev) {
+    int b = ev->mouse_button == SAPP_MOUSEBUTTON_LEFT  ? LIGHTGUN_HOST_TRIGGER
+          : ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT ? LIGHTGUN_HOST_RELOAD : -1;
+    if (b < 0) return;
+    bool down = ev->type == SAPP_EVENTTYPE_MOUSE_DOWN;
+    if (down && igGetIO()->WantCaptureMouse) return;    /* a click on a window */
+    if (down) lightgun_ui_aim_at(ev->mouse_x, ev->mouse_y);
+    lightgun_host_button(0, b, down);
+}
+
+/* P1's direction keys take the aim back from the mouse. */
+static inline void lightgun_ui_key(const sapp_event *ev) {
+    int a = input_keycode_to_action((int)ev->key_code);
+    if (a == GAME_INPUT_P1_UP || a == GAME_INPUT_P1_DOWN || a == GAME_INPUT_P1_LEFT || a == GAME_INPUT_P1_RIGHT)
+        lightgun_host_release_aim(0);
+}
+
 static inline void lightgun_ui_event(const sapp_event *ev) {
     if (!lightgun_ui_on()) return;
     switch (ev->type) {
@@ -64,22 +82,12 @@ static inline void lightgun_ui_event(const sapp_event *ev) {
         lightgun_host_aim_away(0);
         break;
     case SAPP_EVENTTYPE_MOUSE_DOWN:
-    case SAPP_EVENTTYPE_MOUSE_UP: {
-        int b = ev->mouse_button == SAPP_MOUSEBUTTON_LEFT  ? LIGHTGUN_HOST_TRIGGER
-              : ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT ? LIGHTGUN_HOST_RELOAD : -1;
-        if (b < 0) break;
-        bool down = ev->type == SAPP_EVENTTYPE_MOUSE_DOWN;
-        if (down && igGetIO()->WantCaptureMouse) break;    /* a click on a window */
-        if (down) lightgun_ui_aim_at(ev->mouse_x, ev->mouse_y);
-        lightgun_host_button(0, b, down);
+    case SAPP_EVENTTYPE_MOUSE_UP:
+        lightgun_ui_click(ev);
         break;
-    }
-    case SAPP_EVENTTYPE_KEY_DOWN: {
-        int a = input_keycode_to_action((int)ev->key_code);
-        if (a == GAME_INPUT_P1_UP || a == GAME_INPUT_P1_DOWN || a == GAME_INPUT_P1_LEFT || a == GAME_INPUT_P1_RIGHT)
-            lightgun_host_release_aim(0);
+    case SAPP_EVENTTYPE_KEY_DOWN:
+        lightgun_ui_key(ev);
         break;
-    }
     case SAPP_EVENTTYPE_UNFOCUSED:
         lightgun_host_release_all();
         break;

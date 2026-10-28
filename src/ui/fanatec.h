@@ -119,6 +119,37 @@ static SDL_hid_device_info *fanatec__enumerate(void) {
     return list;
 }
 
+/* Open base i, and set it up to show the game's meters. */
+static void fanatec__open(const SDL_hid_device_info *i) {
+    g_fanatec.dev = SDL_hid_open_path(i->path);
+    if (!g_fanatec.dev) {
+        if (!g_fanatec.warned)
+            LOG_WARN("fanatec: %ls (%04X) would not open: %s%s", i->product_string ? i->product_string : L"base",
+                     i->product_id, SDL_GetError(), FANATEC__OPEN_HINT);
+        g_fanatec.warned = true;
+        return;
+    }
+    g_fanatec.multi = fanatec_multi_tlc(i->product_id);
+    if (g_fanatec.multi) fanatec__open_64(i->path);
+    LOG_INFO("fanatec: %ls (%04X) shows the game's meters", i->product_string ? i->product_string : L"base",
+             i->product_id);
+    g_fanatec.mask = -1;
+    memcpy(g_fanatec.text, "???", 4);
+    g_fanatec.display = false;
+    /* A rim with a rev stripe shows the rim's rev bits as revs. */
+    fanatec__cmd(fanatec_rev_translator, true);
+}
+
+/* No base: once, what there was, so a report names the IDs to add. */
+static void fanatec__list(const SDL_hid_device_info *list) {
+    if (g_fanatec.dev || g_fanatec.listed) return;
+    g_fanatec.listed = true;
+    if (!list) LOG_INFO("fanatec: no Fanatec HID device (0EB7) found");
+    for (const SDL_hid_device_info *i = list; i; i = i->next)
+        LOG_INFO("fanatec: %04X %s, usage %04X:%04X, not opened as a base (%s)", i->product_id,
+                 fanatec_is_base(i->product_id) ? "base" : "not a base", i->usage_page, i->usage, i->path);
+}
+
 /* The first wheel base that opens. */
 static void fanatec__find(void) {
     SDL_hid_device_info *list = fanatec__enumerate();
@@ -126,32 +157,9 @@ static void fanatec__find(void) {
         if (!fanatec_is_base(i->product_id)) continue;
         /* Windows lists each collection; the first is the one with the commands. */
         if (SDL_strcasestr(i->path, "col0") && !SDL_strcasestr(i->path, "col01")) continue;
-        g_fanatec.dev = SDL_hid_open_path(i->path);
-        if (!g_fanatec.dev) {
-            if (!g_fanatec.warned)
-                LOG_WARN("fanatec: %ls (%04X) would not open: %s%s", i->product_string ? i->product_string : L"base",
-                         i->product_id, SDL_GetError(), FANATEC__OPEN_HINT);
-            g_fanatec.warned = true;
-            continue;
-        }
-        g_fanatec.multi = fanatec_multi_tlc(i->product_id);
-        if (g_fanatec.multi) fanatec__open_64(i->path);
-        LOG_INFO("fanatec: %ls (%04X) shows the game's meters", i->product_string ? i->product_string : L"base",
-                 i->product_id);
-        g_fanatec.mask = -1;
-        memcpy(g_fanatec.text, "???", 4);
-        g_fanatec.display = false;
-        /* A rim with a rev stripe shows the rim's rev bits as revs. */
-        fanatec__cmd(fanatec_rev_translator, true);
+        fanatec__open(i);
     }
-    /* No base: once, what there was, so a report names the IDs to add. */
-    if (!g_fanatec.dev && !g_fanatec.listed) {
-        g_fanatec.listed = true;
-        if (!list) LOG_INFO("fanatec: no Fanatec HID device (0EB7) found");
-        for (SDL_hid_device_info *i = list; i; i = i->next)
-            LOG_INFO("fanatec: %04X %s, usage %04X:%04X, not opened as a base (%s)", i->product_id,
-                     fanatec_is_base(i->product_id) ? "base" : "not a base", i->usage_page, i->usage, i->path);
-    }
+    fanatec__list(list);
     SDL_hid_free_enumeration(list);
 }
 

@@ -1097,6 +1097,21 @@ static void lobby_pad_settle(bool *pad_changed) {
 static uint32_t g_link_keys, g_link_hit;   /* LINK_KEY_* down, pressed since the last pump */
 static bool     g_link_resume;             /* the board ran when it was asked */
 
+/* The question's key for a keyboard key or a pad button (0 for none). */
+static uint32_t link_key_of(SDL_Scancode sc) {
+    if (sc == SDL_SCANCODE_UP)   return LINK_KEY_UP;
+    if (sc == SDL_SCANCODE_DOWN) return LINK_KEY_DOWN;
+    if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) return LINK_KEY_ANSWER;
+    return 0;
+}
+
+static uint32_t link_button_of(int b) {
+    if (b == SDL_GAMEPAD_BUTTON_DPAD_UP)   return LINK_KEY_UP;
+    if (b == SDL_GAMEPAD_BUTTON_DPAD_DOWN) return LINK_KEY_DOWN;
+    if (b == SDL_GAMEPAD_BUTTON_SOUTH || b == SDL_GAMEPAD_BUTTON_START) return LINK_KEY_ANSWER;
+    return 0;
+}
+
 /* An event while the question is up or being let go of: true when it was the
  * question's, and the game must not see it. */
 static bool link_event(const SDL_Event *ev) {
@@ -1109,18 +1124,12 @@ static bool link_event(const SDL_Event *ev) {
             if (ev->key.scancode == SDL_SCANCODE_ESCAPE) return false;
             down = ev->type == SDL_EVENT_KEY_DOWN;
             if (down && ev->key.repeat) return true;
-            if (ev->key.scancode == SDL_SCANCODE_UP)   k = LINK_KEY_UP;
-            if (ev->key.scancode == SDL_SCANCODE_DOWN) k = LINK_KEY_DOWN;
-            if (ev->key.scancode == SDL_SCANCODE_RETURN || ev->key.scancode == SDL_SCANCODE_KP_ENTER)
-                k = LINK_KEY_ANSWER;
+            k = link_key_of(ev->key.scancode);
             break;
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
         case SDL_EVENT_GAMEPAD_BUTTON_UP:
             down = ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
-            if (ev->gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP)   k = LINK_KEY_UP;
-            if (ev->gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN) k = LINK_KEY_DOWN;
-            if (ev->gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH || ev->gbutton.button == SDL_GAMEPAD_BUTTON_START)
-                k = LINK_KEY_ANSWER;
+            k = link_button_of(ev->gbutton.button);
             break;
         case SDL_EVENT_GAMEPAD_AXIS_MOTION:
             return true;

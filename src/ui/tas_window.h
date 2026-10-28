@@ -174,6 +174,30 @@ static inline void tas_ui_menu(emu_thread_ctx_t *ctx, ImGuiFileDialog *fd, bool 
 
 /* ---- The window ---------------------------------------------------------------- */
 
+/* The slow-motion pick: 1x, 1/2x, 1/4x, 1/8x. */
+static inline void tas_ui_speed(void) {
+    static const char *const speeds[] = { "1x", "1/2x", "1/4x", "1/8x" };
+    int si = g_tas.slowdown >= 8 ? 3 : g_tas.slowdown >= 4 ? 2 : g_tas.slowdown >= 2 ? 1 : 0;
+    igSetNextItemWidth(70);
+    if (!igBeginCombo("##speed", speeds[si], 0)) return;
+    for (int i = 0; i < 4; i++)
+        if (igSelectableEx(speeds[i], i == si, 0, (ImVec2){ 0, 0 })) g_tas.slowdown = 1 << i;
+    igEndCombo();
+}
+
+/* The seek bar: it seeks when let go. */
+static inline void tas_ui_seek_bar(void) {
+    int n = (int)g_tas.mv.n;
+    if (!g_tas_ui.dragging) g_tas_ui.seek_to = (int)(g_tas.seeking ? g_tas.seek_to : g_tas.frame);
+    igSetNextItemWidth(-1);
+    igSliderIntEx("##seek", &g_tas_ui.seek_to, 0, n > 0 ? n : 1, "frame %d", 0);
+    g_tas_ui.dragging = igIsItemActive();
+    if (igIsItemDeactivatedAfterEdit()) {
+        g_tas.rewinding = false;
+        tas_seek((uint32_t)(g_tas_ui.seek_to > n ? n : g_tas_ui.seek_to), false);
+    }
+}
+
 static inline void tas_ui_transport(emu_thread_ctx_t *ctx) {
     bool running = emu_is_running(ctx) && !g_tas.seeking;
     if (igButton("|<"))            { g_tas.rewinding = false; tas_seek(0, false); }
@@ -197,24 +221,26 @@ static inline void tas_ui_transport(emu_thread_ctx_t *ctx) {
     igSetItemTooltip("Back to where the last rewinds began (Shift+F11)");
     igEndDisabled();
     igSameLine();
-    static const char *const speeds[] = { "1x", "1/2x", "1/4x", "1/8x" };
-    int si = g_tas.slowdown >= 8 ? 3 : g_tas.slowdown >= 4 ? 2 : g_tas.slowdown >= 2 ? 1 : 0;
-    igSetNextItemWidth(70);
-    if (igBeginCombo("##speed", speeds[si], 0)) {
-        for (int i = 0; i < 4; i++)
-            if (igSelectableEx(speeds[i], i == si, 0, (ImVec2){ 0, 0 })) g_tas.slowdown = 1 << i;
-        igEndCombo();
-    }
+    tas_ui_speed();
+    tas_ui_seek_bar();
+}
 
-    int n = (int)g_tas.mv.n;
-    if (!g_tas_ui.dragging) g_tas_ui.seek_to = (int)(g_tas.seeking ? g_tas.seek_to : g_tas.frame);
-    igSetNextItemWidth(-1);
-    igSliderIntEx("##seek", &g_tas_ui.seek_to, 0, n > 0 ? n : 1, "frame %d", 0);
-    g_tas_ui.dragging = igIsItemActive();
-    if (igIsItemDeactivatedAfterEdit()) {
-        g_tas.rewinding = false;
-        tas_seek((uint32_t)(g_tas_ui.seek_to > n ? n : g_tas_ui.seek_to), false);
+/* Action a's virtual-pad button: green held, amber the next frame, blue
+ * held on the keys or a pad. */
+static inline void tas_ui_pad_button(int a, uint32_t bit, bool hold, bool once, bool keys) {
+    int colors = 0;
+    if (hold || once || keys) {
+        ImVec4 c = hold ? (ImVec4){ 0.15f, 0.55f, 0.20f, 1 } : once ? (ImVec4){ 0.70f, 0.55f, 0.10f, 1 }
+                        : (ImVec4){ 0.25f, 0.35f, 0.55f, 1 };
+        igPushStyleColorImVec4(ImGuiCol_Button, c);
+        colors = 1;
     }
+    igPushIDInt(a);
+    if (igButtonEx(s_tas_short[a], (ImVec2){ 38, 0 })) g_tas.pad.hold ^= bit;
+    if (igIsItemClickedEx(ImGuiMouseButton_Right))     g_tas.pad.once ^= bit;
+    igSetItemTooltip("%s", g_input_action_names[a]);
+    igPopID();
+    if (colors) igPopStyleColor();
 }
 
 static inline void tas_ui_pad(void) {
@@ -232,19 +258,7 @@ static inline void tas_ui_pad(void) {
         if (shown && group == last_group) igSameLine();
         last_group = group;
         shown++;
-        int colors = 0;
-        if (hold || once || keys) {
-            ImVec4 c = hold ? (ImVec4){ 0.15f, 0.55f, 0.20f, 1 } : once ? (ImVec4){ 0.70f, 0.55f, 0.10f, 1 }
-                            : (ImVec4){ 0.25f, 0.35f, 0.55f, 1 };
-            igPushStyleColorImVec4(ImGuiCol_Button, c);
-            colors = 1;
-        }
-        igPushIDInt(a);
-        if (igButtonEx(s_tas_short[a], (ImVec2){ 38, 0 })) g_tas.pad.hold ^= bit;
-        if (igIsItemClickedEx(ImGuiMouseButton_Right))     g_tas.pad.once ^= bit;
-        igSetItemTooltip("%s", g_input_action_names[a]);
-        igPopID();
-        if (colors) igPopStyleColor();
+        tas_ui_pad_button(a, bit, hold, once, keys);
     }
     if (igSmallButton("Release all")) { g_tas.pad.hold = 0; g_tas.pad.once = 0; }
     igSameLine();

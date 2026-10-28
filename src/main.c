@@ -1719,6 +1719,52 @@ static void window_draw_game(int ox, int oy, int w, int h, bool post, bool win_o
     extract_model_tick();
 }
 
+/* A bridge caller may ask for the object viewer's window: it owns the
+ * viewer's settings but not this flag, which is the frontend's. */
+static void frame_objview_request(void) {
+    if (g_objview.window_request >= 0) {
+        state.show_objview       = (g_objview.window_request != 0);
+        g_objview.window_request = -1;
+    }
+}
+
+/* Where the game goes in the window, the overlay painted; true when an
+ * overlay (or an announcement) is up. */
+static bool frame_game_box(int *ox, int *oy, int *w, int *h) {
+    int win_ox = 0, win_oy = 0, win_gw = 0, win_gh = 0;
+    bool win_overlay = window_overlay_paint(&win_ox, &win_oy, &win_gw, &win_gh);
+
+    window_game_rect(ox, oy, w, h);
+    /* An overlay owns the whole window: the board goes where the plugin
+     * was told it would be, so the window and the stream show the identical
+     * composition rather than two letterboxes of the same picture. */
+    if (win_overlay) { *ox = win_ox; *oy = win_oy; *w = win_gw; *h = win_gh; }
+    /* With no plugin, an announcement still goes up, over the window's own
+     * game box. */
+    else if (!s_av_mirror && overlay_host_announcing()) {
+        int menu_h = s_menu_bar_visible ? (int)(igGetFrameHeight() * sapp_dpi_scale()) : 0;
+        overlay_host_paint(sapp_width(), sapp_height(), *ox, *oy, *w, *h, menu_h, g_emu_frames);
+        win_overlay = true;
+    }
+    return win_overlay;
+}
+
+/* The filter reads the game from a target of its own and covers only the
+ * game's rectangle. Not while the window mirrors the A/V stream: that
+ * target is the stream's composition, overlay and all. True when it is on. */
+static bool frame_post_source(int w, int h, float lerp_t) {
+    const bool post = !s_av_mirror && !g_stereo.on && post_shader_active();
+    if (post) {
+        int sw, sh;
+        post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, w, h, &sw, &sh);
+        post_shader_begin_source(sw, sh, &state.pass_action);
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){0, 0, sw, sh}, lerp_t);
+        post_shader_end_source();
+        post_shader_prepare(w, h);
+    }
+    return post;
+}
+
 static void frame(void) {
     /* `quit` over the bridge. Capture mode would otherwise swallow the close,
      * which is the point of capture mode -- so say we mean it. */
@@ -1759,46 +1805,15 @@ static void frame(void) {
      * the whole window. */
     s_menu_bar_visible = draw_ui && menu_bar_should_show();
 
-    /* A bridge caller may ask for the object viewer's window: it owns the
-     * viewer's settings but not this flag, which is the frontend's. */
-    if (g_objview.window_request >= 0) {
-        state.show_objview       = (g_objview.window_request != 0);
-        g_objview.window_request = -1;
-    }
-
+    frame_objview_request();
     if (draw_ui) draw_windows();
     if (draw_ui) link_check_prompt(&state.emu);
 
     av_stream_pass();
 
-    int win_ox = 0, win_oy = 0, win_gw = 0, win_gh = 0;
-    bool win_overlay = window_overlay_paint(&win_ox, &win_oy, &win_gw, &win_gh);
-
     int ox, oy, w, h;
-    window_game_rect(&ox, &oy, &w, &h);
-    /* An overlay owns the whole window: the board goes where the plugin
-     * was told it would be, so the window and the stream show the identical
-     * composition rather than two letterboxes of the same picture. */
-    if (win_overlay) { ox = win_ox; oy = win_oy; w = win_gw; h = win_gh; }
-    /* With no plugin, an announcement still goes up, over the window's own
-     * game box. */
-    else if (!s_av_mirror && overlay_host_announcing()) {
-        int menu_h = s_menu_bar_visible ? (int)(igGetFrameHeight() * sapp_dpi_scale()) : 0;
-        overlay_host_paint(sapp_width(), sapp_height(), ox, oy, w, h, menu_h, g_emu_frames);
-        win_overlay = true;
-    }
-    /* The filter reads the game from a target of its own and covers only the
-     * game's rectangle. Not while the window mirrors the A/V stream: that
-     * target is the stream's composition, overlay and all. */
-    const bool post = !s_av_mirror && !g_stereo.on && post_shader_active();
-    if (post) {
-        int sw, sh;
-        post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, w, h, &sw, &sh);
-        post_shader_begin_source(sw, sh, &state.pass_action);
-        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){0, 0, sw, sh}, lerp_t);
-        post_shader_end_source();
-        post_shader_prepare(w, h);
-    }
+    bool win_overlay = frame_game_box(&ox, &oy, &w, &h);
+    const bool post = frame_post_source(w, h, lerp_t);
 
     sg_begin_pass(&(sg_pass){
         .action    = state.pass_action,
@@ -1863,6 +1878,11 @@ static void cleanup(void) {
     log_file_close();
 }
 
+/* F5/F6/F7: n instructions, when the board is stopped. */
+static void hotkey_step(int n) {
+    if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, n);
+}
+
 /* The debugger's hotkeys: Esc quits, F9 runs or stops the board, F5/F6/F7
  * step it and F8 reboots the sound board. */
 static void event_hotkey(const sapp_event* ev) {
@@ -1873,20 +1893,14 @@ static void event_hotkey(const sapp_event* ev) {
             else if (state.emu_started && state.romset.loaded && !state.cpu.halted)
                 emu_run(&state.emu);
             break;
-        case SAPP_KEYCODE_F5:
-            if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, 1);
-            break;
-        case SAPP_KEYCODE_F6:
-            if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, 10);
-            break;
+        case SAPP_KEYCODE_F5: hotkey_step(1); break;
+        case SAPP_KEYCODE_F6: hotkey_step(10); break;
         case SAPP_KEYCODE_F8:
             /* Reboot the sound board. The driver can lose its command stream and
              * go permanently silent; this recovers it without dropping the run. */
             emu_sound_restart(&state.emu);
             break;
-        case SAPP_KEYCODE_F7:
-            if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, 100);
-            break;
+        case SAPP_KEYCODE_F7: hotkey_step(100); break;
         default: break;
     }
 }

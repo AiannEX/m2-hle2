@@ -213,6 +213,50 @@ typedef struct {
 
 #define LIGHTGUN_HOST_BARS (LIGHTGUN_PLAYERS * 8 + 1)
 
+/* The reticle's bars around (cx, cy), grown by e for the outline: a dot,
+ * a box or a cross (arm long, gap from the middle, t thick). Returns how many. */
+static inline int lightgun_host_shape(float cx, float cy, float e, float arm, float gap, float t, float b[4][4]) {
+    if (g_lightgun_reticle == LIGHTGUN_RETICLE_DOT) {
+        float d = t * 1.5f;
+        const float q[4] = { cx - d - e, cy - d - e, cx + d + e, cy + d + e };
+        memcpy(b[0], q, sizeof q);
+        return 1;
+    }
+    if (g_lightgun_reticle == LIGHTGUN_RETICLE_BOX) {
+        float r = arm * 0.7f;
+        const float q[4][4] = {
+            { cx - r - e, cy - r - e, cx + r + e, cy - r + 2 * t + e },
+            { cx - r - e, cy + r - 2 * t - e, cx + r + e, cy + r + e },
+            { cx - r - e, cy - r - e, cx - r + 2 * t + e, cy + r + e },
+            { cx + r - 2 * t - e, cy - r - e, cx + r + e, cy + r + e },
+        };
+        memcpy(b, q, sizeof q);
+        return 4;
+    }
+    const float q[4][4] = {
+        { cx - arm - e, cy - t - e, cx - gap + e, cy + t + e },
+        { cx + gap - e, cy - t - e, cx + arm + e, cy + t + e },
+        { cx - t - e, cy - arm - e, cx + t + e, cy - gap + e },
+        { cx - t - e, cy + gap - e, cx + t + e, cy + arm + e },
+    };
+    memcpy(b, q, sizeof q);
+    return 4;
+}
+
+/* Player p's reticle at (cx, cy) into out from n: k 0 its outline, 1 the
+ * reticle. Returns the new n. */
+static inline int lightgun_host_reticle(int p, int k, float cx, float cy, float arm, float gap, float t,
+                                        lightgun_host_bar_t *out, int n) {
+    float e = k ? 0.0f : 1.0f;           /* the outline's margin */
+    uint32_t rgb = k ? (p == 0 ? 0xE02020u : 0x3060FFu) : 0x000000u;
+    float a = k ? 1.0f : 0.63f;
+    float b[4][4];
+    int nb = lightgun_host_shape(cx, cy, e, arm, gap, t, b);
+    for (int i = 0; i < nb; i++)
+        out[n++] = (lightgun_host_bar_t){ b[i][0], b[i][1], b[i][2], b[i][3], rgb, a };
+    return n;
+}
+
 /* The crosshairs over a picture at (ox, oy, w, h), in the reticle's shape
  * (the cross for a ring or an image; none when it is off), a dark outline
  * under each, P1 red and P2 blue; under them, on a frame that flashes, the
@@ -233,38 +277,7 @@ static inline int lightgun_host_crosshairs(float ox, float oy, float w, float h,
         float fx, fy;
         lightgun_aim(p, &fx, &fy);
         float cx = ox + fx * w, cy = oy + fy * h;
-        for (int k = 0; k < 2; k++) {
-            float e = k ? 0.0f : 1.0f;           /* the outline's margin */
-            uint32_t rgb = k ? (p == 0 ? 0xE02020u : 0x3060FFu) : 0x000000u;
-            float a = k ? 1.0f : 0.63f;
-            float b[4][4];
-            int nb = 4;
-            if (g_lightgun_reticle == LIGHTGUN_RETICLE_DOT) {
-                float d = t * 1.5f;
-                const float q[4] = { cx - d - e, cy - d - e, cx + d + e, cy + d + e };
-                memcpy(b[0], q, sizeof q);
-                nb = 1;
-            } else if (g_lightgun_reticle == LIGHTGUN_RETICLE_BOX) {
-                float r = arm * 0.7f;
-                const float q[4][4] = {
-                    { cx - r - e, cy - r - e, cx + r + e, cy - r + 2 * t + e },
-                    { cx - r - e, cy + r - 2 * t - e, cx + r + e, cy + r + e },
-                    { cx - r - e, cy - r - e, cx - r + 2 * t + e, cy + r + e },
-                    { cx + r - 2 * t - e, cy - r - e, cx + r + e, cy + r + e },
-                };
-                memcpy(b, q, sizeof q);
-            } else {
-                const float q[4][4] = {
-                    { cx - arm - e, cy - t - e, cx - gap + e, cy + t + e },
-                    { cx + gap - e, cy - t - e, cx + arm + e, cy + t + e },
-                    { cx - t - e, cy - arm - e, cx + t + e, cy - gap + e },
-                    { cx - t - e, cy + gap - e, cx + t + e, cy + arm + e },
-                };
-                memcpy(b, q, sizeof q);
-            }
-            for (int i = 0; i < nb; i++)
-                out[n++] = (lightgun_host_bar_t){ b[i][0], b[i][1], b[i][2], b[i][3], rgb, a };
-        }
+        for (int k = 0; k < 2; k++) n = lightgun_host_reticle(p, k, cx, cy, arm, gap, t, out, n);
     }
     return n;
 }
