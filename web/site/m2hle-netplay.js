@@ -346,39 +346,55 @@ const m2hleNetplay = (() => {
       () => setText(prefix + '-copy', t('np.copied')), () => {});
   }
 
+  /* The states in which the panel shows the room. */
+  function inRoomState(state) {
+    return state === 'in a room' || state === 'waiting at the barrier' || state === 'playing' || state === 'watching';
+  }
+
+  /* The state of the game online, in a line. It sits on the menu's Online Battle
+   * item, so with the menu closed it is what the menu button says it is holding
+   * (the button also lights up: m2hle.css, .online-btn.live). */
+  function pillText(state) {
+    if (state === 'playing') {
+      const peerRtt = peerMs(st.room && st.room.peer_rtt_ms);
+      return t(peerRtt === null ? 'np.pill.playing' : 'np.pill.playing.ping', { peer: st.room.peer || '', ms: peerRtt });
+    }
+    if (state === 'watching') return t('np.pill.watching');
+    if (state === 'waiting at the barrier') return t('np.pill.starting');
+    if (state === 'in a room') return st.room.peer_heard ? t('np.pill.here', { peer: st.room.peer }) : t('np.pill.waiting');
+    if (state === 'online') return t('np.pill.online');
+    return '';
+  }
+
+  /* The pill on the menu's buttons. The account item (btn-online, this panel)
+   * says what the panel will show. */
+  function renderMenuButtons(state) {
+    const pill = pillText(state);
+    setText('btn-online-label', t(inRoomState(state) ? 'np.btn.match' : 'np.btn.account'));
+    setText('btn-lobby-label', pill || t('np.btn.lobby'));
+    $('btn-lobby').classList.toggle('live', !!pill);
+    if ($('btn-menu')) $('btn-menu').title = pill || t('np.menu');
+  }
+
+  /* A Twitch sign-in under way takes the panel; true when it did. */
+  function renderTwitchWait(tw) {
+    if (tw.state !== TWITCH_STARTING && tw.state !== TWITCH_WAITING) return false;
+    show('np-twitch');
+    const waiting = tw.state === TWITCH_WAITING && tw.code;
+    $('np-twitch-code-box').hidden = !waiting;
+    setText('np-twitch-lead', t(waiting ? 'np.twitch.waiting' : 'np.twitch.asking'));
+    if (waiting) twitchCode('np-twitch', tw);
+    return true;
+  }
+
   function render() {
     if (!st) return;
     const tw = st.twitch || {};
     const state = st.state;
     $('np-empty').hidden = !st.empty_room;
     twitchFloat(tw);
-
-    /* The state of the game online, in a line. It sits on the menu's Online Battle
-     * item, so with the menu closed it is what the menu button says it is holding
-     * (the button also lights up: m2hle.css, .online-btn.live). The account item
-     * (btn-online, this panel) says what the panel will show. */
-    let pill = '';
-    const peerRtt = peerMs(st.room && st.room.peer_rtt_ms);
-    if (state === 'playing') {
-      pill = t(peerRtt === null ? 'np.pill.playing' : 'np.pill.playing.ping', { peer: st.room.peer || '', ms: peerRtt });
-    } else if (state === 'watching') pill = t('np.pill.watching');
-    else if (state === 'waiting at the barrier') pill = t('np.pill.starting');
-    else if (state === 'in a room') pill = st.room.peer_heard ? t('np.pill.here', { peer: st.room.peer }) : t('np.pill.waiting');
-    else if (state === 'online') pill = t('np.pill.online');
-    const inRoom = state === 'in a room' || state === 'waiting at the barrier' || state === 'playing' || state === 'watching';
-    setText('btn-online-label', t(inRoom ? 'np.btn.match' : 'np.btn.account'));
-    setText('btn-lobby-label', pill || t('np.btn.lobby'));
-    $('btn-lobby').classList.toggle('live', !!pill);
-    if ($('btn-menu')) $('btn-menu').title = pill || t('np.menu');
-
-    if (tw.state === TWITCH_STARTING || tw.state === TWITCH_WAITING) {
-      show('np-twitch');
-      const waiting = tw.state === TWITCH_WAITING && tw.code;
-      $('np-twitch-code-box').hidden = !waiting;
-      setText('np-twitch-lead', t(waiting ? 'np.twitch.waiting' : 'np.twitch.asking'));
-      if (waiting) twitchCode('np-twitch', tw);
-      return;
-    }
+    renderMenuButtons(state);
+    if (renderTwitchWait(tw)) return;
 
     if (state === 'connecting') {
       show('np-busy');
@@ -386,13 +402,11 @@ const m2hleNetplay = (() => {
       return;
     }
 
-    if (state === 'failed') {
-      const why = st.error || t('np.failed');
-      if (dismissedFailure !== why) {
-        show('np-failed');
-        setText('np-failed-text', friendly(why));
-        return;
-      }
+    const why = st.error || t('np.failed');
+    if (state === 'failed' && dismissedFailure !== why) {
+      show('np-failed');
+      setText('np-failed-text', friendly(why));
+      return;
     }
 
     if (state === 'online') {
@@ -400,7 +414,7 @@ const m2hleNetplay = (() => {
       renderLobby();
       return;
     }
-    if (state === 'in a room' || state === 'waiting at the barrier' || state === 'playing' || state === 'watching') {
+    if (inRoomState(state)) {
       show('np-room');
       renderRoom();
       return;
@@ -538,57 +552,48 @@ const m2hleNetplay = (() => {
     }
   }
 
-  function renderRoom() {
-    const r = st.room;
-    const members = r.members || [];
-    const peer = r.peer || t('np.peer');
-    const playing = st.state === 'playing';
-    const watching = st.state === 'watching';
-    const syncing = st.state === 'waiting at the barrier';
+  /* The line above the room's members. */
+  function roomLead(r, members, peer) {
     const nameOf = (side) => (members.find((m) => m.side === side) || {}).npid || '?';
-    let lead;
-    if (playing) lead = t('np.lead.playing', { peer });
-    else if (watching) lead = t('np.lead.watching', { a: nameOf(0), b: nameOf(1) });
-    else if (syncing) lead = r.peer_heard ? t('np.lead.syncing', { peer }) : t('np.lead.starting');
-    else if (members.length < 2) lead = t(r.host ? 'np.lead.waiting' : 'np.lead.joining');
-    else if (r.auto_start_s) lead = t('np.lead.next', { s: r.auto_start_s });
-    else if (r.phase === 'match') lead = t('np.lead.match');
-    else if (r.peer_ready && !r.ready) lead = t('np.lead.ready');
-    else lead = t('np.lead.count', { n: members.length, max: r.max });
-    setText('np-room-lead', lead);
-
-    /* The line, front first: who is up, who is on which side. */
-    const list = $('np-members');
-    list.textContent = '';
-    for (const m of members) {
-      const li = document.createElement('li');
-      li.className = 'np-room' + (m.me ? ' np-me' : '');
-      const who = document.createElement('span');
-      who.className = 'np-who';
-      who.textContent = (m.line >= 0 ? (m.line + 1) + '. ' : '') + (m.me ? t('np.member.you', { name: m.npid }) : m.npid);
-      const what = document.createElement('span');
-      what.className = 'np-what';
-      what.textContent = (m.side === 0 ? '1P' : m.side === 1 ? '2P'
-                         : t('np.member.' + (m.watch ? 'watching' : m.ready ? 'ready' : m.heard ? 'waiting' : 'connecting')))
-                       + ' · ' + m.wins + '-' + (m.games - m.wins);
-      if (!m.me && peerMs(m.rtt_ms) !== null) {
-        const p = pace(m.rtt_ms, st.delay);
-        const ping = document.createElement('span');
-        ping.className = 'np-ping np-ping-' + p;
-        ping.textContent = m.rtt_ms + ' ms';
-        ping.title = t('np.member.ping.title', { name: m.npid, pace: paceText(p), delay: st.delay });
-        what.append(' · ', ping);
-      }
-      li.append(who, what);
-      list.append(li);
+    switch (st.state) {
+      case 'playing': return t('np.lead.playing', { peer });
+      case 'watching': return t('np.lead.watching', { a: nameOf(0), b: nameOf(1) });
+      case 'waiting at the barrier': return r.peer_heard ? t('np.lead.syncing', { peer }) : t('np.lead.starting');
     }
+    if (members.length < 2) return t(r.host ? 'np.lead.waiting' : 'np.lead.joining');
+    if (r.auto_start_s) return t('np.lead.next', { s: r.auto_start_s });
+    if (r.phase === 'match') return t('np.lead.match');
+    if (r.peer_ready && !r.ready) return t('np.lead.ready');
+    return t('np.lead.count', { n: members.length, max: r.max });
+  }
 
-    $('np-start').hidden = playing || watching || syncing || members.length < 2;
-    setText('np-start', t(r.ready ? 'np.unready' : 'np.ready'));
-    $('np-room-hint').hidden = playing || watching;
-    $('np-stop').hidden = !playing && !syncing && !watching;
-    setText('np-stop', t(watching ? 'np.stop.watching' : 'np.stop.match'));
+  /* One member's row: place in the line, side or state, record and ping. */
+  function memberRow(m) {
+    const li = document.createElement('li');
+    li.className = 'np-room' + (m.me ? ' np-me' : '');
+    const who = document.createElement('span');
+    who.className = 'np-who';
+    who.textContent = (m.line >= 0 ? (m.line + 1) + '. ' : '') + (m.me ? t('np.member.you', { name: m.npid }) : m.npid);
+    const what = document.createElement('span');
+    what.className = 'np-what';
+    what.textContent = (m.side === 0 ? '1P' : m.side === 1 ? '2P'
+                       : t('np.member.' + (m.watch ? 'watching' : m.ready ? 'ready' : m.heard ? 'waiting' : 'connecting')))
+                     + ' · ' + m.wins + '-' + (m.games - m.wins);
+    if (!m.me && peerMs(m.rtt_ms) !== null) {
+      const p = pace(m.rtt_ms, st.delay);
+      const ping = document.createElement('span');
+      ping.className = 'np-ping np-ping-' + p;
+      ping.textContent = m.rtt_ms + ' ms';
+      ping.title = t('np.member.ping.title', { name: m.npid, pace: paceText(p), delay: st.delay });
+      what.append(' · ', ping);
+    }
+    li.append(who, what);
+    return li;
+  }
 
+  /* The trip to the peer, the delay and stalls, and the warnings under them. */
+  function renderRoomLink(r, peer, watching, syncing) {
+    const playing = st.state === 'playing';
     const bits = [];
     const rtt = peerMs(r.peer_rtt_ms);
     const ping = $('np-room-ping');
@@ -613,6 +618,29 @@ const m2hleNetplay = (() => {
       : '');
     errorText('np-desync', st.desync === null ? ''
       : t('np.desync', { frame: st.desync, peer }));
+  }
+
+  function renderRoom() {
+    const r = st.room;
+    const members = r.members || [];
+    const peer = r.peer || t('np.peer');
+    const playing = st.state === 'playing';
+    const watching = st.state === 'watching';
+    const syncing = st.state === 'waiting at the barrier';
+    setText('np-room-lead', roomLead(r, members, peer));
+
+    /* The line, front first: who is up, who is on which side. */
+    const list = $('np-members');
+    list.textContent = '';
+    for (const m of members) list.append(memberRow(m));
+
+    const busy = playing || watching || syncing;
+    $('np-start').hidden = busy || members.length < 2;
+    setText('np-start', t(r.ready ? 'np.unready' : 'np.ready'));
+    $('np-room-hint').hidden = playing || watching;
+    $('np-stop').hidden = !busy;
+    setText('np-stop', t(watching ? 'np.stop.watching' : 'np.stop.match'));
+    renderRoomLink(r, peer, watching, syncing);
   }
 
   /* ---- Actions ---------------------------------------------------------------- */
