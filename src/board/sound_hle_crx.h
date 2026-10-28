@@ -110,6 +110,10 @@
 #define CRX_LOOP_LAT     450u      /* an rte -> the idle loop's look at the queue (the trace's median
                                        * is 261; 450 holds hotd's drift best) */
 #define CRX_LOOP_TRIP    7000u     /* the main loop once round the 32 records: a record's next chunk */
+#define CRX_CHUNK_IRQ    25u       /* an interrupt that lands in a chunk's copy (0x601A84..0x601B0C, move.l
+                                       * into sound RAM) is entered ~48 later than at the idle loop (hotd
+                                       * 60-78 s: 110 vs 62); 70 for idle already holds part of it, and 25
+                                       * holds the four games' drift best (20-40 all close) */
 #define CRX_MASK_OFF     480u      /* a note-off read -> its track masked */
 #define CRX_COST_BYTE    22u       /* a move.b loop */
 #define CRX_COST_SWAP    11u       /* the swap's move.w loop, a byte */
@@ -1868,6 +1872,7 @@ static void crx_pass(scsp_t *s, uint64_t now) {
 /* a timer's handler entered at e, its reload `reload_at` into it */
 static inline uint64_t crx_entry(uint64_t due) {
     uint64_t e = shle_entry(due);
+    if (crx_refill_wait(e) > e) e += CRX_CHUNK_IRQ;
     for (uint32_t i = 0; i < g_shle.amask_n; i++)
         if (e >= g_shle.amask_win[i][0] && e < g_shle.amask_win[i][1]) return g_shle.amask_win[i][1];
     return e;

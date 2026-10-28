@@ -423,16 +423,28 @@ the lost ticks in, the sequencers play each note on the board's tick (the
 tick count h-b stays put to 80 s); what is left is timer A landing less deep
 in the windows: in hotd's 60-80 s the board's A is 10-25 clocks a tick later.
 
+That lateness is the chunk copy (Pinboard #1799). Timed tick by tick on hotd's
+board (the interval between Int2 entries, by the PC it interrupted), an A that
+lands in a chunk's unrolled `move.l` copy into sound RAM (0x601A84..0x601B0C)
+is entered 110 clocks after it fires, against 62 at the idle loop; the C driver
+took 70 for both (`refill_frac`, STF's charge for it, stays 0 for CRX). Busy
+passages copy more: hotd's A lands in a copy 1313 times in 72-78 s, 34 in 12-18 s.
+`CRX_CHUNK_IRQ` charges an entry that lands mid-chunk 25 more. The full 48 does not fit,
+because the C driver's 70 at idle is already 8 later than the board. 20 to 40 grade
+about the same; 40 overshoots to +9 ms mid-attract. Taking the 8 off the idle entry
+and charging 47 (the board's own numbers) is worse: hotdp 94.3%.
+
 On the games' own captured commands (`tools/grade-sound-hle.py --crx`, 90 s
 of attract from power-on; key-ons within 30 ms, median, p95 |err| in ms;
-before #1788's two rules above in brackets):
+earlier figures in brackets: within 30 ms before #1788's two rules, the rest
+before #1799's chunk wait):
 
 | set | within 30 ms | median / p95 | drift |
 |---|---|---|---|
-| dynamcop | 100.0% | -1.2 / 10.6 | within 13 ms |
-| motoraid | 99.9% | -2.1 / 17.2 | -18 ms at 56 s, back by 58 s |
-| hotd | 100.0% (91.2%) | -2.5 / 23.0 (-1.7 / 34.0) | -23 ms at 78 s, back by 84 s |
-| hotdp | 100.0% (93.4%) | -2.1 / 15.3 (-6.9 / 30.5) | -15 ms at 76 s |
+| dynamcop | 100.0% | -1.1 / 10.2 (-1.2 / 10.6) | within 13 ms |
+| motoraid | 99.9% | +0.3 / 8.2 (-2.1 / 17.2) | -8 ms at 56 s (-18), +8 at 88 s (+5) |
+| hotd | 100.0% (91.2%) | +0.3 / 10.9 (-2.5 / 23.0) | +4 at 56 s, -12 ms at 78 s (-24), back by 84 s |
+| hotdp | 100.0% (93.4%) | +4.4 / 8.2 (-2.1 / 15.3) | +9 at 38 s (+8), -10 ms at 80 s (-15) |
 
 hotdp (the prototype, its own sndpgm0.31) runs the same code as hotd with
 other songs, so it is a second hotd to grade on.
