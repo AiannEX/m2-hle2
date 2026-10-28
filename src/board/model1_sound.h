@@ -166,15 +166,8 @@ static const double g_mpcm_base_times[64] = {
 
 static inline uint32_t mpcm_fixed(uint32_t bits, double v) { return (uint32_t)((double)(1u << bits) * v); }
 
-static inline void mpcm_tables_build(void) {
-    mpcm_tables_t *T = &g_mpcm_t;
-    if (T->built) return;
-    static const float lfo_freq[8] = { 0.168f, 2.019f, 3.196f, 4.206f, 5.215f, 5.888f, 6.224f, 7.066f };
-    static const float phase_limit[8] = { 0.0f, 3.378f, 5.065f, 6.750f, 10.114f, 20.170f, 40.180f, 79.307f };
-    static const float amp_limit[8] = { 0.0f, 0.4f, 0.8f, 1.5f, 3.0f, 6.0f, 12.0f, 24.0f };
-    /* MAME's envelope and level-fade rates are per chip sample; these are per
-     * board sample, which comes this much less often. */
-    const double ratio = (double)M1SND_CPU_HZ / 224.0 / (double)M1SND_OUT_HZ;
+/* The level-and-pan gains. */
+static inline void mpcm_tables_pan(mpcm_tables_t *T) {
     for (int32_t level = 0; level < 0x80; ++level) {
         const double total_level = pow(10.0, ((double)level * -24.0 / 64.0) / 20.0) / 4.0;
         for (int32_t pan = 0; pan < 0x10; ++pan) {
@@ -193,6 +186,11 @@ static inline void mpcm_tables_build(void) {
             T->right_pan[(pan << 7) | level] = (int32_t)mpcm_fixed(MPCM_TL_SHIFT, pr * total_level);
         }
     }
+}
+
+/* The pitch steps, the envelope's rates and the level fade's, and the level
+ * curve; ratio the chip's samples to one of the board's. */
+static inline void mpcm_tables_eg(mpcm_tables_t *T, double ratio) {
     /* The pitch step at the chip's rate, 4096 x rate x (1024 + i) / 1024:
      * integers, (10 MHz / 224) x 4096 / 1024 = 10 MHz / 56. */
     for (uint32_t i = 0; i < 0x400; ++i)
@@ -211,6 +209,13 @@ static inline void mpcm_tables_build(void) {
         const double db = -(96.0 - (96.0 * (double)i / (double)0x400));
         T->lin_to_exp[i] = (int32_t)mpcm_fixed(MPCM_TL_SHIFT, pow(10.0, db / 20.0));
     }
+}
+
+/* The LFOs' waves, their depths and their rates. */
+static inline void mpcm_tables_lfo(mpcm_tables_t *T) {
+    static const float lfo_freq[8] = { 0.168f, 2.019f, 3.196f, 4.206f, 5.215f, 5.888f, 6.224f, 7.066f };
+    static const float phase_limit[8] = { 0.0f, 3.378f, 5.065f, 6.750f, 10.114f, 20.170f, 40.180f, 79.307f };
+    static const float amp_limit[8] = { 0.0f, 0.4f, 0.8f, 1.5f, 3.0f, 6.0f, 12.0f, 24.0f };
     for (int32_t i = 0; i < 256; ++i) {
         if (i < 64)       T->pitch_table[i] = i * 2 + 128;
         else if (i < 128) T->pitch_table[i] = 383 - i * 2;
@@ -225,6 +230,17 @@ static inline void mpcm_tables_build(void) {
             T->amplitude_scale[t][i] = (int32_t)mpcm_fixed(MPCM_LFO_SHIFT, pow(10.0, ((double)-amp_limit[t] * i / 256.0) / 20.0));
         T->lfo_step[t] = mpcm_fixed(MPCM_LFO_SHIFT, (double)lfo_freq[t] * 256.0 / (double)M1SND_OUT_HZ);
     }
+}
+
+static inline void mpcm_tables_build(void) {
+    mpcm_tables_t *T = &g_mpcm_t;
+    if (T->built) return;
+    /* MAME's envelope and level-fade rates are per chip sample; these are per
+     * board sample, which comes this much less often. */
+    const double ratio = (double)M1SND_CPU_HZ / 224.0 / (double)M1SND_OUT_HZ;
+    mpcm_tables_pan(T);
+    mpcm_tables_eg(T, ratio);
+    mpcm_tables_lfo(T);
     T->built = true;
 }
 

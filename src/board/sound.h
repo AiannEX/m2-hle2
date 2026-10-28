@@ -518,18 +518,34 @@ static inline uint32_t sound_m68k_peek(sound_state_t *ss, uint32_t addr, int sz)
  * way sound_bus_read would, so a sample window past the end of the set stays
  * on the callback and reads its zeros there. Rebuilt whenever what backs a
  * page changes (reset, ROM load, a bank switch). */
+/* model1_sound.h's map; no wait states. */
+static inline void sound_map_pages_m1(sound_state_t *ss) {
+    const uint8_t **m = ss->m68k.rmap;
+    memset(ss->m68k.wmap, 0, sizeof ss->m68k.wmap);
+    if (ss->rom_loaded) {
+        for (uint32_t pg = 0; pg < 4; pg++) m[pg] = ss->rom + (pg << 16);
+        for (uint32_t pg = 0; pg < 2; pg++) m[8 + pg] = ss->rom + 0x20000u + (pg << 16);
+    }
+    m[0xF0] = ss->ram;
+}
+
+/* The sample ROM's windows: 0x800000 the set's first 2 MB, 0xA00000 and
+ * 0xE00000 its banks; a page past the end of the set stays unmapped. */
+static inline void sound_map_samples(sound_state_t *ss) {
+    const uint8_t **m = ss->m68k.rmap;
+    for (uint32_t pg = 0x80; pg < 0x100; pg++) {
+        uint32_t a = pg << 16, o;
+        if      (a < 0xA00000u) o = a - 0x800000u;
+        else if (a < 0xE00000u) o = ss->bank4 + (a - 0xA00000u);
+        else                    o = ss->bank5 + (a - 0xE00000u);
+        if (o + 0x10000u <= ss->samples_size) m[pg] = ss->samples + o;
+    }
+}
+
 static inline void sound_map_pages(sound_state_t *ss) {
     const uint8_t **m = ss->m68k.rmap;
     memset((void *)m, 0, sizeof ss->m68k.rmap);
-    if (ss->model1) {                       /* model1_sound.h's map; no wait states */
-        memset(ss->m68k.wmap, 0, sizeof ss->m68k.wmap);
-        if (ss->rom_loaded) {
-            for (uint32_t pg = 0; pg < 4; pg++) m[pg] = ss->rom + (pg << 16);
-            for (uint32_t pg = 0; pg < 2; pg++) m[8 + pg] = ss->rom + 0x20000u + (pg << 16);
-        }
-        m[0xF0] = ss->ram;
-        return;
-    }
+    if (ss->model1) { sound_map_pages_m1(ss); return; }
     /* MAME model2.cpp model2_snd: one wait state on every sound RAM and SCSP
      * access ("the same waitstate weights as Saturn"). Measured in its timer
      * handlers: the interrupt-to-reload latency is 166 / 200 clocks against
@@ -545,14 +561,7 @@ static inline void sound_map_pages(sound_state_t *ss) {
     ss->scsp.dsp_moved = 0;
     if (ss->rom_loaded)
         for (uint32_t pg = 0; pg < M68K_ROM_SIZE >> 16; pg++) m[(M68K_ROM_BASE >> 16) + pg] = ss->rom + (pg << 16);
-    if (!ss->samples) return;
-    for (uint32_t pg = 0x80; pg < 0x100; pg++) {
-        uint32_t a = pg << 16, o;
-        if      (a < 0xA00000u) o = a - 0x800000u;
-        else if (a < 0xE00000u) o = ss->bank4 + (a - 0xA00000u);
-        else                    o = ss->bank5 + (a - 0xE00000u);
-        if (o + 0x10000u <= ss->samples_size) m[pg] = ss->samples + o;
-    }
+    if (ss->samples) sound_map_samples(ss);
 }
 
 static inline void sound_ctrl_w(sound_state_t *ss, uint32_t val) {
@@ -624,6 +633,20 @@ static uint32_t sound_m1_read(void *ctx, uint32_t a, int sz) {
     return sound_m1_bus_read((sound_state_t *)ctx, a, sz, 0);
 }
 
+/* A chip's register write: the UART, the two MultiPCMs (the second plays the
+ * samples past the first's), the YM3438. */
+static inline void sound_m1_dev_write(sound_state_t *ss, uint32_t a, uint32_t reg, uint32_t v) {
+    uint32_t n1 = ss->samples_size < M1SND_PCM_SIZE ? ss->samples_size : M1SND_PCM_SIZE;
+    uint32_t n2 = ss->samples_size > M1SND_PCM_SIZE ? ss->samples_size - M1SND_PCM_SIZE : 0;
+    if (a >= 0xC20000u && a < 0xC20004u)      m1snd_uart_write(&ss->m1, reg, (uint8_t)v);
+    else if (a >= 0xC40000u && a < 0xC40008u) mpcm_write(&ss->m1.pcm[0], ss->samples, n1, reg, (uint8_t)v);
+    else if (a >= 0xC60000u && a < 0xC60008u) mpcm_write(&ss->m1.pcm[1], n2 ? ss->samples + M1SND_PCM_SIZE : NULL, n2, reg, (uint8_t)v);
+    else if (a >= 0xD00000u && a < 0xD00008u) {
+        m1ym_advance(&ss->m1.ym, sound_m1_ym_clock(ss));
+        m1ym_write(&ss->m1.ym, reg, (uint8_t)v);
+    }
+}
+
 static void sound_m1_write(void *ctx, uint32_t a, uint32_t v, int sz) {
     sound_state_t *ss = (sound_state_t *)ctx;
     a &= 0xFFFFFFu;
@@ -642,16 +665,7 @@ static void sound_m1_write(void *ctx, uint32_t a, uint32_t v, int sz) {
         return;
     }
     uint32_t reg;
-    if (!sound_m1_dev(a, sz, &reg)) return;
-    uint32_t n1 = ss->samples_size < M1SND_PCM_SIZE ? ss->samples_size : M1SND_PCM_SIZE;
-    uint32_t n2 = ss->samples_size > M1SND_PCM_SIZE ? ss->samples_size - M1SND_PCM_SIZE : 0;
-    if (a >= 0xC20000u && a < 0xC20004u)      m1snd_uart_write(&ss->m1, reg, (uint8_t)v);
-    else if (a >= 0xC40000u && a < 0xC40008u) mpcm_write(&ss->m1.pcm[0], ss->samples, n1, reg, (uint8_t)v);
-    else if (a >= 0xC60000u && a < 0xC60008u) mpcm_write(&ss->m1.pcm[1], n2 ? ss->samples + M1SND_PCM_SIZE : NULL, n2, reg, (uint8_t)v);
-    else if (a >= 0xD00000u && a < 0xD00008u) {
-        m1ym_advance(&ss->m1.ym, sound_m1_ym_clock(ss));
-        m1ym_write(&ss->m1.ym, reg, (uint8_t)v);
-    }
+    if (sound_m1_dev(a, sz, &reg)) sound_m1_dev_write(ss, a, reg, v);
 }
 
 /* ---- the serial line (see sound_uart_t) --------------------------------------- */

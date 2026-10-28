@@ -22,6 +22,7 @@ Usage:
 """
 import os
 import sys
+import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROGRAMS = os.path.join(ROOT, 'tools', 'scsp-dsp-programs.txt')
@@ -52,75 +53,102 @@ def last_step(words):
     return 0
 
 
-def emit_step(st, p):
-    tra = (p[0] >> 8) & 0x7F; twt = (p[0] >> 7) & 1; twa = p[0] & 0x7F
-    xsel = (p[1] >> 15) & 1; ysel = (p[1] >> 13) & 3; ira = (p[1] >> 6) & 0x3F
-    iwt = (p[1] >> 5) & 1; iwa = p[1] & 0x1F
-    table = (p[2] >> 15) & 1; mwt = (p[2] >> 14) & 1; mrd = (p[2] >> 13) & 1
-    ewt = (p[2] >> 12) & 1; ewa = (p[2] >> 8) & 0xF; adrl = (p[2] >> 7) & 1
-    frcl = (p[2] >> 6) & 1; sh = (p[2] >> 4) & 3; yrl = (p[2] >> 3) & 1
-    negb = (p[2] >> 2) & 1; zero = (p[2] >> 1) & 1; bsel = p[2] & 1
-    nofl = (p[3] >> 15) & 1; cra = (p[3] >> 9) & 0x3F; masa = (p[3] >> 2) & 0x1F
-    adreb = (p[3] >> 1) & 1; nxadr = p[3] & 1
+def decode_step(st, p):
+    """One MPRO step's fields, as SCSP_DK_ANY reads them."""
+    f = types.SimpleNamespace(
+        tra=(p[0] >> 8) & 0x7F, twt=(p[0] >> 7) & 1, twa=p[0] & 0x7F,
+        xsel=(p[1] >> 15) & 1, ysel=(p[1] >> 13) & 3, ira=(p[1] >> 6) & 0x3F,
+        iwt=(p[1] >> 5) & 1, iwa=p[1] & 0x1F,
+        table=(p[2] >> 15) & 1, mwt=(p[2] >> 14) & 1, mrd=(p[2] >> 13) & 1,
+        ewt=(p[2] >> 12) & 1, ewa=(p[2] >> 8) & 0xF, adrl=(p[2] >> 7) & 1,
+        frcl=(p[2] >> 6) & 1, sh=(p[2] >> 4) & 3, yrl=(p[2] >> 3) & 1,
+        negb=(p[2] >> 2) & 1, zero=(p[2] >> 1) & 1, bsel=p[2] & 1,
+        nofl=(p[3] >> 15) & 1, cra=(p[3] >> 9) & 0x3F, masa=(p[3] >> 2) & 0x1F,
+        adreb=(p[3] >> 1) & 1, nxadr=p[3] & 1)
     # MAME: the delay memory is only touched on odd steps
-    mrd = mrd and (st & 1)
-    mwt = mwt and (st & 1)
+    f.mrd = f.mrd and (st & 1)
+    f.mwt = f.mwt and (st & 1)
+    return f
 
-    s = []
-    if ira <= 0x1F:
-        s.append('inputs = scsp_sext(mems[%d], 24);' % ira)
-    elif ira <= 0x2F:
-        s.append('inputs = scsp_sext((int32_t)((uint32_t)d->mixs[%d] << 4), 24);' % (ira - 0x20))
+
+def emit_inputs(f, s):
+    """INPUTS from MEMS, MIXS or EXTS, and the MEMS write."""
+    if f.ira <= 0x1F:
+        s.append('inputs = scsp_sext(mems[%d], 24);' % f.ira)
+    elif f.ira <= 0x2F:
+        s.append('inputs = scsp_sext((int32_t)((uint32_t)d->mixs[%d] << 4), 24);' % (f.ira - 0x20))
     else:
-        s.append('inputs = scsp_sext(d->exts[%d] * 256, 24);' % (ira - 0x30))
-    if iwt:
-        if ira == iwa:
+        s.append('inputs = scsp_sext(d->exts[%d] * 256, 24);' % (f.ira - 0x30))
+    if f.iwt:
+        if f.ira == f.iwa:
             s.append('inputs = memval;')
-        s.append('mems[%d] = memval;' % iwa)
-    s.append('tr = scsp_sext(temp[(%du + dec) & 0x7F], 24);' % tra)
-    if zero:
+        s.append('mems[%d] = memval;' % f.iwa)
+
+
+def emit_operands(f, s):
+    """TEMP, then the multiplier's B, X and Y."""
+    s.append('tr = scsp_sext(temp[(%du + dec) & 0x7F], 24);' % f.tra)
+    if f.zero:
         s.append('b = 0;')
     else:
-        base = 'acc' if bsel else 'tr'
-        s.append('b = %s;' % ('(int32_t)(0u - (uint32_t)%s)' % base if negb else base))
-    s.append('x = %s;' % ('inputs' if xsel else 'tr'))
-    ysrc = ['frc', 'd->coef[%d]' % cra, 'yreg', 'yreg'][ysel]
-    ysh = [0, 3, 11, 4][ysel]
-    ymask = 0x0FFF if ysel == 3 else 0x1FFF
+        base = 'acc' if f.bsel else 'tr'
+        s.append('b = %s;' % ('(int32_t)(0u - (uint32_t)%s)' % base if f.negb else base))
+    s.append('x = %s;' % ('inputs' if f.xsel else 'tr'))
+    ysrc = ['frc', 'd->coef[%d]' % f.cra, 'yreg', 'yreg'][f.ysel]
+    ysh = [0, 3, 11, 4][f.ysel]
+    ymask = 0x0FFF if f.ysel == 3 else 0x1FFF
     s.append('y = scsp_sext((%s >> %d) & 0x%X, 13);' % (ysrc, ysh, ymask))
-    if yrl:
+    if f.yrl:
         s.append('yreg = inputs;')
-    dbl = 1 if sh in (1, 2) else 0
-    if sh <= 1:
+
+
+def emit_shift(f, s):
+    """The shifter (saturating for SHIFT 0 and 1), then the multiply-add."""
+    dbl = 1 if f.sh in (1, 2) else 0
+    if f.sh <= 1:
         s.append('v = (int64_t)((uint64_t)(int64_t)acc << %d); '
                  'shifted = (int32_t)(v > 0x7FFFFF ? 0x7FFFFF : v < -0x800000 ? -0x800000 : v);' % dbl)
     else:
         s.append('v = (int64_t)((uint64_t)(int64_t)acc << %d); '
                  'shifted = scsp_sext((int32_t)(uint32_t)v, 24);' % dbl)
     s.append('acc = (int32_t)(((int64_t)x * (int64_t)y) >> 12) + b;')
-    if twt:
-        s.append('temp[(%du + dec) & 0x7F] = shifted;' % twa)
-    if frcl:
-        s.append('frc = (shifted >> %d) & 0x%X;' % ((0, 0x0FFF) if sh == 3 else (11, 0x1FFF)))
-    if mrd or mwt:
-        a = 'd->madrs[%d]' % masa
-        if not table:
-            a += ' + dec'
-        if adreb:
-            a += ' + (adrs & 0x0FFF)'
-        if nxadr:
-            a += ' + 1u'
-        s.append('addr = ((((uint32_t)%s) & %s) + rbp) << 1;' % (a, '0xFFFFu' if table else 'rbl_mask'))
-        if mrd:
-            s.append('memval = %s;' % ('scsp_dsp_ring_rd(s, ram, ring_ok, addr) << 8' if nofl
-                                        else 'scsp_dsp_unpack(scsp_dsp_ring_rd(s, ram, ring_ok, addr))'))
-        if mwt:
-            s.append('scsp_dsp_ring_wr(s, ram, ring_ok, addr, %s);' % ('(uint16_t)(shifted >> 8)' if nofl
-                                                                      else 'scsp_dsp_pack(shifted)'))
-    if adrl:
-        s.append('adrs = %s;' % ('(uint32_t)((shifted >> 12) & 0xFFF)' if sh == 3 else '(uint32_t)(inputs >> 16)'))
-    if ewt:
-        s.append('efreg[%d] = (int16_t)(efreg[%d] + (shifted >> 8));' % (ewa, ewa))
+    if f.twt:
+        s.append('temp[(%du + dec) & 0x7F] = shifted;' % f.twa)
+    if f.frcl:
+        s.append('frc = (shifted >> %d) & 0x%X;' % ((0, 0x0FFF) if f.sh == 3 else (11, 0x1FFF)))
+
+
+def emit_memory(f, s):
+    """The delay ring's address, read and write."""
+    if not (f.mrd or f.mwt):
+        return
+    a = 'd->madrs[%d]' % f.masa
+    if not f.table:
+        a += ' + dec'
+    if f.adreb:
+        a += ' + (adrs & 0x0FFF)'
+    if f.nxadr:
+        a += ' + 1u'
+    s.append('addr = ((((uint32_t)%s) & %s) + rbp) << 1;' % (a, '0xFFFFu' if f.table else 'rbl_mask'))
+    if f.mrd:
+        s.append('memval = %s;' % ('scsp_dsp_ring_rd(s, ram, ring_ok, addr) << 8' if f.nofl
+                                    else 'scsp_dsp_unpack(scsp_dsp_ring_rd(s, ram, ring_ok, addr))'))
+    if f.mwt:
+        s.append('scsp_dsp_ring_wr(s, ram, ring_ok, addr, %s);' % ('(uint16_t)(shifted >> 8)' if f.nofl
+                                                                  else 'scsp_dsp_pack(shifted)'))
+
+
+def emit_step(st, p):
+    f = decode_step(st, p)
+    s = []
+    emit_inputs(f, s)
+    emit_operands(f, s)
+    emit_shift(f, s)
+    emit_memory(f, s)
+    if f.adrl:
+        s.append('adrs = %s;' % ('(uint32_t)((shifted >> 12) & 0xFFF)' if f.sh == 3 else '(uint32_t)(inputs >> 16)'))
+    if f.ewt:
+        s.append('efreg[%d] = (int16_t)(efreg[%d] + (shifted >> 8));' % (f.ewa, f.ewa))
     return '    /* %3d */ { %s }' % (st, ' '.join(s))
 
 

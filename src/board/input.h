@@ -330,14 +330,20 @@ static inline int input_cabinet_name(const char *s, size_t n) {
  * "p3:up". Without a prefix (or with "p1:") it may name the cabinet's own
  * buttons too: "service", "gear3". Returns the action mask, or 0 if the text
  * is not one. */
+/* A combo's "pN:" prefix, skipped: the player's first action in *base, and
+ * INPUT_COMBO_FAR for players 3 and 4. */
+static inline uint32_t input__combo_player(const char **s, int *base) {
+    const char *p = *s;
+    *base = GAME_INPUT_P1_UP;
+    if (!((p[0] == 'p' || p[0] == 'P') && p[1] >= '1' && p[1] <= '4' && p[2] == ':')) return 0;
+    if (p[1] == '2' || p[1] == '4') *base = GAME_INPUT_P2_UP;
+    *s = p + 3;
+    return p[1] >= '3' ? INPUT_COMBO_FAR : 0;
+}
+
 static inline uint32_t input_combo_parse(const char *s) {
-    int base = GAME_INPUT_P1_UP;
-    uint32_t acts = 0;
-    if ((s[0] == 'p' || s[0] == 'P') && s[1] >= '1' && s[1] <= '4' && s[2] == ':') {
-        if (s[1] == '2' || s[1] == '4') base = GAME_INPUT_P2_UP;
-        if (s[1] >= '3') acts = INPUT_COMBO_FAR;
-        s += 3;
-    }
+    int base;
+    uint32_t acts = input__combo_player(&s, &base);
     while (*s) {
         size_t n = strcspn(s, "+");
         int found = input_combo_name(s, n);
@@ -615,6 +621,16 @@ static inline void input_attach_sled(mem_region_t *r) {
     r->write_cb = io5649_write_cb;
 }
 
+/* The I/O region's callbacks for the profile's cabinet. */
+static inline void input_attach_io(mem_region_t *r) {
+    const game_profile_t *p = g_active_profile;
+    if (p && p->quirks.io_5649)                input_attach_5649(r);
+    else if (p && p->quirks.lightgun)          input_attach_lightgun(r);
+    else if (p && p->quirks.four_player_sides) input_attach_sides(r);
+    else if (p && p->quirks.sled)              input_attach_sled(r);
+    else { r->read_cb = input_io_read_cb; r->write_cb = input_io_write_cb; }
+}
+
 /* Install the I/O read callback on the bus's I/O region. Call after the ROM is
  * installed (install_fn re-inits the bus). Writes (coin-meter strobe at IO+0x00,
  * IO+0x40) keep hitting the plain buffer — harmless. */
@@ -639,11 +655,7 @@ static inline void input_attach(memory_bus_t *bus) {
     }
     for (int i = 0; i < bus->region_count; i++) {
         if (bus->regions[i].base == IO_BASE) {
-            if (g_active_profile && g_active_profile->quirks.io_5649) input_attach_5649(&bus->regions[i]);
-            else if (g_active_profile && g_active_profile->quirks.lightgun) input_attach_lightgun(&bus->regions[i]);
-            else if (g_active_profile && g_active_profile->quirks.four_player_sides) input_attach_sides(&bus->regions[i]);
-            else if (g_active_profile && g_active_profile->quirks.sled) input_attach_sled(&bus->regions[i]);
-            else { bus->regions[i].read_cb = input_io_read_cb; bus->regions[i].write_cb = input_io_write_cb; }
+            input_attach_io(&bus->regions[i]);
             mem_regions_changed(bus);
             LOG_INFO("input: I/O port read callback attached @ 0x%08X", IO_BASE);
             return;

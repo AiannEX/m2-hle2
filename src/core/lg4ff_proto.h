@@ -71,6 +71,17 @@ static inline bool lg4ff__g29_rev(uint16_t rev) {
     return ((rev & 0xFF00) == 0x1300 && (rev & 0xFF) >= 0x50) || (rev & 0xFF00) == 0x8900;
 }
 
+/* A wheel under the DFP's (C298) or the Driving Force EX's (C294) PID: which
+ * one its revision says it is. */
+static inline lg4ff_id_t lg4ff__compat_id(uint16_t pid, uint16_t rev) {
+    if ((rev & 0xFFF0) == 0x1230) return (lg4ff_id_t){ LG4FF_G27, true };
+    if ((rev & 0xFF00) == 0x1200) return (lg4ff_id_t){ LG4FF_G25, true };
+    if (pid == 0xC298)            return (lg4ff_id_t){ LG4FF_DFP, false };
+    if ((rev & 0xFF00) == 0x1300) return (lg4ff_id_t){ LG4FF_DFGT, true };
+    if ((rev & 0xF000) == 0x1000) return (lg4ff_id_t){ LG4FF_DFP, true };
+    return (lg4ff_id_t){ LG4FF_NONE, false };
+}
+
 static inline lg4ff_id_t lg4ff_identify(uint16_t pid, uint16_t rev) {
     bool g27 = (rev & 0xFFF0) == 0x1230;
     if ((pid == 0xC294 || pid == 0xC298 || pid == 0xC29A) && lg4ff__g29_rev(rev))
@@ -82,15 +93,7 @@ static inline lg4ff_id_t lg4ff_identify(uint16_t pid, uint16_t rev) {
         case 0xC29A: return (lg4ff_id_t){ LG4FF_DFGT, false };
         case 0xC299: return (lg4ff_id_t){ g27 ? LG4FF_G27 : LG4FF_G25, g27 };
         case 0xC298:
-            if (g27) return (lg4ff_id_t){ LG4FF_G27, true };
-            if ((rev & 0xFF00) == 0x1200) return (lg4ff_id_t){ LG4FF_G25, true };
-            return (lg4ff_id_t){ LG4FF_DFP, false };
-        case 0xC294:
-            if (g27) return (lg4ff_id_t){ LG4FF_G27, true };
-            if ((rev & 0xFF00) == 0x1200) return (lg4ff_id_t){ LG4FF_G25, true };
-            if ((rev & 0xFF00) == 0x1300) return (lg4ff_id_t){ LG4FF_DFGT, true };
-            if ((rev & 0xF000) == 0x1000) return (lg4ff_id_t){ LG4FF_DFP, true };
-            return (lg4ff_id_t){ LG4FF_NONE, false };
+        case 0xC294: return lg4ff__compat_id(pid, rev);
         default: return (lg4ff_id_t){ LG4FF_NONE, false };
     }
 }

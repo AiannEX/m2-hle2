@@ -446,6 +446,33 @@ static inline bool ggl__addr(const uint8_t *b, int n, uint32_t *ip, uint16_t *po
     return *ip != 0;
 }
 
+/* GGL_PEER: where the server sees the peer, the first time it says. */
+static inline void ggl__peer_addr(const uint8_t *buf, int n) {
+    uint32_t ip; uint16_t port;
+    if (g_ggl.via_ws || g_ggl.st.peer_known || !ggl__addr(buf, n, &ip, &port)) return;
+    g_ggl.peer_ip = g_ggl.pub_ip = ip;
+    g_ggl.peer_port = g_ggl.pub_port = port;
+    g_ggl.st.peer_known = true;
+    g_ggl.punch_until = net_now_ms() + GGL_PUNCH_FOR_MS;
+    /* a symmetric NAT's next port drifts from the one HELLO got as this grows */
+    LOG_INFO("ggpo lobby: the peer is at %.*s:%u, %d ms after our first hello", buf[5], (const char *)buf + 6,
+             (unsigned)port, g_ggl.hello_first ? (int)(net_now_ms() - g_ggl.hello_first) : -1);
+}
+
+/* GGL_LOCAL: the peer shares our public address; a LAN address to punch too. */
+static inline void ggl__lan_addr(const uint8_t *buf, int n) {
+    uint32_t ip; uint16_t port;
+    if (g_ggl.via_ws || g_ggl.n_lan >= GGL_LAN_MAX || !ggl__addr(buf, n, &ip, &port)) return;
+    if (ip == g_ggl.peer_ip && port == g_ggl.peer_port) return;   /* on it already (keepalive's repeat) */
+    for (int i = 0; i < g_ggl.n_lan; i++)
+        if (g_ggl.lan_ip[i] == ip && g_ggl.lan_port[i] == port) return;
+    g_ggl.lan_ip[g_ggl.n_lan] = ip;
+    g_ggl.lan_port[g_ggl.n_lan++] = port;
+    g_ggl.punch_until = net_now_ms() + GGL_PUNCH_FOR_MS;
+    LOG_INFO("ggpo lobby: the peer shares our public address; its LAN address %.*s:%u",
+             buf[5], (const char *)buf + 6, (unsigned)port);
+}
+
 /* A datagram from the server: a GGPO packet's length once moved to the front
  * of buf, else 0. */
 static inline int ggl__from_server(uint8_t *buf, int n) {
@@ -456,26 +483,8 @@ static inline int ggl__from_server(uint8_t *buf, int n) {
         return n - 5;
     }
     if (buf[4] == GGL_SEEN) g_ggl.seen = true;
-    uint32_t ip; uint16_t port;
-    if (buf[4] == GGL_PEER && !g_ggl.via_ws && !g_ggl.st.peer_known && ggl__addr(buf, n, &ip, &port)) {
-        g_ggl.peer_ip = g_ggl.pub_ip = ip;
-        g_ggl.peer_port = g_ggl.pub_port = port;
-        g_ggl.st.peer_known = true;
-        g_ggl.punch_until = net_now_ms() + GGL_PUNCH_FOR_MS;
-        /* a symmetric NAT's next port drifts from the one HELLO got as this grows */
-        LOG_INFO("ggpo lobby: the peer is at %.*s:%u, %d ms after our first hello", buf[5], (const char *)buf + 6,
-                 (unsigned)port, g_ggl.hello_first ? (int)(net_now_ms() - g_ggl.hello_first) : -1);
-    }
-    if (buf[4] == GGL_LOCAL && !g_ggl.via_ws && g_ggl.n_lan < GGL_LAN_MAX && ggl__addr(buf, n, &ip, &port)) {
-        if (ip == g_ggl.peer_ip && port == g_ggl.peer_port) return 0;   /* on it already (keepalive's repeat) */
-        for (int i = 0; i < g_ggl.n_lan; i++)
-            if (g_ggl.lan_ip[i] == ip && g_ggl.lan_port[i] == port) return 0;
-        g_ggl.lan_ip[g_ggl.n_lan] = ip;
-        g_ggl.lan_port[g_ggl.n_lan++] = port;
-        g_ggl.punch_until = net_now_ms() + GGL_PUNCH_FOR_MS;
-        LOG_INFO("ggpo lobby: the peer shares our public address; its LAN address %.*s:%u",
-                 buf[5], (const char *)buf + 6, (unsigned)port);
-    }
+    if (buf[4] == GGL_PEER) ggl__peer_addr(buf, n);
+    if (buf[4] == GGL_LOCAL) ggl__lan_addr(buf, n);
     return 0;
 }
 

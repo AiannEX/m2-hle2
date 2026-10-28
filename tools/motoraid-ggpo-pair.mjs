@@ -117,6 +117,32 @@ const checkLines = (text) => {
     return m;
 };
 
+/* Coin both cabinets up and start them into the race. */
+async function driveToRace(hold, watch) {
+    for (let k = 0; k < 2; k++) { await hold(COIN, 8); await hold(0, 8); }
+    await hold(START, 8); await hold(0, 90); await watch();
+    for (let k = 0; k < 6; k++) { await hold(START, 8); await hold(0, 120); await watch(); }
+}
+
+/* One machine's report: its work per frame, its twin's lines and its rows.
+ * a and b are its frame samples at the race's start and end. */
+function sideRows(c, i, { a, b, lob, text, r }, row) {
+    const fps = (b.f - a.f) / ((b.t - a.t) / 1000);
+    const e = b.emu;
+    const twin = text.split('\n').filter((s) => /twin: /.test(s));
+    const last = twin.filter((s) => /twin: frame/.test(s)).pop() ?? '';
+    console.log(`${c.name} (${i ? 'SLAVE' : 'MASTER'}), ${lob.direct ? 'direct' : 'relayed'}: ` +
+                `work ${e ? (e.work_us / Math.max(1, e.frames) / 1000).toFixed(2) : '?'} ms/frame`);
+    for (const s of twin.filter((s) => !/twin: frame/.test(s)).concat(last ? [last] : []))
+        console.log('    ' + s.replace(/^.*?twin: /, 'twin: '));
+    row('no NETWORK ERROR', r.errors === 0, `_SubMode 9 in ${r.errors} of ${r.samples} samples`);
+    row('race clock ran', r.first !== null && r.last - r.first >= (SECONDS - 5) * 60,
+        `clock ${r.first} -> ${r.last}`);
+    row('both cabinets', twin.some((s) => /both cabinets on this machine/.test(s)), 'twin started');
+    row('link up', /A up .*B up/.test(last) && / 0 dropped/.test(last), last.replace(/^.*?twin: /, '') || 'no twin line');
+    row('60 Hz', Math.abs(fps - 60) < 2.0, fps.toFixed(2) + ' frames/s');
+}
+
 async function main() {
     const tag = Date.now().toString(36).slice(-5);
     const [ua, ub] = ['raidA' + tag, 'raidB' + tag];
@@ -150,9 +176,7 @@ async function main() {
                 if (l.clock) { race[i].first ??= l.clock; race[i].last = l.clock; }
             }
         };
-        for (let k = 0; k < 2; k++) { await hold(COIN, 8); await hold(0, 8); }
-        await hold(START, 8); await hold(0, 90); await watch();
-        for (let k = 0; k < 6; k++) { await hold(START, 8); await hold(0, 120); await watch(); }
+        await driveToRace(hold, watch);
         for (const r of race) r.first = null;
         const a = await Promise.all(clients.map(async (c) => ({ t: Date.now(), f: await sessionFrames(c) })));
         for (const c of clients) await c.setInput(THROTTLE);
@@ -171,23 +195,8 @@ async function main() {
         let ok = true;
         const row = (what, pass, val) => { console.log(`  ${pass ? 'ok  ' : 'FAIL'} ${what}: ${val}`); ok &&= pass; };
         const texts = clients.map((c) => logText(c.dir));
-        for (const [i, c] of clients.entries()) {
-            const fps = (b[i].f - a[i].f) / ((b[i].t - a[i].t) / 1000);
-            const e = b[i].emu;
-            const twin = texts[i].split('\n').filter((s) => /twin: /.test(s));
-            const last = twin.filter((s) => /twin: frame/.test(s)).pop() ?? '';
-            console.log(`${c.name} (${i ? 'SLAVE' : 'MASTER'}), ${lob[i].direct ? 'direct' : 'relayed'}: ` +
-                        `work ${e ? (e.work_us / Math.max(1, e.frames) / 1000).toFixed(2) : '?'} ms/frame`);
-            for (const s of twin.filter((s) => !/twin: frame/.test(s)).concat(last ? [last] : []))
-                console.log('    ' + s.replace(/^.*?twin: /, 'twin: '));
-            const r = race[i];
-            row('no NETWORK ERROR', r.errors === 0, `_SubMode 9 in ${r.errors} of ${r.samples} samples`);
-            row('race clock ran', r.first !== null && r.last - r.first >= (SECONDS - 5) * 60,
-                `clock ${r.first} -> ${r.last}`);
-            row('both cabinets', twin.some((s) => /both cabinets on this machine/.test(s)), 'twin started');
-            row('link up', /A up .*B up/.test(last) && / 0 dropped/.test(last), last.replace(/^.*?twin: /, '') || 'no twin line');
-            row('60 Hz', Math.abs(fps - 60) < 2.0, fps.toFixed(2) + ' frames/s');
-        }
+        for (const [i, c] of clients.entries())
+            sideRows(c, i, { a: a[i], b: b[i], lob: lob[i], text: texts[i], r: race[i] }, row);
         const [l1, l2] = texts.map(checkLines);
         const both = [...l1.keys()].filter((f) => l2.has(f));
         const split = both.filter((f) => l1.get(f) !== l2.get(f));

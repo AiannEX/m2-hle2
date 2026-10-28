@@ -38,9 +38,8 @@ local F = {
   D = ports[":IN1"].fields["P1 Down"], R = ports[":IN1"].fields["P1 Right"],
 }
 for k, v in pairs(F) do assert(v, k) end
-_G.F = emu.add_machine_frame_notifier(function()
-  n = n + 1
-  rec(0, n, 0)
+-- The fields held at frame n: the coin, the start and the fight loop above.
+local function fight_inputs(n)
   local want = {}
   if n > 600 and n % 900 < 6 then want.coin = 1 end
   if n > 700 and n % 120 < 4 then want.start = 1 end
@@ -51,6 +50,12 @@ _G.F = emu.add_machine_frame_notifier(function()
     elseif q >= 14 and q < 18 then want.D = 1; want.K = 1
     elseif q >= 24 and q < 28 then want.R = 1; want.P = 1 end
   end
+  return want
+end
+_G.F = emu.add_machine_frame_notifier(function()
+  n = n + 1
+  rec(0, n, 0)
+  local want = fight_inputs(n)
   for k, fld in pairs(F) do fld:set_value(want[k] or 0) end
   if SHOT > 0 and n % SHOT == 0 then m.screens[":screen"]:snapshot(string.format("f%05d.png", n)) end
   if n >= N then f:close(); m:exit() end

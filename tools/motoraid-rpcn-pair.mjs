@@ -162,6 +162,42 @@ function checks(name, want, a, b, race) {
     return ok;
 }
 
+/* Both boards' link words, counting a NETWORK ERROR screen on either. */
+async function watchRace(cs, race) {
+    const l = await Promise.all(cs.map(link));
+    for (const [i, r] of race.entries()) {
+        r.samples++;
+        if (l[i].sub === 9) r.errors++;
+    }
+    return l;
+}
+
+/* Coin both cabinets up, start them into the race and open the throttle. */
+async function driveToRace(cs, watch) {
+    for (let k = 0; k < 2; k++) { await both(cs, COIN, 8); await both(cs, 0, 8); }
+    await both(cs, START, 8); await both(cs, 0, 90); await watch();
+    for (let k = 0; k < 6; k++) { await both(cs, START, 8); await both(cs, 0, 120); await watch(); }
+    await both(cs, THROTTLE, 1);
+}
+
+/* One sample of both race clocks: each board's own, and how far its copy
+ * of the other's is from the other's own. */
+function clockSample(race, l) {
+    for (const [i, r] of race.entries()) {
+        if (l[i].mine) { r.first ??= l[i].mine; r.last = l[i].mine; }
+        /* The other board's clock, read a moment apart: within a second of ours. */
+        if (l[i].mine && l[1 - i].mine)
+            r.off = Math.max(r.off, Math.abs(l[i].theirs - l[1 - i].mine));
+    }
+}
+
+function judgeRace(race) {
+    for (const r of race) {
+        r.ran = r.first !== null && r.last - r.first >= (SECONDS - 5) * 60;
+        r.near = r.first !== null && r.off <= 60;
+    }
+}
+
 async function main() {
     const [hu, gu] = USERS;
     const clients = [];
@@ -179,34 +215,15 @@ async function main() {
         const a = [await sample(host), await sample(guest)];
         console.log(`rings up, attract at frames ${a[0].frames} and ${a[1].frames}`);
         const race = cs.map(() => ({ errors: 0, samples: 0, first: null, last: null, off: 0 }));
-        const watch = async () => {
-            const l = await Promise.all(cs.map(link));
-            for (const [i, r] of race.entries()) {
-                r.samples++;
-                if (l[i].sub === 9) r.errors++;
-            }
-            return l;
-        };
-        for (let k = 0; k < 2; k++) { await both(cs, COIN, 8); await both(cs, 0, 8); }
-        await both(cs, START, 8); await both(cs, 0, 90); await watch();
-        for (let k = 0; k < 6; k++) { await both(cs, START, 8); await both(cs, 0, 120); await watch(); }
-        await both(cs, THROTTLE, 1);
+        const watch = () => watchRace(cs, race);
+        await driveToRace(cs, watch);
         const t0 = Date.now();
         while (Date.now() - t0 < SECONDS * 1000) {
-            const l = await watch();
-            for (const [i, r] of race.entries()) {
-                if (l[i].mine) { r.first ??= l[i].mine; r.last = l[i].mine; }
-                /* The other board's clock, read a moment apart: within a second of ours. */
-                if (l[i].mine && l[1 - i].mine)
-                    r.off = Math.max(r.off, Math.abs(l[i].theirs - l[1 - i].mine));
-            }
+            clockSample(race, await watch());
             await sleep(500);
         }
         for (const c of cs) await c.rpc('set_input', { held: '0x0' });
-        for (const r of race) {
-            r.ran = r.first !== null && r.last - r.first >= (SECONDS - 5) * 60;
-            r.near = r.first !== null && r.off <= 60;
-        }
+        judgeRace(race);
         const b = [await sample(host), await sample(guest)];
                 for (const [i, c] of [host, guest].entries())
             for (const line of b[i].log.filter((l) => /comm link|match|cabinet/.test(l)))

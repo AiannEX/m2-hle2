@@ -110,6 +110,48 @@ def inline_chains(exe, addrs):
     return chains
 
 
+def caller_hit(r, name, syms, callers):
+    """The call site in r's first frame inside the executable, if a frame
+    above it is callers; None otherwise."""
+    for i, fr in enumerate(r):
+        addr = frame_addr(fr, name, syms)
+        if addr is not None:
+            if any(f.startswith(callers + "+") for f in r[:i]):
+                return addr - 1  # a return address: the call is before it
+            return None
+    return None
+
+
+def count_hits(recs, name, syms, callers):
+    """Weight (period) per address in the executable, and per object outside it."""
+    hits, other = collections.Counter(), collections.Counter()
+    for w, r in recs:
+        if callers:
+            addr = caller_hit(r, name, syms, callers)
+            if addr is not None:
+                hits[addr] += w
+            continue
+        r = [f for f in r if not f.endswith("(inlined)")]
+        if not r:
+            continue
+        addr = frame_addr(r[0], name, syms)
+        if addr is None:
+            other[r[0].rpartition(" (")[2].rstrip(")").split("/")[-1] or "?"] += w
+        else:
+            hits[addr] += w
+    return hits, other
+
+
+def chain_key(ch, a):
+    """The line an address's inline chain is summed under."""
+    if not (a.chain or a.callers):
+        return ch[0][0]
+    key = " < ".join(f for f, _ in ch[:4 if a.chain else 3])
+    if a.callers:
+        key += "  @" + ch[0][1].split("/")[-1]
+    return key
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("data")
@@ -123,36 +165,12 @@ def main():
     name = a.exe.split("/")[-1]
     syms = load_symbols(a.exe)
     recs = load_records(a.data, a.comm)
-    hits, other = collections.Counter(), collections.Counter()
-    for w, r in recs:
-        if a.callers:
-            for i, fr in enumerate(r):
-                addr = frame_addr(fr, name, syms)
-                if addr is not None:
-                    if any(f.startswith(a.callers + "+") for f in r[:i]):
-                        hits[addr - 1] += w  # a return address: the call is before it
-                    break
-            continue
-        r = [f for f in r if not f.endswith("(inlined)")]
-        if not r:
-            continue
-        addr = frame_addr(r[0], name, syms)
-        if addr is None:
-            other[r[0].rpartition(" (")[2].rstrip(")").split("/")[-1] or "?"] += w
-        else:
-            hits[addr] += w
+    hits, other = count_hits(recs, name, syms, a.callers)
 
     chains = inline_chains(a.exe, sorted(hits))
     agg = collections.Counter()
     for addr, n in hits.items():
-        ch = chains.get(addr) or [("?", "?")]
-        if a.chain or a.callers:
-            key = " < ".join(f for f, _ in ch[:4 if a.chain else 3])
-            if a.callers:
-                key += "  @" + ch[0][1].split("/")[-1]
-        else:
-            key = ch[0][0]
-        agg[key] += n
+        agg[chain_key(chains.get(addr) or [("?", "?")], a)] += n
 
     total = sum(w for w, _ in recs) or 1
     print(f"{len(recs)} samples, weighted by period")
