@@ -223,6 +223,26 @@ static int hotd_hook_settings_loaded(i960_cpu_t *cpu, memory_bus_t *bus) {
     return 1;
 }
 
+/* main_data at 0x02000000; the "extra" window at 0x06000000 is main_data
+ * from 0x1000000 (MAME model2_base_mem). */
+static inline void hotd__data_windows(const romset_t *rs, memory_bus_t *bus) {
+    if (rs->main_data && bus->main_data) {
+        size_t n = rs->main_data_size < MAIN_DATA_SIZE ? rs->main_data_size : MAIN_DATA_SIZE;
+        memcpy(bus->main_data, rs->main_data, n);
+    }
+    if (rs->main_data && bus->xtra_data && rs->main_data_size > 0x1000000u) {
+        size_t n = rs->main_data_size - 0x1000000u;
+        memcpy(bus->xtra_data, rs->main_data + 0x1000000u, n < XTRA_DATA_SIZE ? n : XTRA_DATA_SIZE);
+    }
+}
+
+/* Whether the program is not build k's: its two hooked instructions differ. */
+static inline bool hotd__not_build(const romset_t *rs, const hotd_build_t *k) {
+    return rs->maincpu_size <= k->country_default + 4u || rs->maincpu_size <= k->settings_loaded + 4u
+        || hotd_read32(rs->maincpu, k->settings_loaded) != k->settings_loaded_word
+        || hotd_read32(rs->maincpu, k->country_default) != k->country_default_word;
+}
+
 /* The 2C board (model2c_cop.h), the data windows, and the processor's start
  * (MAME i960 device_reset: the PRCB's interrupt stack, priority 31,
  * interrupted, supervisor), as Dynamite Cop's 2C less the 315-5881. */
@@ -234,23 +254,11 @@ static inline void hotd_install_build(const romset_t *rs, i960_cpu_t *cpu, memor
     model2c_cop_install(bus, rs->copro_data, rs->copro_data_size);
     savestate_extra("hotd", "TGPX4", &g_tgx, sizeof g_tgx);
     savestate_extra("hotd", "GUN", &g_lightgun, sizeof g_lightgun);
-    /* main_data at 0x02000000; the "extra" window at 0x06000000 is main_data
-     * from 0x1000000 (MAME model2_base_mem). */
-    if (rs->main_data && bus->main_data) {
-        size_t n = rs->main_data_size < MAIN_DATA_SIZE ? rs->main_data_size : MAIN_DATA_SIZE;
-        memcpy(bus->main_data, rs->main_data, n);
-    }
-    if (rs->main_data && bus->xtra_data && rs->main_data_size > 0x1000000u) {
-        size_t n = rs->main_data_size - 0x1000000u;
-        memcpy(bus->xtra_data, rs->main_data + 0x1000000u, n < XTRA_DATA_SIZE ? n : XTRA_DATA_SIZE);
-    }
+    hotd__data_windows(rs, bus);
     /* The two hooked instructions: the build's program, whose region hooks
      * these are. A build with no hooks (hotdp) passes NULL. */
     g_hotd_country = k ? k->country : HOTD_COUNTRY;
-    g_hotd_region_idle = !k;
-    if (k) g_hotd_region_idle = rs->maincpu_size <= k->country_default + 4u || rs->maincpu_size <= k->settings_loaded + 4u
-                      || hotd_read32(rs->maincpu, k->settings_loaded) != k->settings_loaded_word
-                      || hotd_read32(rs->maincpu, k->country_default) != k->country_default_word;
+    g_hotd_region_idle = !k || hotd__not_build(rs, k);
     if (k && g_hotd_region_idle) LOG_WARN("hotd_install: not the build's program; the region hooks stay idle");
     uint32_t prcb = hotd_read32(rs->maincpu, 0x04);
     cpu->prcb = prcb;
