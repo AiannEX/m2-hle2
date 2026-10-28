@@ -122,7 +122,7 @@ static inline void rollback__add(const char *name, void *p, size_t n, void (*pac
      * are copied once the sound thread's run is over; see rollback_save_to. */
     g_rollback.part[g_rollback.n].late =
         ((uint8_t *)p >= (uint8_t *)&g_sound && (uint8_t *)p < (uint8_t *)(&g_sound + 1)) ||
-        p == (void *)&g_shle || p == (void *)&g_rollback.meta;
+        p == (void *)&g_shle || p == (void *)&g_ssyn || p == (void *)&g_rollback.meta;
     g_rollback.n++;
     g_rollback.size += n;
 }
@@ -148,6 +148,7 @@ static inline void rollback_layout(i960_cpu_t *cpu, memory_bus_t *bus) {
     rollback__add("SOUND.ram", g_sound.ram, sizeof g_sound.ram, NULL, false);
     rollback__add("M2SCSP", &g_sound.scsp, sizeof g_sound.scsp, rollback__pack_scsp, true);
     rollback__add("SHLE", &g_shle, sizeof g_shle, NULL, false);
+    rollback__add("SSYN", &g_ssyn, sizeof g_ssyn, NULL, false);
     for (int i = 0; i < g_savestate_extra_n; i++)
         if (savestate_extra_mine(i)) rollback__add(g_savestate_extra[i].name, g_savestate_extra[i].data, g_savestate_extra[i].size, NULL, false);
     rollback__add("META", &g_rollback.meta, sizeof g_rollback.meta, rollback__pack_meta, false);

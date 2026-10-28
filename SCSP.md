@@ -248,13 +248,16 @@ Looked at and left: skipping inaudible voices (TL/EG under one LSB) is ~2%
 of voice samples; the loud reverb's 84 steps all feed EF0/EF1 through the ring
 and TEMP, so no step is dead.
 
-## The driver in C (`--sound-hle`)
+## The driver in C (the default; `--sound-68k` for the 68000)
 
 `src/board/sound_hle.h` is STF's sound driver ported to C, run in place of the
-68000 when the host asks for it (`--sound-hle`, `M2HLE_SOUND_HLE=1`, the
-libretro option "Sound driver"; Pinboard #173). Off by default: the 68000 stays
-the board, the oracle, and the only path for any other program ROM (it takes
-only STF's, by a hash of its code) -- m2-pacman talks back over MIDI out, and
+68000 (Pinboard #173). Since Pinboard #1802 it is the default wherever it knows
+the program ROM; `--sound-68k`, `M2HLE_SOUND_HLE=0`, the libretro option "Sound
+driver" = 68000 or the web page's "Sound CPU" put the 68000 back. The 68000
+stays the oracle -- det_digest, snd_replay and snd_bench start on it and take
+`--sound-hle` / `SND_HLE=1` -- and the only path for any other program ROM. It takes
+the builds of the driver it knows, by a hash of their code (`k_shle_drvs`,
+"Other games' builds" below) -- m2-pacman talks back over MIDI out, and
 nothing but the 68000 answers that.
 
 **What it is.** The driver, routine by routine, from the IDA listing in
@@ -313,3 +316,237 @@ Cortex-A55 60 s of it in 4.40 s against 8.21 s (effects storm 5.36 against
 9.11). What is left is the chip, and the DSP is most of that: in STF's music
 its return is exactly zero (measured by muting it), which the DSP shortcut
 under "What is left" would take.
+
+### Other games' builds (Pinboard #1737)
+
+STF's driver is one build of a driver that Sega used across Model 2: the same
+code layout, the game's data behind the pointer block at 0x608000. The port
+takes eight builds, each a `shle_drv_t` (where its own tables sit in the code,
+the bank bits it ORs into the sound control register, and what changed):
+
+- **sfight** (Sonic the Fighters; Fighting Vipers is the same code),
+  **skytargt**, **von** and **gunblade**: STF's tables, von and gunblade with
+  bank bit 0x20.
+- **vcop2**: the restart (MIDI 0xFF) keeps sound RAM and the DSP program.
+- **doa**, **airwlkrs** (and Behind Enemy Lines, same code): a 512-event queue
+  with a word count, each full-queue test against its own value; "everything
+  stops" empties the queue.
+- **manxtt**: the engine (A?7x) records are 0x12 bytes with a volume cut
+  (A?76), the sends are re-evaluated after A?72..76, DISDL 0xC0, the engine's
+  effect scan is capped at byte_60807C, and a stray MIDI data byte is dropped.
+
+None of them writes MIDI out (every 0x405 in their code is a MIBUF read), so,
+as for STF, the i960 sees only the UART and cannot tell.
+
+Grading another game: `snd_replay` takes `$SND_SET`, a directory of the set's
+region images (`m2hle --export-roms`), and the same stimuli or a capture of the
+game's own commands. 60 s per input, timing median / p95 |err| in ms, % of the
+board's key-ons matched within 30 ms:
+
+| build | bgm | sfx | sys | fuzz |
+|---|---|---|---|---|
+| sfight | 100.0%, -0.9 / 4.5 | 99.7%, -5.0 / 8.5 | 99.8%, -0.9 / 3.0 | 100.0%, -2.9 / 5.4 |
+| skytargt | 99.7%, -1.3 / 5.0 | 99.6%, -4.7 / 6.7 | 99.2%, -1.3 / 5.6 | 100.0%, -5.9 / 9.5 |
+| von | 100.0%, -3.0 / 6.9 | 99.9%, -3.1 / 9.2 | 100.0%, -3.4 / 7.8 | 100.0%, -4.5 / 5.7 |
+| gunblade | 100.0%, -2.5 / 6.6 | 100.0%, -9.3 / 14.9 | 99.7%, -2.5 / 6.8 | 100.0%, -5.0 / 8.5 |
+| vcop2 | 100.0%, -0.9 / 2.7 | 99.6%, -10.7 / 17.6 | 100.0%, +0.3 / 3.8 | 100.0%, -3.9 / 4.9 |
+| airwlkrs | 99.6%, -0.9 / 4.1 | 99.5%, -1.7 / 5.3 | 99.8%, -1.1 / 10.4 | 100.0%, -0.9 / 1.2 |
+| bel | 100.0%, -2.1 / 9.3 | 97.5%, -1.7 / 15.3 | 100.0%, -2.3 / 7.8 | 100.0%, -0.8 / 0.9 |
+
+Manx TT on its engine inputs (`eng`, `engo`, `eng2`): 100% each, -1.1 / 2.8,
+-1.2 / 3.3, -1.1 / 3.2. Dead or Alive on 180 s of its own captured commands:
+3311 key-ons, 99.9%, +1.65 / 6.5. Two known differences:
+
+- bel's sfx: 822 key-ons in C against the board's 767. They are all its
+  placeholder effect (sample 0x7800 at TL 119, near silence), which STF's
+  effect numbers land on, and how many get through is queue order.
+- airwlkrs's fuzz: 6% quieter for 8 s with the same notes and registers: two
+  voices on the same sample keyed 1.4 ms apart instead of 0.9 (one event per
+  main-loop pass), so they interfere differently.
+
+**What made the timing.** The timers drift with the driver's load, and three
+board facts set it (all `SND_TRACE` measurements):
+
+- *A pass over the slots is longer when it copies.* Only a real refill (a whole
+  chunk, a loop end, the last chunk) takes the 16 `movem.l` block; a stream
+  waiting on the chip's half is a few instructions. Dead or Alive's board
+  passes every ~61 samples, not 43, and the stream step's pacing is per pass,
+  so the copy rate follows (`shle_refill_pass`, `pass_rem`).
+- *Timer A hides B and C.* The SCSP raises level 1 for the first pending
+  enabled source in the order A, B, C, MIDI, so a B behind a pending A enters
+  225 cycles after A's handler does (`SHLE_ACK_A`: its ack is that far in).
+- *The main loop masks timer A during a MIDI event* (`move.w #$2100,sr` round
+  the channel-event dispatch, STF 0x601A78): an A that comes then waits for
+  the event, and a B behind it with it -- the board's 2,000-6,700-cycle B
+  latencies. `amask_from`/`amask_until`; A0-status commands are not masked.
+
+### CRX_drv: Dynamite Cop, The House of the Dead, Motor Raid (Pinboard #1777)
+
+Hiro F's "CRX_drv Ver3.2.8" (96 10/28) is a different driver from STF's, not
+another build of it: `src/board/sound_hle_crx.h`, picked by its code hash like
+the others (`shle_drv_t.crx`). Dynamite Cop's five sets (2A dynamcop/dyndeka2,
+2B dynmcopb/dyndek2b, 2C dynmcopc) share the parent's sound ROMs, so they are
+one driver, and the Rosetta stone: the same code runs hotd and motoraid, with
+each game's data behind 0x608000. Its RAM map and handlers are in the file's
+header comment. What differs from STF's for timing:
+
+- *Interrupt levels* (SCILV 0x88/0x48/0): MIDI 3, timer A 2, timer B 1. So A
+  preempts B (the HLE blocks only B behind A, never A behind B).
+- *Per-track masks.* A note-on runs `move.w #$2200,sr` round each track's note
+  (0x600754..0x60075A), a note-off from its first track to its end
+  (0x600FFC..0x601044): A and B wait for that window, MIDI does not, and a
+  MIDI handled inside a window stretches it. `amask_win`, `crx_mask`.
+- *The main loop streams a chunk per record visit* and looks at the queue
+  only at the top of a visit: a refill pass is one 0x200-byte chunk (2658
+  clocks) a record, the records one main-loop trip apart (`CRX_LOOP_TRIP`),
+  and an event that arrives mid-chunk waits for it (`crx_refill_wait`).
+- *Freeing a voice is dear.* sub_6005B0 renumbers all 32 voices' order bytes
+  (2250 clocks); timer B frees the voices whose countdown ran out (its 2590
+  becomes 4850, 7300 with two), and a note-on frees one for a drum retrigger
+  or, through sub_600F88's look over all 32, for a steal (4780 more).
+  A streamed key-on window is 9600, 11850 with a free, 16600 with a steal.
+- *Timer A's handler opens up.* The queue's put (sub_602AB4) ends with
+  `move.w #$2000,sr`, so after its first event (717 clocks in) the rest of
+  the handler runs open to B and to the next A. A handler longer than the
+  period (hotd: 25 events, 13.2k clocks, once every 1.81 s) lets the next A
+  in; that one reloads the timer, finds `$C3E` set and goes back (228
+  clocks), and the sequencers miss the tick. That lost tick was hotd's whole
+  "fast after 55 s": 14 ticks over 32 s. `a_busy_until`, `crx_a_level`.
+- *The sample swap is masked.* SoundCmd 05 (sub_60209C) copies its set into
+  sound RAM at SR $2200: timer A waits out the copy (hotdp at 81.6 s: 80k
+  words, 165 ms).
+
+Measured on hotd's board (`SND_TRACE` 50-55, 60-65, 70-75 s): timer A median
+period 12701, handler 884 + 481 a queued event; timer B 2590; note-on 300 + 45
+a track looked at + 1300 a track that plays + its key-ons (1500 in RAM, 8300
+streamed); note-off masked from 480 in; rte to the loop's look at the queue
+261 median (450 still holds the drift best: 261 takes hotd to 96.4%). With
+the lost ticks in, the sequencers play each note on the board's tick (the
+tick count h-b stays put to 80 s); what is left is timer A landing less deep
+in the windows: in hotd's 60-80 s the board's A is 10-25 clocks a tick later.
+
+That lateness is the chunk copy (Pinboard #1799). Timed tick by tick on hotd's
+board (the interval between Int2 entries, by the PC it interrupted), an A that
+lands in a chunk's unrolled `move.l` copy into sound RAM (0x601A84..0x601B0C)
+is entered 110 clocks after it fires, against 62 at the idle loop; the C driver
+took 70 for both (`refill_frac`, STF's charge for it, stays 0 for CRX). Busy
+passages copy more: hotd's A lands in a copy 1313 times in 72-78 s, 34 in 12-18 s.
+`CRX_CHUNK_IRQ` charges an entry that lands mid-chunk 25 more. The full 48 does not fit,
+because the C driver's 70 at idle is already 8 later than the board. 20 to 40 grade
+about the same; 40 overshoots to +9 ms mid-attract. Taking the 8 off the idle entry
+and charging 47 (the board's own numbers) is worse: hotdp 94.3%.
+
+On the games' own captured commands (`tools/grade-sound-hle.py --crx`, 90 s
+of attract from power-on; key-ons within 30 ms, median, p95 |err| in ms;
+earlier figures in brackets: within 30 ms before #1788's two rules, the rest
+before #1799's chunk wait):
+
+| set | within 30 ms | median / p95 | drift |
+|---|---|---|---|
+| dynamcop | 100.0% | -0.4 / 10.5 (-1.1 / 10.2) | within 12 ms |
+| motoraid | 99.9% | -0.1 / 8.3 (+0.3 / 8.2) | -8 ms at 56 s, +9 at 88 s (+8) |
+| hotd | 100.0% (91.2%) | +2.7 / 10.0 (+0.3 / 10.9) | +7 at 42 s (+3), -10 ms at 78 s (-12), back by 84 s |
+| hotdp | 100.0% (93.4%) | +4.0 / 8.1 (+4.4 / 8.2) | +9 at 38 s, -10 ms at 80 s |
+| pltkids (3.4.9) | 100.0% | -4.0 / 4.7 | flat, -4 ms from 10 s to 88 s |
+
+(Brackets: before #1802's DSP clear and 3.4.9.) hotd's last -12 ms at 78 s was looked at
+again in #1802 and is not one cost. The chunk copy's interrupt masking measured on the board
+(69 clocks) is real but takes hotdp to +6.5 and motoraid's end out; 15 fits only as a fit; the
+rest points at `CRX_LOOP_LAT`, which holds the drift best as it is.
+
+hotdp (the prototype, its own sndpgm0.31) runs the same code as hotd with
+other songs, so it is a second hotd to grade on.
+
+### CRX_drv Ver3.4.9: Pilot Kids (Pinboard #1802)
+
+Pilot Kids' epr-21276 (both sets) is "CRX_drv Ver3.4.9" (`k_crx_builds`,
+`crx` = 2 in its `shle_drv_t`). Aligned against 3.2.8 it has the same RAM
+layout and byte-identical tables, moved (the build's table addresses); what is
+new:
+
+- *Soft masks.* The note-on tracks and the note-off set `$C3E` bit 4 where 3.2.8
+  set SR 0x2200, so A and B are entered as usual: B skips its body
+  (`$C3E & 0x12`, 210 clocks), and A only counts the tick in `$C1D` and goes back.
+  The next A that runs plays the music's sequence once more for each tick it owes
+  (at SR 0x2700, ~300 clocks a pass), so 3.4.9 loses no ticks (pltkids 40-45 s:
+  187 held of 4442, all paid back). `amask_soft`, `crx_timer_a_late`.
+- MIDI in clears A0 00 01/02/03's sequences at once; the velocity curve's index is
+  doubled; drum group 0x7F gives the same note back its voice; a steal with all 32
+  on takes any voice; CC 0x25 sets the tracks' velocity curve; A0 02 clears the
+  bends; the sample swap copies `move.l` blocks (one 256-byte block too many), still
+  at SR 0x2200.
+- Its main loop takes an interrupt sooner: timer A's interval is 12,707.9 clocks
+  on average on the board against the C's 12,711.8, 0.3 ms/s of drift. The build
+  takes 4 off the entry (`lat_less`).
+
+A scene with a DSP program (and A0 01, which reloads it) clears the DSP and fills
+the 64 KB delay line at SR 0x2200 (sub_6021B2): 410,745 clocks, 36 ms with A and B
+held off. Pilot Kids changes scene with each song, so its music started 64 ms early
+in C until the clear was charged (`CRX_COST_DSP`); it is the same code in 3.2.8,
+where the games clear once at boot (dynamcop also at 43 and 71 s).
+
+CRX 3.1.1 (Last Bronx) and 3.0.6 (Power Sled) are older builds still on the 68000.
+
+The i960 cannot tell: det_digest is frame for frame the 68000's on all seven
+sets, hotdp and pltkids (`--sound-hle`, 1200-1800 frames). The sound board costs 39% less in
+hotd (90 s replay: 3.19 s of CPU on the 68000, 1.95 s in C) and 43% less in
+dynamcop (3.13 to 1.79).
+
+## The voices in C (`--sound-synth`)
+
+`src/board/sound_synth.h` takes the next step (Pinboard #1737): under the
+driver in C, the 32 voices are played in C too, with no SCSP slots. The driver
+keys a note and the synth plays the sample at its pitch, through its envelope,
+LFO and pan, straight into the mix: `--sound-synth`, `M2HLE_SOUND_SYNTH=1`,
+the libretro option "Sound driver" = "In C, voices too", `SND_SYNTH=1` in
+`snd_replay`/`snd_bench`. It implies `--sound-hle` and, like it, takes only
+the driver builds that one knows; anything else stays on the 68000 and the chip.
+
+**What stays the chip's.** The reverb DSP, its MIXS inputs, the direct outs'
+sum, MVOL and the DAC: common and DSP register writes still go to
+`g_sound.scsp` (`ssyn_chip_write`), and the synth hands each block's voice
+sums and MIXS to the chip's own mixer. The DSP programs are the game's, and
+they are not per-note work.
+
+**Exact, by construction.** Each voice is MAME's arithmetic, not an
+approximation of it: the pitch step `(1024 + FNS) << (OCT + 2)` in 1/4096ths
+of a sample, the linear interpolation between the two samples either side,
+the envelope's rate table and its attack curve, the LFO's waves and its
+pitch/amplitude scale tables, the TL/pan gain tables, the loop modes
+(forward, reverse, alternating), and 8- and 16-bit PCM. So what it plays is
+the chip's sample for sample, and `tools/grade-sound-synth.py` checks that by
+identity: over `snd_replay`'s bgm, sfx, sys and fuzz inputs, with and without
+`SCSP_EXACT`, the audio, the driver's register reads, its RAM and the
+register file are the same bytes. Since the driver in C is graded against the
+68000 (above) and the chip against MAME, the synth carries both gradings.
+
+**What makes it exact, besides the maths:**
+
+- *It catches up where the chip would.* The chip runs its slots up to "now"
+  (`scsp_sync`) on a slot write, on a common write that `scsp_write_syncs`,
+  on a sound RAM write inside the DSP's ring, at a 1024-sample block and at
+  the end of the driver's run; the synth flushes at exactly those points, so
+  the quiet-DSP bookkeeping (`scsp_dsp_due`, the frozen ring) skips the same
+  samples.
+- *A read of one voice runs only that voice.* The driver polls a voice's CA
+  (the streaming refill) and writes sample RAM outside the DSP ring; the chip
+  runs that voice alone up to now for those, and so does the synth
+  (`done[32]`, `ssyn_ca_upper`, `ssyn_ram_touch`).
+- *Peeks don't catch up* (the capture's register dumps, MCP's `read_comm`),
+  as on the chip (`scsp_peek16`); they read the synth's registers when it is
+  on (`ssyn_scsp_peek16`).
+
+**The i960 cannot tell either**: the UART is the same, the driver in C is the
+same, and only what the voices compute moved. `det_digest --sound --sound-synth`
+against `--sound-hle`: same digest and same PCM over 3600 frames of attract;
+with `--rewind 8`, 148 flat-state loads, still the same. No protocol bump.
+
+**Cost.** A note is a sample pointer, a step and an envelope; a steady voice
+(releasing or holding in decay 2, no LFO, a forward loop or none) takes a
+tight loop into a buffer and a vectorised mix. The effects input (30 s) runs
+in 0.20 s against 0.216 s through the slots (`snd_bench`), about 7% less;
+the DSP is still most of what is left.
+
+**Savestates.** The synth's state is the `SNDSYNTH` entry (and rollback's
+`SSYN` part). It is optional: a state saved without it loads with the synth
+off and the chip's slots in charge.

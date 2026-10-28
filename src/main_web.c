@@ -590,10 +590,11 @@ EMSCRIPTEN_KEEPALIVE void web_audio_set_nudge(double nudge) {
 }
 
 /* Who runs the sound driver: the 68000 running the game's own program (0, the
- * default) or STF's driver ported to C (1, board/sound_hle.h), which runs the
- * sound board in about half the time (4-11% of a whole frame here, measured
- * with det_digest under Node) -- the page offers it for slower devices. Any
- * other game keeps the 68000 whatever this says (shle_driver_known).
+ * page's choice) or the driver ported to C (1, board/sound_hle.h, the default
+ * since #1802), which runs the sound board in about half the time (4-11% of a
+ * whole frame here, measured with det_digest under Node). A game
+ * on a driver build the port does not know keeps the 68000 whatever this says
+ * (shle_driver_known).
  *
  * The board takes the choice at a sound reset. With no session that happens
  * here and now: the driver boots afresh, so the music stops until the game's

@@ -3281,7 +3281,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
         char *p=resp; int left=cap; int n;
         n=snprintf(p,(size_t)left,"{\"ok\":true,\"addr\":\"%03X\",\"b\":[",addr); p+=n; left-=n;
         for (uint32_t i=0;i<len && (addr+i)<M68K_SCSP_SIZE && left>6;i++){
-            uint16_t w = scsp_peek16(&g_sound.scsp, (addr+i) & ~1u);
+            uint16_t w = ssyn_scsp_peek16((addr+i) & ~1u);
             n=snprintf(p,(size_t)left,"%s%u",i?",":"",((addr+i)&1) ? (w&0xFF) : (w>>8)); p+=n; left-=n;
         }
         snprintf(p,(size_t)left,"]}");

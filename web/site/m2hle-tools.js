@@ -765,8 +765,8 @@ const m2hleTools = (() => {
     if (scale) Module._web_set_render_scale(scale);
     $('render-scale').value = String(scale);
     /* Before the game is loaded, so the board boots with it. ?sounddriver=c|68000 for tests. */
-    let driver = 0;
-    try { driver = Number(localStorage.getItem('m2hle.soundDriver')) === 1 ? 1 : 0; } catch (e) { /* private mode */ }
+    let driver = 1;                                  /* the C driver, where the game's is one it knows */
+    try { driver = localStorage.getItem('m2hle.soundDriver') === '0' ? 0 : 1; } catch (e) { /* private mode */ }
     const askedDriver = new URLSearchParams(location.search).get('sounddriver');
     if (askedDriver !== null) driver = askedDriver === 'c' ? 1 : 0;
     Module._web_set_sound_driver(driver);

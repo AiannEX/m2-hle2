@@ -13,6 +13,9 @@
  *   writes <out>.bin/.ram.bin/.regs.bin/.json and <out>.wav (44.1 kHz stereo)
  *   $ROMDIR (else $ROMS_DIR): directory with sfight.zip and schamp.zip
  *     (default: the claude_mame oracle's roms)
+ *   $SND_SET: another game's board instead, a directory of region images
+ *     (m2hle --export-roms; only audiocpu.bin and samples.bin are read)
+ *   $SND_RAM_BASE: the .ram.bin dump's first address (default 0x1000)
  */
 #define NDEBUG 1
 #include "test_rom_dir.h"
@@ -72,7 +75,8 @@ static int load_midi(const char *in, midi_t **midi_out, size_t *nmidi_out, size_
     for (size_t i = 0; i < nrec; i++) {
         uint32_t *r = rec + i * 4;
         if (r[2] > t_last) t_last = r[2];
-        if ((r[0] >> 24) == 1 && (r[0] & 0xFFFFFF) == 0x9C0000) {
+        /* the UART's data port: 0x9C0000 on a 2B, 0x01C80000 on a 2A or 2C (24 bits kept) */
+        if ((r[0] >> 24) == 1 && ((r[0] & 0xFFFFFF) == 0x9C0000 || (r[0] & 0xFFFFFF) == 0xC80000)) {
             midi[nmidi].t = r[2];
             midi[nmidi].b = (uint8_t)r[1];
             nmidi++;
@@ -93,10 +97,12 @@ static int load_board(const char *romdir) {
     char child[1024], parent[1024];
     snprintf(child, sizeof child, "%s/sfight.zip", romdir);
     snprintf(parent, sizeof parent, "%s/schamp.zip", romdir);
-    if (sfight_load(&rs, child, parent) != 0 || !rs.audiocpu || !rs.samples) {
-        fprintf(stderr, "ROM load failed (%s)\n", romdir); return 1;
+    const char *set = getenv("SND_SET");
+    if ((set ? romset_load_dir(&rs, set) : sfight_load(&rs, child, parent)) != 0 || !rs.audiocpu || !rs.samples) {
+        fprintf(stderr, "ROM load failed (%s)\n", set ? set : romdir); return 1;
     }
     if (getenv("SND_HLE")) g_sound_hle_want = atoi(getenv("SND_HLE"));
+    if (getenv("SND_SYNTH")) g_sound_synth_want = atoi(getenv("SND_SYNTH"));   /* the voices in C too (sound_synth.h) */
     if (getenv("SCSP_EXACT")) g_scsp_exact = atoi(getenv("SCSP_EXACT"));   /* the DSP every sample (scsp.h, "A quiet DSP") */
     sound_reset();
     sound_load_rom(rs.audiocpu, (uint32_t)rs.audiocpu_size);
@@ -123,6 +129,7 @@ static int open_outputs(const char *out, uint64_t total, uint32_t (**marks_out)[
     snprintf(path, sizeof path, "%s.wav", out);      FILE *wav      = fopen(path, "wb");
     if (!marks || !g_sndcap.f || !g_sndcap.ramf || !g_sndcap.regsf || !wav) { fprintf(stderr, "cannot write %s.*\n", out); return 1; }
     g_sndcap.marks = marks;
+    if (getenv("SND_RAM_BASE")) g_sndcap.ram_base = (uint32_t)strtoul(getenv("SND_RAM_BASE"), NULL, 0);
     g_sndcap.want = nmarks_cap;
     g_sndcap.active = 1;
     wav_header(wav, 0);
@@ -178,12 +185,14 @@ static void report(uint32_t n, uint32_t nm, size_t next) {
                           (unsigned long long)g_shle.events, (unsigned long long)g_shle.keyons, (unsigned long long)g_shle.unknown);
     if (g_shle.on) printf("sound HLE: %llu refill chunks\n", (unsigned long long)g_shle.chunks_total);
     else if (g_sound_hle_want) printf("sound HLE: driver not known (code hash %08X); the board ran\n", shle_code_hash());
+    if (g_ssyn.on) printf("sound synth: %llu samples, %llu key-ons\n", (unsigned long long)g_ssyn.samples, (unsigned long long)g_ssyn.keyons);
     printf("replayed: %u records, %u marks; 68000 pc 0x%06X; irqs L1 %llu L2 %llu L3 %llu; midi fed %zu\n",
            n, nm, g_sound.m68k.cpu.pc, (unsigned long long)g_sound.irqs[1],
            (unsigned long long)g_sound.irqs[2], (unsigned long long)g_sound.irqs[3], next);
 }
 
 int main(int argc, char **argv) {
+    g_sound_hle_want = 0;   /* the board unless SND_HLE=1: what the C driver is graded against */
     if (argc < 3) { fprintf(stderr, "usage: snd_replay <mame-capture-prefix> <out-prefix> [seconds]\n"); return 2; }
     const char *in = argv[1], *out = argv[2];
     double seconds = argc > 3 ? atof(argv[3]) : 0.0;

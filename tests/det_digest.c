@@ -781,6 +781,8 @@ static int parse_board_arg(int argc, char **argv, int *i) {
     const char *a = argv[*i];
     if      (!strcmp(a, "--no-sound-thread"))         g_sound_thread_want = 0;
     else if (!strcmp(a, "--sound-hle"))               g_sound_hle_want = 1;
+    else if (!strcmp(a, "--sound-68k"))               g_sound_hle_want = 0;
+    else if (!strcmp(a, "--sound-synth"))             g_sound_synth_want = 1;
     else if (!strcmp(a, "--scsp-exact"))              g_scsp_exact = 1;
     else if (!strcmp(a, "--texload-i960"))            g_texload_hle = 0;
     else if (!strcmp(a, "--spin-i960"))               g_spin_skip = 0;
@@ -1075,7 +1077,7 @@ static int run_report(const dd_run_t *run) {
             (unsigned long long)g_scsp_coupled_ticks, (unsigned long long)g_scsp_dsp_skipped,
             g_scsp_exact ? " (--scsp-exact)" : "");
     fprintf(stderr, "sound: %s; i960 commands %u, bytes that waited a slice %llu, midi drops %u\n",
-            g_shle.on ? "driver in C (--sound-hle)" : "68000", g_sound.code_n,
+            g_ssyn.on ? "driver and voices in C (--sound-synth)" : g_shle.on ? "driver in C (--sound-hle)" : "68000", g_sound.code_n,
             (unsigned long long)g_sound.midi_holds, g_sound.scsp.mi_drops);
     gems_verify_report();
     if (in_n) {
@@ -1088,6 +1090,7 @@ static int run_report(const dd_run_t *run) {
 }
 
 int main(int argc, char **argv) {
+    g_sound_hle_want = 0;   /* the 68000, so digests compare across builds; --sound-hle for the C driver */
     if (argc < 2) {
         fprintf(stderr, "usage: det_digest <merged sfight zip> [--frames N] [--script S] [--from F] [--out FILE] [--save-at F:FILE] [--load FILE] [--mem] [--profile ID] [--gems-i960] [--gems-cop] [--gems-verify]\n");
         return 2;

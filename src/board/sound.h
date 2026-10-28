@@ -191,6 +191,8 @@ typedef struct {
 
 static sound_state_t g_sound;
 
+#include "sound_synth.h"   /* the voices in C, in place of the chip's slots (Pinboard #1737) */
+
 /* Wait for the sound thread to finish what it was handed ("The sound thread",
  * below). Anything that reads or changes the sound board from the i960's side
  * calls it first. */
@@ -224,6 +226,7 @@ typedef struct {
     uint16_t lastr[0x1000];
     uint8_t  seen[0x1000];
     uint32_t reps[0x1000];
+    uint32_t ram_base;       /* the RAM dump's first byte; 0 = 0x1000 (STF's driver), CRX_drv's 0x300 */
 } sndcap_t;
 static sndcap_t g_sndcap;
 
@@ -287,11 +290,11 @@ static inline void sndcap_frame(uint32_t frame, uint32_t frame_counter) {
     sound_settle();
     uint32_t *mk = c->marks[c->nmarks++];
     mk[0] = frame; mk[1] = frame_counter; mk[2] = (uint32_t)g_sound.m68k.cpu.cycles; mk[3] = c->n;
-    fwrite(g_sound.ram + 0x1000, 1, 0x4000, c->ramf);
+    fwrite(g_sound.ram + (c->ram_base ? c->ram_base : 0x1000u), 1, 0x4000, c->ramf);
     uint8_t regs[1072] = {0};
     for (uint32_t o = 0; o < 0x430u; o += 2) {
         if (o >= 0x404u && o < 0x40Au) continue;
-        uint16_t w = scsp_peek16(&g_sound.scsp, o);
+        uint16_t w = ssyn_scsp_peek16(o);
         regs[o] = (uint8_t)w; regs[o + 1] = (uint8_t)(w >> 8);
     }
     fwrite(regs, 1, sizeof regs, c->regsf);

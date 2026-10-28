@@ -459,7 +459,8 @@ static inline bool savestate__add_sound(mz_zip_archive *zp, mz_uint level) {
            && savestate__add(zp, level, "M2SNDRAM", g_sound.ram, sizeof g_sound.ram)
            && savestate__add(zp, level, "M2SCSP",   scsp, sizeof *scsp)
            && savestate__add(zp, level, "SOUND",    &snd, sizeof snd)
-           && savestate__add(zp, level, "SOUNDHLE", &g_shle, sizeof g_shle);
+           && savestate__add(zp, level, "SOUNDHLE", &g_shle, sizeof g_shle)
+           && savestate__add(zp, level, "SNDSYNTH", &g_ssyn, sizeof g_ssyn);
     free(scsp);
     return ok;
 }
@@ -671,6 +672,8 @@ typedef struct {
     scsp_t            *scsp;
     savestate_sound_t  snd;
     shle_t             shle;
+    ssyn_t             ssyn;
+    bool               have_ssyn;          /* SNDSYNTH: a state from before it has none (the chip played) */
     savestate_emu_t    emu;
     savestate_hle_t    hle;
     uint8_t           *extra[SAVESTATE_EXTRA_MAX];
@@ -730,6 +733,8 @@ static inline bool savestate__scratch_read(mz_zip_archive *zp, savestate_scratch
     }
     n->have_held = ok && mz_zip_reader_locate_file(zp, "GEOHELD", NULL, 0) >= 0
                 && savestate__get(zp, "GEOHELD", n->held, sizeof n->held);
+    n->have_ssyn = ok && mz_zip_reader_locate_file(zp, "SNDSYNTH", NULL, 0) >= 0
+                && savestate__get(zp, "SNDSYNTH", &n->ssyn, sizeof n->ssyn);
     for (int i = 0; ok && i < g_savestate_extra_n; i++) {
         if (!savestate_extra_mine(i)) continue;
         char name[64];
@@ -772,6 +777,8 @@ static inline void savestate__scratch_commit(const savestate_scratch_t *n, i960_
     savestate_scsp_unpack(n->scsp, &g_sound.scsp);
     memcpy(&g_sound.scsp, n->scsp, sizeof g_sound.scsp);
     g_shle = n->shle;
+    if (n->have_ssyn) g_ssyn = n->ssyn;                /* pending is 0 between runs: the block is empty */
+    else              memset(&g_ssyn, 0, sizeof g_ssyn);
     savestate_sound_put(&n->snd);
 
     savestate_hle_set(&n->hle);
