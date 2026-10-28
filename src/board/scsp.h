@@ -1458,7 +1458,22 @@ static void scsp_slot_range(const scsp_t *s, const scsp_slot_t *sl, uint32_t *lo
     uint32_t top0 = lsa > lea ? lsa : lea;
     if (!scsp_slot_loop_bounded(sl, lsa, lea, top0, adv)) return;
     uint64_t top = (uint64_t)top0 + 2 * adv + 3;
+    if (SCSP_LPCTL(sl) == 1) {
+        /* A forward loop longer than a step (above): a step from below LEA + 2
+         * that reaches LEA goes back by LEA - LSA, below LEA, and so does nxt
+         * a sample on. So it reads where it is now and below LEA, and no
+         * further: a voice ending just below the DSP's ring (House of the
+         * Dead, Dynamite Cop, Motor Raid: 8 KB at 0x6E000, the ring at
+         * 0x70000) does not overlap it (Pinboard #1713). */
+        uint32_t c = sl->cur >> SCSP_SHIFT, x = sl->nxt >> SCSP_SHIFT;
+        top = lea - 1;
+        if (c > top) top = c;
+        if (x > top) top = x;
+        if (SCSP_PCM8B(sl)) top++;                         /* end = SA + top below: the byte after */
+    }
     uint64_t end = (uint64_t)SCSP_SA(sl) + (SCSP_PCM8B(sl) ? top : top * 2 + 2);
+
+
     if (end > 0xFFFFFu) return;                            /* wraps */
     *lo = SCSP_SA(sl);
     *hi = (uint32_t)end < s->ram_size ? (uint32_t)end : s->ram_size;
