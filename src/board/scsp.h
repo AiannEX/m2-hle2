@@ -1024,18 +1024,21 @@ static inline void scsp_latch(scsp_t *s) {                /* the slot monitor's 
 #endif
 
 /* scsp_slot_wave for scsp_slot_run_pcm: PCM only, no FM, RAM read in place.
- * `inside`: both reads are inside RAM (scsp_pcm_run_inside), no wrap or test. */
+ * `inside`: both reads are inside RAM (scsp_pcm_run_inside), no wrap or test.
+ * Inside, the interpolation (a (4096 - f) + b f) >> 12 is a + ((b - a) f >> 12),
+ * the same to the bit (a 4096 is a whole multiple of 4096, and neither form
+ * overflows), with one multiply fewer. */
 static SCSP_FORCE_INLINE int32_t scsp_pcm_wave(const scsp_t *s, const uint8_t *ram, uint32_t ram_size, uint32_t sa,
                                                uint32_t cur, uint32_t nxt, int pcm8, int inside) {
     int32_t frac = (int32_t)(cur & ((1u << SCSP_SHIFT) - 1)), sample;
     if (inside && pcm8) {
         int32_t p1 = (int8_t)ram[sa + (cur >> SCSP_SHIFT)], p2 = (int8_t)ram[sa + (nxt >> SCSP_SHIFT)];
-        sample = ((p1 * 256) * ((1 << SCSP_SHIFT) - frac) + (p2 * 256) * frac) >> SCSP_SHIFT;
+        sample = p1 * 256 + (((p2 - p1) * 256 * frac) >> SCSP_SHIFT);
     } else if (inside) {
         uint32_t a1 = sa + ((cur >> (SCSP_SHIFT - 1)) & ~1u), a2 = sa + ((nxt >> (SCSP_SHIFT - 1)) & ~1u);
         int32_t p1 = (int16_t)(uint16_t)(ram[a1] << 8 | ram[a1 + 1]);
         int32_t p2 = (int16_t)(uint16_t)(ram[a2] << 8 | ram[a2 + 1]);
-        sample = (p1 * ((1 << SCSP_SHIFT) - frac) + p2 * frac) >> SCSP_SHIFT;
+        sample = p1 + (((p2 - p1) * frac) >> SCSP_SHIFT);
     } else if (pcm8) {
         uint32_t a1 = (sa + (cur >> SCSP_SHIFT)) & 0xFFFFFu, a2 = (sa + (nxt >> SCSP_SHIFT)) & 0xFFFFFu;
         int32_t p1 = (int8_t)(a1 < ram_size ? ram[a1] : 0), p2 = (int8_t)(a2 < ram_size ? ram[a2] : 0);
@@ -1085,24 +1088,36 @@ static inline int scsp_pcm_run_inside(const scsp_t *s, const scsp_slot_t *sl, ui
  * its order are scsp_slot_run_pcm's; pcm8 and release are constants at each
  * call, so each of the four is compiled on its own. With `inside` (no SBCTL,
  * no STWINH, the whole run inside RAM: STF's attract always) the run is
- * compiled once more without those tests. */
+ * compiled once more without those tests, and once more again by `send`,
+ * whether the voice feeds the DSP at all (IMXL 0 or TL muting it: 99.98% of
+ * STF's voice samples, measured over 90 s of attract, Pinboard #1698).
+ *
+ * The voice's samples are made first, into buf, and mixed after: two short
+ * loops rather than one with every gain, pointer and position live at once
+ * (which spilled half of them to the stack each sample), and the mix, with no
+ * dependence from one sample to the next, is one the compiler vectorises.
+ * Each accumulator gets the same terms in the same order, so the sums are the
+ * same to the bit.
+ *
+ * The sound stack entry is written for the last even and the last odd sample
+ * of the run only. Nothing reads it in between: a voice that reads the stack
+ * (FM) couples the chip, which then runs a sample at a time, and the 68000's
+ * read of 0x600 makes the chip catch up first (scsp_r16_catch_up). */
 static SCSP_FORCE_INLINE uint32_t scsp_pcm_run_eg(scsp_t *s, scsp_slot_t *sl, unsigned i, uint32_t k,
-                                                   uint32_t to, int pcm8, int release, int inside) {
-    const int32_t  gm = sl->g_mixs, gl = sl->g_dl, gr = sl->g_dr, gs = sl->g_sous;
+                                                   uint32_t to, int pcm8, int release, int inside, int send) {
     const int      sbctl = inside ? 0 : (int)SCSP_SBCTL(sl), lpctl = (int)SCSP_LPCTL(sl);
     const int      stwinh = inside ? 0 : SCSP_STWINH(sl) != 0;
     const uint32_t sa = SCSP_SA(sl), lsa = SCSP_LSA(sl), lea = SCSP_LEA(sl), step = sl->step;
     const uint8_t *ram = s->ram;
     const uint32_t ram_size = s->ram_size;
-    int32_t       *mixs = &s->acc_mixs[0][SCSP_ISEL(sl)];
-    int32_t       *acc_l = s->acc_l, *acc_r = s->acc_r;
-    /* the sound-stack entry for even and odd k (scsp_slot_run_pcm's index) */
-    int16_t *const sous0 = &s->sous[(s->sous_ptr + i) & 63], *const sous1 = &s->sous[((s->sous_ptr ^ 32u) + i) & 63];
     const int32_t  rr = sl->rr;
     int32_t        vol = sl->vol, eg = scsp_eg_table[vol >> SCSP_EG_SHIFT];
     uint32_t       cur = sl->cur, nxt = sl->nxt;
     int            live = 1;
-    for (; k < to; k++) {
+    int32_t        buf[SCSP_OWED_MAX];
+    const uint32_t want = to - k;
+    uint32_t       n = 0;
+    while (n < want) {
         int32_t sample = scsp_pcm_wave(s, ram, ram_size, sa, cur, nxt, pcm8, inside);
         if (sbctl & 1) sample ^= 0x7FFF;
         if (sbctl & 2) sample = (int16_t)(sample ^ 0x8000);
@@ -1122,14 +1137,29 @@ static SCSP_FORCE_INLINE uint32_t scsp_pcm_run_eg(scsp_t *s, scsp_slot_t *sl, un
             if (vol <= 0) { vol = 0; live = 0; }
             eg = scsp_eg_table[vol >> SCSP_EG_SHIFT];
         }
-        sample = (int32_t)(((int64_t)sample * eg) >> SCSP_SHIFT);
-        if (!stwinh) *((k & 1u) ? sous1 : sous0) = (int16_t)((sample * gs) >> (SCSP_SHIFT + 1));
-        mixs[k * 16] += (sample * gm) >> (SCSP_SHIFT - 2);
-        acc_l[k] += (sample * gl) >> SCSP_SHIFT;
-        acc_r[k] += (sample * gr) >> SCSP_SHIFT;
-        if (!live) { k++; break; }
+        buf[n++] = (int32_t)(((int64_t)sample * eg) >> SCSP_SHIFT);
+        if (!live) break;
     }
     sl->cur = cur; sl->nxt = nxt; sl->vol = vol;
+
+    const int32_t gl = sl->g_dl, gr = sl->g_dr;
+    int32_t *const acc_l = s->acc_l + k, *const acc_r = s->acc_r + k;
+    for (uint32_t j = 0; j < n; j++) acc_l[j] += (buf[j] * gl) >> SCSP_SHIFT;
+    for (uint32_t j = 0; j < n; j++) acc_r[j] += (buf[j] * gr) >> SCSP_SHIFT;
+    if (send) {
+        const int32_t gm = sl->g_mixs;
+        int32_t *const mixs = &s->acc_mixs[k][SCSP_ISEL(sl)];
+        for (uint32_t j = 0; j < n; j++) mixs[j * 16] += (buf[j] * gm) >> (SCSP_SHIFT - 2);
+    }
+    if (!stwinh && n) {
+        /* the sound-stack entry for even and odd k (scsp_slot_run_pcm's index) */
+        int16_t *const sous0 = &s->sous[(s->sous_ptr + i) & 63], *const sous1 = &s->sous[((s->sous_ptr ^ 32u) + i) & 63];
+        const int32_t gs = sl->g_sous;
+        const uint32_t kl = k + n - 1;
+        *((kl & 1u) ? sous1 : sous0) = (int16_t)((buf[n - 1] * gs) >> (SCSP_SHIFT + 1));
+        if (n > 1) *((kl & 1u) ? sous0 : sous1) = (int16_t)((buf[n - 2] * gs) >> (SCSP_SHIFT + 1));
+    }
+    k += n;
     if (!live) scsp_slot_stop(sl, 0);
     return k;
 }
@@ -1152,11 +1182,15 @@ static uint32_t scsp_slot_run_pcm(scsp_t *s, scsp_slot_t *sl, unsigned i, uint32
         (sl->state == SCSP_RELEASE || (sl->state == SCSP_DECAY2 && SCSP_D2R(sl) == 0))) {
         const int release = sl->state == SCSP_RELEASE;
         if (!sbctl && !stwinh && scsp_pcm_run_inside(s, sl, to - k, pcm8, lpctl)) {
-            if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 1);
-            return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 1);
+            if (!gm) {
+                if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 1, 0) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 1, 0);
+                return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 1, 0) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 1, 0);
+            }
+            if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 1, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 1, 1);
+            return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 1, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 1, 1);
         }
-        if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 0) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 0);
-        return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 0) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 0);
+        if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 0, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 0, 1);
+        return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 0, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 0, 1);
     }
     uint32_t cur = sl->cur, nxt = sl->nxt;
     for (; k < to; k++) {
@@ -1308,22 +1342,45 @@ static inline int scsp_dsp_due(scsp_t *s, int32_t nz) {
     return 1;
 }
 
+/* The DSP's effect outputs onto the direct mix, for one scsp_sync: no
+ * register changes inside one, so which slots return an EFREG (EFSDL) and at
+ * what gains is read once, and their sum is worked out again only after a
+ * DSP step changed EFREG (a skipped step leaves it as it was). Integer sums
+ * in another order are the same sums. */
+typedef struct {
+    int     n, ok;                      /* returns; whether l, r are this EFREG's */
+    uint8_t ef[16];
+    int32_t gl[16], gr[16];
+    int32_t l, r;
+} scsp_fx_t;
+
+static inline void scsp_fx_init(const scsp_t *s, scsp_fx_t *fx) {
+    fx->n = 0; fx->ok = 0;
+    for (int i = 0; i < 16; i++) {
+        const scsp_slot_t *sl = &s->slot[i];
+        if (!SCSP_EFSDL(sl)) continue;
+        fx->ef[fx->n] = (uint8_t)i; fx->gl[fx->n] = sl->g_el; fx->gr[fx->n] = sl->g_er; fx->n++;
+    }
+}
+
 /* Owed sample k: the slots' sends into the DSP, a DSP step, its effect
  * outputs onto the direct mix, then out. */
-static inline void scsp_sample_mix(scsp_t *s, uint32_t k) {
+static inline void scsp_sample_mix(scsp_t *s, scsp_fx_t *fx, uint32_t k) {
     int32_t *mx = s->acc_mixs[k];
     int32_t nz = 0;
     for (int j = 0; j < 16; j++) { s->dsp.mixs[j] += mx[j]; nz |= mx[j]; mx[j] = 0; }
     int32_t l = s->acc_l[k], r = s->acc_r[k];
     s->acc_l[k] = s->acc_r[k] = 0;
-    if (scsp_dsp_due(s, nz)) scsp_dsp_step(s);
-    for (int i = 0; i < 16; i++) {
-        const scsp_slot_t *sl = &s->slot[i];
-        if (!SCSP_EFSDL(sl)) continue;
-        l += (s->dsp.efreg[i] * sl->g_el) >> SCSP_SHIFT;
-        r += (s->dsp.efreg[i] * sl->g_er) >> SCSP_SHIFT;
+    if (scsp_dsp_due(s, nz)) { scsp_dsp_step(s); fx->ok = 0; }
+    if (!fx->ok) {
+        fx->l = fx->r = 0;
+        for (int j = 0; j < fx->n; j++) {
+            fx->l += (s->dsp.efreg[fx->ef[j]] * fx->gl[j]) >> SCSP_SHIFT;
+            fx->r += (s->dsp.efreg[fx->ef[j]] * fx->gr[j]) >> SCSP_SHIFT;
+        }
+        fx->ok = 1;
     }
-    scsp_sample_out(s, l, r);
+    scsp_sample_out(s, l + fx->l, r + fx->r);
 }
 
 /* Make every owed sample: the slots, then the DSP and the mix, in order. */
@@ -1333,7 +1390,9 @@ static void scsp_sync(scsp_t *s) {
     int zone = hprof_enter(HPROF_SCSP);
     for (unsigned i = 0; i < 32; i++) scsp_slot_run(s, i, n);
     if (!s->latch_fresh) { scsp_latch(s); s->latch_fresh = 1; }
-    for (uint32_t k = 0; k < n; k++) scsp_sample_mix(s, k);
+    scsp_fx_t fx;
+    scsp_fx_init(s, &fx);
+    for (uint32_t k = 0; k < n; k++) scsp_sample_mix(s, &fx, k);
     s->sous_ptr = (uint8_t)(s->sous_ptr ^ ((n & 1u) << 5));
     s->owed = 0;
     memset(s->done, 0, sizeof s->done);

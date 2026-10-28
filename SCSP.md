@@ -207,6 +207,38 @@ master's (replay `.bin`/`.ram.bin`/`.regs.bin`/`.wav`, both fuzzes, `det_digest
 bits in that mode; measure the margin of a change to the quiet path with
 `scsp-ab.py`.
 
+## When it isn't quiet: the voice loop (Pinboard #1698)
+
+In a fight the DSP still skips 94% of its samples, and what the SCSP costs is
+the voices: `scsp_slot_run_pcm` and `scsp_sync`'s mix. Three changes, all
+exact (integer sums in another order, and an identity), cut them:
+
+- **Interpolation** inside the loop: `(a (4096 - f) + b f) >> 12` is
+  `a + ((b - a) f >> 12)` to the bit, with one multiply fewer.
+- **A voice that sends nothing to the DSP** (IMXL 0: 99.98% of STF's voice
+  samples) gets its own `scsp_pcm_run_eg` variant without the MIXS add. That
+  function now makes the run's samples into a buffer first, then mixes it
+  into L, R (and MIXS) in loops the compiler vectorises; the sound stack
+  (`sous`) is written only for the run's last even and odd samples, which are
+  all a later read can see (FM couples the chip, and the 0x600 read catches
+  up first).
+- **EFREG's return to L/R** (`scsp_fx_t`) is listed once per sync (the slots
+  with EFSDL) and summed again only after a DSP step: a frozen DSP costs
+  nothing at the mix.
+
+Measured on a 6000-frame scripted match (`det_digest --sound`,
+`perf record -e cycles:u`): `scsp_slot_run_pcm` 14,111 → 11,207 samples
+(−21%), `scsp_sync` 3,181 → 2,727 (−14%), the SCSP as a whole −17%; the DSP
+is unchanged. `snd_bench` over 90 s of attract: 1.18 → 1.15 s, and 1.79 →
+1.71 s with the exact chip. Bit-exact with and without `--scsp-exact`:
+`snd_replay` (`.bin`/`.ram.bin`/`.regs.bin`/`.wav`), `scsp_fuzz`,
+`m68k_fuzz`, `snd_bench`'s hashes and `det_digest --sound` (attract and the
+match, every column and the sound-RAM hash) are `cmp`-identical to master.
+
+Looked at and left: skipping inaudible voices (TL/EG under one LSB) is ~2%
+of voice samples; the loud reverb's 84 steps all feed EF0/EF1 through the ring
+and TEMP, so no step is dead.
+
 ## The driver in C (`--sound-hle`)
 
 `src/board/sound_hle.h` is STF's sound driver ported to C, run in place of the
