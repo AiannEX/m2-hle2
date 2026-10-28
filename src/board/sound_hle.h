@@ -98,6 +98,9 @@ typedef struct {
      * capped at byte_60807C; a stray MIDI data byte is dropped, A{C,D,E} are
      * no-ops. */
     bool        eng_manx;
+    /* CRX_drv (Dynamite Cop, The House of the Dead, Motor Raid): another
+     * driver altogether, sound_hle_crx.h; the fields above are STF's. */
+    bool        crx;
 } shle_drv_t;
 
 #define SHLE_TABLES_STF   0x602106u, 0x602D9Eu, 0x603CFAu, 0x604B04u, 0x604FB4u, 0x605BE4u, 0x605CA4u, 0x605E24u, 0x601100u
@@ -117,6 +120,8 @@ static const shle_drv_t k_shle_drvs[] = {
     { "doa",      0xAA442AC5u, SHLE_TABLES_DOA,   0x00, SHLE_QUEUE_512, true,  true,  false },
     { "airwlkrs", 0x2D6DBD45u, SHLE_TABLES_DOA,   0x00, SHLE_QUEUE_512, true,  true,  false }, /* and Behind Enemy Lines */
     { "manxtt",   0xDC12ACD9u, SHLE_TABLES_MANX,  0x00, SHLE_QUEUE_512, true,  true,  true  },
+    /* epr-19113 (Dynamite Cop): CRX_drv Ver3.2.8 */
+    { "dynamcop", 0xBCFE5C9Bu, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0, 0, 0, 0, false, false, false, false, true },
 };
 static const shle_drv_t *g_shle_drv = &k_shle_drvs[0];
 
@@ -215,6 +220,10 @@ typedef struct {
     uint64_t l2_free;        /* clock period no level 2 or 3 handler is running any more */
     uint64_t a_ack;          /* clock period Interrupt1 acknowledges timer A, which hides B and C until then */
     uint64_t amask_from, amask_until;   /* the main loop has timer A masked: a MIDI event's tracks */
+    uint64_t amask_win[20][2];   /* CRX: the windows a MIDI event's tracks mask levels 1-2 */
+    uint32_t amask_n;
+    uint64_t refill_at;      /* CRX: a pass's refills began here, chunk by chunk... */
+    uint32_t refill_n;       /* ...this many */
     uint32_t enq;            /* events queued (the handlers' length) */
     uint32_t chunks;         /* refill chunks copied in the current pass */
     uint32_t pass_rem;       /* clock periods of refills not yet added to pass_left */
@@ -2023,6 +2032,7 @@ static bool shle_driver_known(void) {
     uint32_t h = shle_code_hash();
     for (size_t i = 0; i < sizeof k_shle_drvs / sizeof k_shle_drvs[0]; i++) {
         if (k_shle_drvs[i].hash != h) continue;
+        if (k_shle_drvs[i].crx) { g_shle_drv = &k_shle_drvs[i]; return true; }
         for (uint32_t p = SHLE_P_SMPTBL; p <= SHLE_P_VELOCITY; p += 4)
             if ((shle_ml(p) >> 19) != (0x600000u >> 19)) return false;
         g_shle_drv = &k_shle_drvs[i];
@@ -2065,6 +2075,8 @@ static inline uint64_t shle_entry_a(void) {
 static inline uint64_t shle_behind_a(uint64_t e, uint64_t fa, uint64_t ea) {
     return fa <= e && ea > e ? ea : e;
 }
+
+#include "sound_hle_crx.h"
 
 /* The driver's boot, at clock period `now`: false until it has come. */
 static bool shle_events_boot(uint64_t now) {
@@ -2154,6 +2166,7 @@ static bool shle_events_timer(uint64_t now) {
 /* The board at clock period `now`: MIDI bytes, then any timer handler whose
  * turn has come, then the main loop's dispatch. */
 static void shle_events(uint64_t now) {
+    if (g_shle_drv->crx) { crx_events(now); return; }
     if (!g_shle.booted && !shle_events_boot(now)) return;
     if (!shle_events_midi(now)) return;
     for (int guard = 0; guard < 16 && shle_events_timer(now); guard++) {}
@@ -2161,6 +2174,7 @@ static void shle_events(uint64_t now) {
 }
 
 static inline uint64_t shle_next_due(void) {
+    if (g_shle_drv->crx) return crx_next_due();
     if (!g_shle.booted) return g_shle.restart_at && g_shle.restart_at < g_shle.boot_at ? g_shle.restart_at : g_shle.boot_at;
     uint64_t d = shle_entry(g_shle.due_b), x = shle_entry(g_shle.due_c), y = shle_entry_a();
     if (x < d) d = x;
@@ -2199,6 +2213,7 @@ static void shle_refill_pass(void) {
 
 /* The main loop's pass over the slots, every SHLE_PASS_SAMPLES samples. */
 static void shle_pass(scsp_t *s, uint64_t now) {
+    if (g_shle_drv->crx) { crx_pass(s, now); return; }
     g_shle.pass_left = SHLE_PASS_SAMPLES;
     shle_clear_step(s, now);
     if (g_shle.booted && now >= g_shle.stall_until) shle_refill_pass();
@@ -2236,6 +2251,7 @@ static inline void shle_reset(void) {
      * board -- by then the host has also handed over the sample ROMs, which
      * the boot's preload copies from. */
     g_shle.booted = g_shle.quick = false;
+    if (g_shle.on && g_shle_drv->crx) { crx_restart(g_sound.m68k.cpu.cycles); return; }
     g_shle.restart_at = g_sound.m68k.cpu.cycles + SHLE_INIT_CYCLES;
     g_shle.clear_at = g_sound.m68k.cpu.cycles + SHLE_CLEAR_DELAY;
     g_shle.cleared = 0;

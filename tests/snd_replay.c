@@ -15,6 +15,7 @@
  *     (default: the claude_mame oracle's roms)
  *   $SND_SET: another game's board instead, a directory of region images
  *     (m2hle --export-roms; only audiocpu.bin and samples.bin are read)
+ *   $SND_RAM_BASE: the .ram.bin dump's first address (default 0x1000)
  */
 #define NDEBUG 1
 #include "test_rom_dir.h"
@@ -74,7 +75,8 @@ static int load_midi(const char *in, midi_t **midi_out, size_t *nmidi_out, size_
     for (size_t i = 0; i < nrec; i++) {
         uint32_t *r = rec + i * 4;
         if (r[2] > t_last) t_last = r[2];
-        if ((r[0] >> 24) == 1 && (r[0] & 0xFFFFFF) == 0x9C0000) {
+        /* the UART's data port: 0x9C0000 on a 2B, 0x01C80000 on a 2A or 2C (24 bits kept) */
+        if ((r[0] >> 24) == 1 && ((r[0] & 0xFFFFFF) == 0x9C0000 || (r[0] & 0xFFFFFF) == 0xC80000)) {
             midi[nmidi].t = r[2];
             midi[nmidi].b = (uint8_t)r[1];
             nmidi++;
@@ -127,6 +129,7 @@ static int open_outputs(const char *out, uint64_t total, uint32_t (**marks_out)[
     snprintf(path, sizeof path, "%s.wav", out);      FILE *wav      = fopen(path, "wb");
     if (!marks || !g_sndcap.f || !g_sndcap.ramf || !g_sndcap.regsf || !wav) { fprintf(stderr, "cannot write %s.*\n", out); return 1; }
     g_sndcap.marks = marks;
+    if (getenv("SND_RAM_BASE")) g_sndcap.ram_base = (uint32_t)strtoul(getenv("SND_RAM_BASE"), NULL, 0);
     g_sndcap.want = nmarks_cap;
     g_sndcap.active = 1;
     wav_header(wav, 0);

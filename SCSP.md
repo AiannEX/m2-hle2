@@ -378,6 +378,55 @@ board facts set it (all `SND_TRACE` measurements):
   the event, and a B behind it with it -- the board's 2,000-6,700-cycle B
   latencies. `amask_from`/`amask_until`; A0-status commands are not masked.
 
+### CRX_drv: Dynamite Cop, The House of the Dead, Motor Raid (Pinboard #1777)
+
+Hiro F's "CRX_drv Ver3.2.8" (96 10/28) is a different driver from STF's, not
+another build of it: `src/board/sound_hle_crx.h`, picked by its code hash like
+the others (`shle_drv_t.crx`). Dynamite Cop's five sets (2A dynamcop/dyndeka2,
+2B dynmcopb/dyndek2b, 2C dynmcopc) share the parent's sound ROMs, so they are
+one driver, and the Rosetta stone: the same code runs hotd and motoraid, with
+each game's data behind 0x608000. Its RAM map and handlers are in the file's
+header comment. What differs from STF's for timing:
+
+- *Interrupt levels* (SCILV 0x88/0x48/0): MIDI 3, timer A 2, timer B 1. So A
+  preempts B (the HLE blocks only B behind A, never A behind B).
+- *Per-track masks.* A note-on runs `move.w #$2200,sr` round each track's note
+  (0x600754..0x60075A), a note-off from its first track to its end
+  (0x600FFC..0x601044): A and B wait for that window, MIDI does not, and a
+  MIDI handled inside a window stretches it. `amask_win`, `crx_mask`.
+- *The main loop streams a chunk per record visit* and looks at the queue
+  only at the top of a visit: a refill pass is one 0x200-byte chunk (2658
+  clocks) a record, the records one main-loop trip apart (`CRX_LOOP_TRIP`),
+  and an event that arrives mid-chunk waits for it (`crx_refill_wait`).
+- *Freeing a voice is dear.* sub_6005B0 renumbers all 32 voices' order bytes
+  (2250 clocks); timer B frees the voices whose countdown ran out (its 2590
+  becomes 4850, 7300 with two), and a note-on frees one for a drum retrigger
+  or, through sub_600F88's look over all 32, for a steal (4780 more).
+  A streamed key-on window is 9600, 11850 with a free, 16600 with a steal.
+
+Measured on hotd's board (`SND_TRACE` 50-55, 60-65, 70-75 s): timer A median
+period 12701, handler 884 + 481 a queued event; timer B 2590; note-on 300 + 45
+a track looked at + 1300 a track that plays + its key-ons (1500 in RAM, 8300
+streamed); note-off masked from 480 in; rte to the loop's look at the queue
+261 median (450 holds the drift best). What sets the drift is how often and
+how deep timer A lands in a window: at 70-75 s the board has 86 late entries
+(81.8k clocks/s), the HLE 90 (57.5k/s); the windows' lengths and counts match,
+the board's start later after an A.
+
+On the games' own captured commands (`tools/grade-sound-hle.py --crx`, 90 s
+of attract from power-on; key-ons within 30 ms, median, p95 |err| in ms):
+
+| set | within 30 ms | median / p95 | drift |
+|---|---|---|---|
+| dynamcop | 100.0% | -2.3 / 13.4 | within 16 ms |
+| motoraid | 99.9% | -2.7 / 17.7 | -18 ms at 55 s, back by 70 s |
+| hotd | 91.2% | -1.7 / 34.0 | +-4 ms to 55 s, then fast: -35 ms at 80 s |
+
+The i960 cannot tell: det_digest is frame for frame the 68000's on all seven
+sets (`--sound-hle`, 1200-1800 frames). The sound board costs 39% less in
+hotd (90 s replay: 3.19 s of CPU on the 68000, 1.95 s in C) and 43% less in
+dynamcop (3.13 to 1.79).
+
 ## The voices in C (`--sound-synth`)
 
 `src/board/sound_synth.h` takes the next step (Pinboard #1737): under the
