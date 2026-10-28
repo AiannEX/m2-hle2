@@ -1719,6 +1719,52 @@ static void window_draw_game(int ox, int oy, int w, int h, bool post, bool win_o
     extract_model_tick();
 }
 
+/* A bridge caller may ask for the object viewer's window: it owns the
+ * viewer's settings but not this flag, which is the frontend's. */
+static void frame_objview_request(void) {
+    if (g_objview.window_request >= 0) {
+        state.show_objview       = (g_objview.window_request != 0);
+        g_objview.window_request = -1;
+    }
+}
+
+/* Where the game goes in the window, the overlay painted; true when an
+ * overlay (or an announcement) is up. */
+static bool frame_game_box(int *ox, int *oy, int *w, int *h) {
+    int win_ox = 0, win_oy = 0, win_gw = 0, win_gh = 0;
+    bool win_overlay = window_overlay_paint(&win_ox, &win_oy, &win_gw, &win_gh);
+
+    window_game_rect(ox, oy, w, h);
+    /* An overlay owns the whole window: the board goes where the plugin
+     * was told it would be, so the window and the stream show the identical
+     * composition rather than two letterboxes of the same picture. */
+    if (win_overlay) { *ox = win_ox; *oy = win_oy; *w = win_gw; *h = win_gh; }
+    /* With no plugin, an announcement still goes up, over the window's own
+     * game box. */
+    else if (!s_av_mirror && overlay_host_announcing()) {
+        int menu_h = s_menu_bar_visible ? (int)(igGetFrameHeight() * sapp_dpi_scale()) : 0;
+        overlay_host_paint(sapp_width(), sapp_height(), *ox, *oy, *w, *h, menu_h, g_emu_frames);
+        win_overlay = true;
+    }
+    return win_overlay;
+}
+
+/* The filter reads the game from a target of its own and covers only the
+ * game's rectangle. Not while the window mirrors the A/V stream: that
+ * target is the stream's composition, overlay and all. True when it is on. */
+static bool frame_post_source(int w, int h, float lerp_t) {
+    const bool post = !s_av_mirror && !g_stereo.on && post_shader_active();
+    if (post) {
+        int sw, sh;
+        post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, w, h, &sw, &sh);
+        post_shader_begin_source(sw, sh, &state.pass_action);
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){0, 0, sw, sh}, lerp_t);
+        post_shader_end_source();
+        post_shader_prepare(w, h);
+    }
+    return post;
+}
+
 static void frame(void) {
     /* `quit` over the bridge. Capture mode would otherwise swallow the close,
      * which is the point of capture mode -- so say we mean it. */
@@ -1759,46 +1805,15 @@ static void frame(void) {
      * the whole window. */
     s_menu_bar_visible = draw_ui && menu_bar_should_show();
 
-    /* A bridge caller may ask for the object viewer's window: it owns the
-     * viewer's settings but not this flag, which is the frontend's. */
-    if (g_objview.window_request >= 0) {
-        state.show_objview       = (g_objview.window_request != 0);
-        g_objview.window_request = -1;
-    }
-
+    frame_objview_request();
     if (draw_ui) draw_windows();
     if (draw_ui) link_check_prompt(&state.emu);
 
     av_stream_pass();
 
-    int win_ox = 0, win_oy = 0, win_gw = 0, win_gh = 0;
-    bool win_overlay = window_overlay_paint(&win_ox, &win_oy, &win_gw, &win_gh);
-
     int ox, oy, w, h;
-    window_game_rect(&ox, &oy, &w, &h);
-    /* An overlay owns the whole window: the board goes where the plugin
-     * was told it would be, so the window and the stream show the identical
-     * composition rather than two letterboxes of the same picture. */
-    if (win_overlay) { ox = win_ox; oy = win_oy; w = win_gw; h = win_gh; }
-    /* With no plugin, an announcement still goes up, over the window's own
-     * game box. */
-    else if (!s_av_mirror && overlay_host_announcing()) {
-        int menu_h = s_menu_bar_visible ? (int)(igGetFrameHeight() * sapp_dpi_scale()) : 0;
-        overlay_host_paint(sapp_width(), sapp_height(), ox, oy, w, h, menu_h, g_emu_frames);
-        win_overlay = true;
-    }
-    /* The filter reads the game from a target of its own and covers only the
-     * game's rectangle. Not while the window mirrors the A/V stream: that
-     * target is the stream's composition, overlay and all. */
-    const bool post = !s_av_mirror && !g_stereo.on && post_shader_active();
-    if (post) {
-        int sw, sh;
-        post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, w, h, &sw, &sh);
-        post_shader_begin_source(sw, sh, &state.pass_action);
-        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){0, 0, sw, sh}, lerp_t);
-        post_shader_end_source();
-        post_shader_prepare(w, h);
-    }
+    bool win_overlay = frame_game_box(&ox, &oy, &w, &h);
+    const bool post = frame_post_source(w, h, lerp_t);
 
     sg_begin_pass(&(sg_pass){
         .action    = state.pass_action,
@@ -1863,6 +1878,11 @@ static void cleanup(void) {
     log_file_close();
 }
 
+/* F5/F6/F7: n instructions, when the board is stopped. */
+static void hotkey_step(int n) {
+    if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, n);
+}
+
 /* The debugger's hotkeys: Esc quits, F9 runs or stops the board, F5/F6/F7
  * step it and F8 reboots the sound board. */
 static void event_hotkey(const sapp_event* ev) {
@@ -1873,20 +1893,14 @@ static void event_hotkey(const sapp_event* ev) {
             else if (state.emu_started && state.romset.loaded && !state.cpu.halted)
                 emu_run(&state.emu);
             break;
-        case SAPP_KEYCODE_F5:
-            if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, 1);
-            break;
-        case SAPP_KEYCODE_F6:
-            if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, 10);
-            break;
+        case SAPP_KEYCODE_F5: hotkey_step(1); break;
+        case SAPP_KEYCODE_F6: hotkey_step(10); break;
         case SAPP_KEYCODE_F8:
             /* Reboot the sound board. The driver can lose its command stream and
              * go permanently silent; this recovers it without dropping the run. */
             emu_sound_restart(&state.emu);
             break;
-        case SAPP_KEYCODE_F7:
-            if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, 100);
-            break;
+        case SAPP_KEYCODE_F7: hotkey_step(100); break;
         default: break;
     }
 }
@@ -1922,35 +1936,42 @@ static void event(const sapp_event* ev) {
     event_hotkey(ev);
 }
 
-sapp_desc sokol_main(int argc, char* argv[]) {
+/* The switches the environment can set too (a script's or a service's). */
+static void env_switches(void) {
     { const char *e = getenv("M2HLE_NO_SOUND_BOARD"); if (e && e[0] == '1') g_no_sound_board = 1; }
     { const char *e = getenv("M2HLE_SOUND_HLE"); if (e && e[0] == '1') g_sound_hle_want = 1; }
     { const char *e = getenv("M2HLE_SCSP_EXACT"); if (e && e[0] == '1') g_scsp_exact = 1; }
     { const char *e = getenv("M2HLE_TEXLOAD_HLE"); if (e && e[0] == '0') g_texload_hle = 0; }
     { const char *e = getenv("M2HLE_SPIN_SKIP"); if (e && e[0] == '0') g_spin_skip = 0; }
-    /* The log's own options come first: the first line logged, a warning about
-     * any argument below included, opens the file. Without --log, an instance
-     * given its own --mcp-port gets its own file, because instances started
-     * side by side from one directory (a training population) otherwise all
-     * truncate and interleave one m2hle.log (issue #69). */
-    {
-        const char *log_path = NULL, *log_levels = NULL;
-        int port = 0;
-        for (int i = 1; i + 1 < argc; i++) {
-            if      (strcmp(argv[i], "--log") == 0)       log_path   = argv[++i];
-            else if (strcmp(argv[i], "--log-level") == 0) log_levels = argv[++i];
-            else if (strcmp(argv[i], "--mcp-port") == 0)  port       = atoi(argv[++i]);
-        }
-        char per_port[32];
-        if (!log_path && port > 0 && port != g_mcp_port) {
-            snprintf(per_port, sizeof per_port, "m2hle-%d.log", port);
-            log_path = per_port;
-        }
-        log_set_path(log_path);
-        if (log_levels && !log_set_levels(log_levels))
-            LOG_WARN("--log-level %s: expected LEVEL or CHANNEL=LEVEL, comma separated, "
-                     "LEVEL one of debug, info, warn, error, off; keeping everything", log_levels);
+}
+
+/* The log's own options come first: the first line logged, a warning about
+ * any argument below included, opens the file. Without --log, an instance
+ * given its own --mcp-port gets its own file, because instances started
+ * side by side from one directory (a training population) otherwise all
+ * truncate and interleave one m2hle.log (issue #69). */
+static void log_options(int argc, char **argv) {
+    const char *log_path = NULL, *log_levels = NULL;
+    int port = 0;
+    for (int i = 1; i + 1 < argc; i++) {
+        if      (strcmp(argv[i], "--log") == 0)       log_path   = argv[++i];
+        else if (strcmp(argv[i], "--log-level") == 0) log_levels = argv[++i];
+        else if (strcmp(argv[i], "--mcp-port") == 0)  port       = atoi(argv[++i]);
     }
+    char per_port[32];
+    if (!log_path && port > 0 && port != g_mcp_port) {
+        snprintf(per_port, sizeof per_port, "m2hle-%d.log", port);
+        log_path = per_port;
+    }
+    log_set_path(log_path);
+    if (log_levels && !log_set_levels(log_levels))
+        LOG_WARN("--log-level %s: expected LEVEL or CHANNEL=LEVEL, comma separated, "
+                 "LEVEL one of debug, info, warn, error, off; keeping everything", log_levels);
+}
+
+/* Every other option, one case each: a flat list, like the other command-line
+ * parsers SPAGHETTI.md leaves as they are. */
+static void parse_args(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
             strncpy(g_rom_path, argv[++i], sizeof(g_rom_path) - 1);
@@ -2284,15 +2305,11 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             snprintf(g_net_cli.ps3_wire, sizeof(g_net_cli.ps3_wire), "%s", argv[++i]);
         }
     }
-    /* The record switch is the player's (replay.cfg); a headless run keeps
-     * only what its command line says, as the graders boot blank. */
-    if (!g_headless && !g_replay_cli_set) replay_settings_load();
-    if (!g_headless) lightgun_ui_settings_load();   /* the crosshair (Pinboard #1496) */
-    scripts_setup();
-    if (g_headless) exit(headless_main());
-    /* Capture mode wants the game moving, not a first frame held on pause. */
-    if (g_kiosk_on) g_autorun = 1;
+}
 
+/* The window sokol opens: kiosk mode's size, the depth-stencil swapchain
+ * and the icon. */
+static sapp_desc app_desc(void) {
     /* The window's own icon, from the same art as the tray icon (app_icon.h),
      * rendered at each size rather than downscaled from one bitmap. */
     static uint8_t icon16[16 * 16 * 4], icon32[32 * 32 * 4], icon64[64 * 64 * 4];
@@ -2333,4 +2350,19 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             },
         },
     };
+}
+
+sapp_desc sokol_main(int argc, char* argv[]) {
+    env_switches();
+    log_options(argc, argv);
+    parse_args(argc, argv);
+    /* The record switch is the player's (replay.cfg); a headless run keeps
+     * only what its command line says, as the graders boot blank. */
+    if (!g_headless && !g_replay_cli_set) replay_settings_load();
+    if (!g_headless) lightgun_ui_settings_load();   /* the crosshair (Pinboard #1496) */
+    scripts_setup();
+    if (g_headless) exit(headless_main());
+    /* Capture mode wants the game moving, not a first frame held on pause. */
+    if (g_kiosk_on) g_autorun = 1;
+    return app_desc();
 }

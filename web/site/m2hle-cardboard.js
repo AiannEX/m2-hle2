@@ -279,18 +279,23 @@ const m2hleCardboard = (() => {
    * 32 Circle, 64 open (the touchpad, or L3 + R3 together). */
   function padBits(list) {
     let b = 0;
-    const btn = (p, i) => !!p.buttons[i] && (p.buttons[i].pressed || p.buttons[i].value > 0.5);
-    for (const p of list) {
-      if (p.mapping !== 'standard') continue;
-      const ax = p.axes;
-      if (btn(p, 12) || ax[1] < -0.6) b |= 1;
-      if (btn(p, 13) || ax[1] > 0.6) b |= 2;
-      if (btn(p, 14) || ax[0] < -0.6) b |= 4;
-      if (btn(p, 15) || ax[0] > 0.6) b |= 8;
-      if (btn(p, 0)) b |= 16;
-      if (btn(p, 1)) b |= 32;
-      if (btn(p, 17) || (btn(p, 10) && btn(p, 11))) b |= 64;
-    }
+    for (const p of list) if (p.mapping === 'standard') b |= onePadBits(p);
+    return b;
+  }
+
+  const padBtn = (p, i) => !!p.buttons[i] && (p.buttons[i].pressed || p.buttons[i].value > 0.5);
+
+  /* One standard pad's bits. */
+  function onePadBits(p) {
+    let b = 0;
+    const ax = p.axes, btn = padBtn;
+    if (btn(p, 12) || ax[1] < -0.6) b |= 1;
+    if (btn(p, 13) || ax[1] > 0.6) b |= 2;
+    if (btn(p, 14) || ax[0] < -0.6) b |= 4;
+    if (btn(p, 15) || ax[0] > 0.6) b |= 8;
+    if (btn(p, 0)) b |= 16;
+    if (btn(p, 1)) b |= 32;
+    if (btn(p, 17) || (btn(p, 10) && btn(p, 11))) b |= 64;
     return b;
   }
 

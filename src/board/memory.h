@@ -489,6 +489,112 @@ static inline uint32_t geodl_direct_len(const uint32_t *L, uint32_t nw, uint32_t
     return q - p - 1u;
 }
 
+/* The words a list walk visits, gathered into runs: a run is copied into
+ * snap (when not NULL) once the next word visited does not extend it. */
+typedef struct {
+    const uint32_t *L;
+    uint32_t       *snap;
+    uint32_t        nw, lo, hi;               /* words to copy, not yet copied */
+} geodl_runs_t;
+
+static inline void geodl_visit(geodl_runs_t *r, uint32_t lo, uint32_t hi) {
+    if (hi > r->nw) hi = r->nw;
+    if (lo == r->hi && r->hi > r->lo) {
+        if (hi > r->hi) r->hi = hi;
+        return;
+    }
+    if (r->snap && r->hi > r->lo)
+        memcpy(r->snap + r->lo, r->L + r->lo, (r->hi - r->lo) * 4u);
+    r->lo = lo; r->hi = hi;
+}
+
+/* Argument k of the command at p, 0 past the list's end. */
+static inline uint32_t geodl_arg(const uint32_t *L, uint32_t nw, uint32_t p, uint32_t k) {
+    return p + 1u + k < nw ? L[p + 1u + k] : 0u;
+}
+
+/* One value through command 4's window: address bit 23 picks texture RAM
+ * (a texel a word), else log RAM (a byte). */
+static inline void geodl_write_tex_log(uint32_t addr, uint32_t k, uint32_t v) {
+    if (addr & 0x800000u) {
+        uint32_t i = (addr + k) & 0xFFFFu;
+        g_geo_live.texram[i] = (uint16_t)v;
+        geo_dirty_mark(0, i * 2u);
+    } else {
+        uint32_t i = (addr + k) & 0x7FFFu;
+        g_geo_live.logram[i] = (uint8_t)v;
+        geo_dirty_mark(2, i);
+    }
+}
+
+/* 0x04, texture data: a word a texel (or log byte). Returns the command's
+ * argument words, as the ones below do. */
+static inline uint32_t geodl_tex_data(const uint32_t *L, uint32_t nw, uint32_t p) {
+    uint32_t addr = geodl_arg(L, nw, p, 0), cnt = geodl_arg(L, nw, p, 1);
+    for (uint32_t k = 0; k < cnt; k++) geodl_write_tex_log(addr, k, geodl_arg(L, nw, p, 2 + k));
+    return 2 + cnt;
+}
+
+/* 0x14, log data: a byte at a time, through command 4's write. */
+static inline uint32_t geodl_log_data(const uint32_t *L, uint32_t nw, uint32_t p) {
+    uint32_t addr = geodl_arg(L, nw, p, 0), cnt = geodl_arg(L, nw, p, 1);
+    for (uint32_t k = 0; k < 4u * cnt; k++)
+        geodl_write_tex_log(addr, k, (uint8_t)(geodl_arg(L, nw, p, 2 + k / 4u) >> (8u * (k % 4u))));
+    return 2 + cnt;
+}
+
+/* 0x05 / 0x15, polygon data: words into polygon RAM's bank (address bit 24). */
+static inline uint32_t geodl_poly_data(const uint32_t *L, uint32_t nw, uint32_t p) {
+    uint32_t addr = geodl_arg(L, nw, p, 0), cnt = geodl_arg(L, nw, p, 1);
+    uint32_t bank = (addr & 0x01000000u) ? 1u : 0u;
+    for (uint32_t k = 0; k < cnt; k++) {
+        uint32_t i = (addr + k) & 0x7FFFu;
+        g_geo_live.polyram[bank][i] = geodl_arg(L, nw, p, 2 + k);
+        geo_dirty_mark(1, (bank * 0x8000u + i) * 4u);
+    }
+    return 2 + cnt;
+}
+
+/* 0x06, texture parameters: a parameter word and a coefficient each. */
+static inline uint32_t geodl_tex_params(const uint32_t *L, uint32_t nw, uint32_t p) {
+    uint32_t index = geodl_arg(L, nw, p, 0) >> 2, cnt = geodl_arg(L, nw, p, 1);
+    if (cnt) g_geo_dirty[0].slots = g_geo_dirty[1].slots = true;
+    for (uint32_t k = 0; k < cnt; k++, index++) {
+        uint32_t param = geodl_arg(L, nw, p, 2 + 2 * k), coef = geodl_arg(L, nw, p, 3 + 2 * k);
+        g_geo_live.texparam[index & 0x1F][0] = (float)(param & 0xFF);
+        g_geo_live.texparam[index & 0x1F][1] = (float)((param >> 8) & 0xFF);
+        g_geo_live.texparam[index & 0x1F][2] = (float)((param >> 16) & 0xFF);
+        g_geo_live.texparam[index & 0x1F][3] = (float)((param >> 24) & 0xFF);
+        memcpy(&g_geo_live.coef[index & 0x1F], &coef, 4);
+    }
+    return 2 + 2 * cnt;
+}
+
+/* The argument words of the commands that leave nothing behind and have a
+ * fixed size (0 for END and the unknown ones). */
+static const uint8_t geodl_fixed_len[32] = {
+    0, 4, 0, 6,  0, 0, 0, 0,  0, 2, 3, 12,  3, 2, 0, 0,     /* 0x00 .. 0x0F */
+    1, 4, 0, 6,  0, 0, 0, 0,  0, 2, 3, 12,  3, 0, 1, 0,     /* 0x10 .. 0x1F */
+};
+
+/* Apply the command at p (cmd its 5-bit number): returns its argument words. */
+static inline uint32_t geodl_apply_cmd(const uint32_t *L, uint32_t nw, uint32_t p, uint32_t cmd) {
+    switch (cmd) {
+        case 0x04: return geodl_tex_data(L, nw, p);
+        case 0x14: return geodl_log_data(L, nw, p);
+        case 0x05: case 0x15: return geodl_poly_data(L, nw, p);
+        case 0x06: return geodl_tex_params(L, nw, p);
+        case 0x07: case 0x17: g_geo_held.live.mode = geodl_arg(L, nw, p, 0); return 1;
+        case 0x16: { uint32_t a = geodl_arg(L, nw, p, 0); memcpy(&g_geo_held.live.lod, &a, 4); return 1; }
+        /* the raster keeps (word >> 8) << 8 (model2_v.cpp geo_zsort_mode) */
+        case 0x08: case 0x18: g_geo_held.live.zadj = geodl_arg(L, nw, p, 0) & 0xFFFFFF00u; return 1;
+        case 0x1D: return 2 + 3 * geodl_arg(L, nw, p, 1);
+        case 0x0E: return 33 + 3 * geodl_arg(L, nw, p, 32);      /* geo_test */
+        case 0x02: case 0x12: return geodl_direct_len(L, nw, p);
+        default: return geodl_fixed_len[cmd & 0x1F];
+    }
+}
+
 /* Walk the list in L from rstart, applying what it leaves behind, and copy
  * every word the walk visits into snap (when not NULL) at the same offset.
  * The renderer's walk (geo3d_scan_geo_list) takes the same steps and reads
@@ -496,103 +602,17 @@ static inline uint32_t geodl_direct_len(const uint32_t *L, uint32_t nw, uint32_t
 static inline void geodl_apply_state(const uint32_t *L, uint32_t nw, uint32_t rstart,
                                      uint32_t *snap) {
     uint32_t p = (rstart & 0x1FFFFu) >> 2;
-    uint32_t run_lo = 0, run_hi = 0;               /* words to copy, not yet copied */
-    #define GEODL_VISIT(lo, hi) do {                                              \
-        uint32_t lo_ = (lo), hi_ = (hi) < nw ? (hi) : nw;                         \
-        if (lo_ == run_hi && run_hi > run_lo) run_hi = hi_ > run_hi ? hi_ : run_hi; \
-        else {                                                                    \
-            if (snap && run_hi > run_lo)                                          \
-                memcpy(snap + run_lo, L + run_lo, (run_hi - run_lo) * 4u);        \
-            run_lo = lo_; run_hi = hi_;                                           \
-        }                                                                         \
-    } while (0)
+    geodl_runs_t runs = { .L = L, .snap = snap, .nw = nw };
     for (uint32_t guard = 0; guard < 0x8000u && p < nw; guard++) {
         uint32_t op = L[p];
-        if (op & 0x80000000u) { GEODL_VISIT(p, p + 1u); p = (op & 0x1FFFFu) >> 2; continue; }
+        if (op & 0x80000000u) { geodl_visit(&runs, p, p + 1u); p = (op & 0x1FFFFu) >> 2; continue; }
         uint32_t cmd = (op >> 23) & 0x1F;
-        #define LA(k) (p + 1u + (k) < nw ? L[p + 1u + (k)] : 0u)
-        uint32_t len = 0;
-        switch (cmd) {
-            case 0x01: case 0x11: len = 4; break;
-            case 0x03: case 0x13: len = 6; break;
-            case 0x04: {
-                uint32_t addr = LA(0), cnt = LA(1);
-                len = 2 + cnt;
-                for (uint32_t k = 0; k < cnt; k++) {
-                    if (addr & 0x800000u) {
-                        uint32_t i = (addr + k) & 0xFFFFu;
-                        g_geo_live.texram[i] = (uint16_t)LA(2 + k);
-                        geo_dirty_mark(0, i * 2u);
-                    } else {
-                        uint32_t i = (addr + k) & 0x7FFFu;
-                        g_geo_live.logram[i] = (uint8_t)LA(2 + k);
-                        geo_dirty_mark(2, i);
-                    }
-                }
-                break;
-            }
-            case 0x14: {                    /* log data: a byte at a time, through command 4's write */
-                uint32_t addr = LA(0), cnt = LA(1);
-                len = 2 + cnt;
-                for (uint32_t k = 0; k < 4u * cnt; k++) {
-                    uint8_t b = (uint8_t)(LA(2 + k / 4u) >> (8u * (k % 4u)));
-                    if (addr & 0x800000u) {
-                        uint32_t i = (addr + k) & 0xFFFFu;
-                        g_geo_live.texram[i] = b;
-                        geo_dirty_mark(0, i * 2u);
-                    } else {
-                        uint32_t i = (addr + k) & 0x7FFFu;
-                        g_geo_live.logram[i] = b;
-                        geo_dirty_mark(2, i);
-                    }
-                }
-                break;
-            }
-            case 0x05: case 0x15: {
-                uint32_t addr = LA(0), cnt = LA(1);
-                len = 2 + cnt;
-                uint32_t bank = (addr & 0x01000000u) ? 1u : 0u;
-                for (uint32_t k = 0; k < cnt; k++) {
-                    uint32_t i = (addr + k) & 0x7FFFu;
-                    g_geo_live.polyram[bank][i] = LA(2 + k);
-                    geo_dirty_mark(1, (bank * 0x8000u + i) * 4u);
-                }
-                break;
-            }
-            case 0x06: {
-                uint32_t index = LA(0) >> 2, cnt = LA(1);
-                len = 2 + 2 * cnt;
-                if (cnt) g_geo_dirty[0].slots = g_geo_dirty[1].slots = true;
-                for (uint32_t k = 0; k < cnt; k++, index++) {
-                    uint32_t param = LA(2 + 2 * k), coef = LA(3 + 2 * k);
-                    g_geo_live.texparam[index & 0x1F][0] = (float)(param & 0xFF);
-                    g_geo_live.texparam[index & 0x1F][1] = (float)((param >> 8) & 0xFF);
-                    g_geo_live.texparam[index & 0x1F][2] = (float)((param >> 16) & 0xFF);
-                    g_geo_live.texparam[index & 0x1F][3] = (float)((param >> 24) & 0xFF);
-                    memcpy(&g_geo_live.coef[index & 0x1F], &coef, 4);
-                }
-                break;
-            }
-            case 0x07: case 0x17: g_geo_held.live.mode = LA(0); len = 1; break;
-            case 0x16: { uint32_t a = LA(0); memcpy(&g_geo_held.live.lod, &a, 4); len = 1; break; }
-            /* the raster keeps (word >> 8) << 8 (model2_v.cpp geo_zsort_mode) */
-            case 0x08: case 0x18: g_geo_held.live.zadj = LA(0) & 0xFFFFFF00u; len = 1; break;
-            case 0x10: case 0x1E: len = 1; break;
-            case 0x09: case 0x19: case 0x0D: len = 2; break;
-            case 0x0A: case 0x1A: case 0x0C: case 0x1C: len = 3; break;
-            case 0x0B: case 0x1B: len = 12; break;
-            case 0x1D: len = 2 + 3 * LA(1); break;
-            case 0x0E: len = 33 + 3 * LA(32); break;      /* geo_test */
-            case 0x02: case 0x12: len = geodl_direct_len(L, nw, p); break;
-            case 0x0F: case 0x1F: len = 0; guard = 0x8000u; break;   /* END */
-            default: break;
-        }
-        #undef LA
-        GEODL_VISIT(p, p + 1u + len);
+        if ((cmd & 0xF) == 0xF) { geodl_visit(&runs, p, p + 1u); break; }   /* END */
+        uint32_t len = geodl_apply_cmd(L, nw, p, cmd);
+        geodl_visit(&runs, p, p + 1u + len);
         p += 1u + len;
     }
-    GEODL_VISIT(0, 0);                             /* flush the last run */
-    #undef GEODL_VISIT
+    geodl_visit(&runs, 0, 0);                      /* flush the last run */
 }
 
 static inline void geo_push(uint32_t word) {

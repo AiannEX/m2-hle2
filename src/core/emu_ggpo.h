@@ -209,13 +209,17 @@ static bool (*g_ggpo_solo_veto)(void);
 /* Whether a linked game's board should be a SOLO session now: its profile
  * plays one (link_solo) and nothing else has the board. A comm peer with no
  * twin is a real link (a room's, --comm-master / --comm-slave). */
+/* Something else has the board: a session, a room, a link, a replay or a follow. */
+static inline bool emu_ggpo__board_taken(void) {
+    if (netplay_in_room() || netplay_active() || comm_role_waiting() || comm_role_linked()) return true;
+    if (replay_playing() || follow_following() || follow_leading()) return true;
+    return g_ggpo_solo_veto && g_ggpo_solo_veto();
+}
+
 static inline bool emu_ggpo_solo_wanted(void) {
     const game_profile_t *p = g_active_profile;
     if (g_ggpo_cfg.no_solo || !p || !p->link_solo || !emu_twin_wanted(p) || g_ggpo_solo_refused == p) return false;
-    if (!g_netplay.reset_board) return false;
-    if (netplay_in_room() || netplay_active() || comm_role_waiting() || comm_role_linked()) return false;
-    if (replay_playing() || follow_following() || follow_leading()) return false;
-    if (g_ggpo_solo_veto && g_ggpo_solo_veto()) return false;
+    if (!g_netplay.reset_board || emu_ggpo__board_taken()) return false;
     return g_twin.on || !g_m2comm_link.peer;
 }
 
@@ -470,6 +474,29 @@ static inline const char *emu_ggpo__delay_name(void) {
     return s;
 }
 
+/* A started session in the log. */
+static inline void emu_ggpo__log_start(void) {
+    if (g_ggpo_cfg.mode == EMU_GGPO_SYNCTEST)
+        LOG_INFO("ggpo: synctest, rolling back %d frame(s) every frame; snapshot %zu bytes",
+                 g_ggpo_cfg.synctest_frames, emu_ggpo__size());
+    else if (!ggpo_port_bound())
+        LOG_INFO("ggpo: player %d through the lobby's transport, delay %s; snapshot %zu bytes",
+                 g_ggpo_cfg.player, emu_ggpo__delay_name(), emu_ggpo__size());
+    else
+        LOG_INFO("ggpo: player %d on UDP %u, peer %s:%u, delay %s; snapshot %zu bytes",
+                 g_ggpo_cfg.player, (unsigned)g_ggpo_cfg.local_port, g_ggpo_cfg.remote_ip,
+                 (unsigned)g_ggpo_cfg.remote_port, emu_ggpo__delay_name(), emu_ggpo__size());
+}
+
+/* A linked game's two cabinets, made before GGPO's first save: the same boot
+ * on both machines, so before the session is fine. False if they could not be. */
+static inline bool emu_ggpo__twin_start(emu_thread_ctx_t *ctx, emu_ggpo_mode_t mode) {
+    if (!emu_twin_wanted(g_active_profile)) return true;
+    /* SOLO's player has the SLAVE (a ride), the profile the MASTER. */
+    int local = mode == EMU_GGPO_SOLO || (mode == EMU_GGPO_P2P && g_ggpo_cfg.player == 2) ? 1 : 0;
+    return emu_twin_start(ctx, g_active_profile, local);
+}
+
 /* Mutex held. */
 static inline bool emu_ggpo_start(emu_thread_ctx_t *ctx, emu_ggpo_mode_t mode) {
     memset(&g_ggpo, 0, sizeof g_ggpo);
@@ -488,13 +515,7 @@ static inline bool emu_ggpo_start(emu_thread_ctx_t *ctx, emu_ggpo_mode_t mode) {
         return false;
     }
     rollback_layout(ctx->cpu, ctx->bus);
-    /* A linked game's two cabinets, made before GGPO's first save: the same
-     * boot on both machines, so before the session is fine. */
-    if (emu_twin_wanted(g_active_profile)) {
-        /* SOLO's player has the SLAVE (a ride), the profile the MASTER. */
-        int local = mode == EMU_GGPO_SOLO || (mode == EMU_GGPO_P2P && g_ggpo_cfg.player == 2) ? 1 : 0;
-        if (!emu_twin_start(ctx, g_active_profile, local)) return false;
-    }
+    if (!emu_ggpo__twin_start(ctx, mode)) return false;
     if (mode == EMU_GGPO_SOLO) {
         if (!g_twin.on) return false;
         g_twin.op = g_active_profile->link_solo;
@@ -513,16 +534,7 @@ static inline bool emu_ggpo_start(emu_thread_ctx_t *ctx, emu_ggpo_mode_t mode) {
     g_ggpo.on = true;
     /* A replay is one board's inputs: not a twin's yet. */
     if (g_ggpo_cfg.mode == EMU_GGPO_P2P && !g_twin.on) emu_ggpo_replay_begin(ctx);
-    if (g_ggpo_cfg.mode == EMU_GGPO_SYNCTEST)
-        LOG_INFO("ggpo: synctest, rolling back %d frame(s) every frame; snapshot %zu bytes",
-                 g_ggpo_cfg.synctest_frames, emu_ggpo__size());
-    else if (!ggpo_port_bound())
-        LOG_INFO("ggpo: player %d through the lobby's transport, delay %s; snapshot %zu bytes",
-                 g_ggpo_cfg.player, emu_ggpo__delay_name(), emu_ggpo__size());
-    else
-        LOG_INFO("ggpo: player %d on UDP %u, peer %s:%u, delay %s; snapshot %zu bytes",
-                 g_ggpo_cfg.player, (unsigned)g_ggpo_cfg.local_port, g_ggpo_cfg.remote_ip,
-                 (unsigned)g_ggpo_cfg.remote_port, emu_ggpo__delay_name(), emu_ggpo__size());
+    emu_ggpo__log_start();
     return true;
 }
 

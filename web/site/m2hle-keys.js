@@ -211,22 +211,24 @@ const m2hleKeys = (() => {
   const PANELS = '#drawer, #online, #controls, #touch-edit, #link-check, #menu, input, textarea, select';
   const inPanel = (e) => e.target instanceof Element && e.target.closest(PANELS);
 
-  function onKey(e) {
-    if (listening && e.type === 'keydown') {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      if (e.code === 'Escape' || !e.code) { stopListening(); return; }
-      if (listening.id === 'pause') unbindGame(e.code);
-      else unbindPause(e.code);
-      const list = binds[listening.player][listening.id];
-      if (!list.includes(e.code)) {
-        if (list.length >= MAX_BINDS) list.shift();
-        list.push(e.code);
-        save();
-      }
-      stopListening();
-      return;
+  /* The key pressed while listening: bound to the action listened for. */
+  function captureKey(e) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.code === 'Escape' || !e.code) { stopListening(); return; }
+    if (listening.id === 'pause') unbindGame(e.code);
+    else unbindPause(e.code);
+    const list = binds[listening.player][listening.id];
+    if (!list.includes(e.code)) {
+      if (list.length >= MAX_BINDS) list.shift();
+      list.push(e.code);
+      save();
     }
+    stopListening();
+  }
+
+  function onKey(e) {
+    if (listening && e.type === 'keydown') { captureKey(e); return; }
     if (listening) { e.preventDefault(); e.stopImmediatePropagation(); return; }   /* the key-up of the captured key */
 
     if (e.type === 'keyup') {
@@ -234,6 +236,11 @@ const m2hleKeys = (() => {
       if (down.delete(e.code)) recompute();
       return;
     }
+    keyDown(e);
+  }
+
+  /* A key pressed outside the panels: the pause, or a game key. */
+  function keyDown(e) {
     if (inPanel(e) || e.ctrlKey || e.metaKey || e.altKey) return;
     if (isPause(e.code)) {
       e.preventDefault();
@@ -262,6 +269,64 @@ const m2hleKeys = (() => {
     render();
   }
 
+  /* The heading that starts a's part of the list, if one does: the macros, the
+   * cabinet's buttons, the page's keys. */
+  function subOf(a) {
+    if (a.macro && a === ACTIONS.find((x) => x.macro)) return 'keys.sub.macros';
+    if (a.cab && a === ACTIONS.find((x) => x.cab)) return 'keys.sub.cab';
+    if (a.page) return 'keys.sub.page';
+    return null;
+  }
+
+  function subRow(key) {
+    const sub = document.createElement('li');
+    sub.className = 'pad-sub';
+    sub.textContent = m2hleLang.t(key);
+    return sub;
+  }
+
+  /* An action's row: its name, its keys (a click removes one) and Add. */
+  function keyRow(a) {
+    const tr = document.createElement('li');
+    tr.className = 'pad-row';
+    tr.id = 'key-row-' + a.id;
+    const name = document.createElement('span');
+    name.className = 'pad-name';
+    name.textContent = a.label;
+    tr.appendChild(name);
+
+    const chips = document.createElement('span');
+    chips.className = 'pad-chips';
+    const list = binds[player][a.id];
+    if (list.length === 0) {
+      const none = document.createElement('span');
+      none.className = 'status';
+      none.textContent = m2hleLang.t('keys.none');
+      chips.appendChild(none);
+    }
+    list.forEach((code, i) => {
+      const chip = document.createElement('button');
+      chip.className = 'pad-chip';
+      chip.type = 'button';
+      chip.title = m2hleLang.t('keys.remove');
+      chip.setAttribute('aria-label', m2hleLang.t('keys.remove.from', { key: keyName(code), action: a.label }));
+      m2hlePrompts.chip(chip, m2hlePrompts.key(code, keyName(code)), keyName(code));
+      chip.addEventListener('click', () => { list.splice(i, 1); save(); release(); render(); });
+      chips.appendChild(chip);
+    });
+    tr.appendChild(chips);
+
+    const add = document.createElement('button');
+    add.className = 'tool pad-add';
+    add.type = 'button';
+    const on = listening && listening.player === player && listening.id === a.id;
+    add.textContent = m2hleLang.t(on ? 'keys.press' : 'keys.add');
+    add.setAttribute('aria-pressed', String(!!on));
+    add.addEventListener('click', () => listen(a.id));
+    tr.appendChild(add);
+    return tr;
+  }
+
   function render() {
     const rows = $('key-rows');
     if (!rows || $('controls').hidden) return;
@@ -272,62 +337,9 @@ const m2hleKeys = (() => {
     rows.textContent = '';
     for (const a of ACTIONS) {
       if (a.cab && player !== 'p1') continue;
-      if (a.macro && a === ACTIONS.find((x) => x.macro)) {
-        const sub = document.createElement('li');
-        sub.className = 'pad-sub';
-        sub.textContent = m2hleLang.t('keys.sub.macros');
-        rows.appendChild(sub);
-      }
-      if (a.cab && a === ACTIONS.find((x) => x.cab)) {
-        const sub = document.createElement('li');
-        sub.className = 'pad-sub';
-        sub.textContent = m2hleLang.t('keys.sub.cab');
-        rows.appendChild(sub);
-      }
-      if (a.page) {
-        const sub = document.createElement('li');
-        sub.className = 'pad-sub';
-        sub.textContent = m2hleLang.t('keys.sub.page');
-        rows.appendChild(sub);
-      }
-      const tr = document.createElement('li');
-      tr.className = 'pad-row';
-      tr.id = 'key-row-' + a.id;
-      const name = document.createElement('span');
-      name.className = 'pad-name';
-      name.textContent = a.label;
-      tr.appendChild(name);
-
-      const chips = document.createElement('span');
-      chips.className = 'pad-chips';
-      const list = binds[player][a.id];
-      if (list.length === 0) {
-        const none = document.createElement('span');
-        none.className = 'status';
-        none.textContent = m2hleLang.t('keys.none');
-        chips.appendChild(none);
-      }
-      list.forEach((code, i) => {
-        const chip = document.createElement('button');
-        chip.className = 'pad-chip';
-        chip.type = 'button';
-        chip.title = m2hleLang.t('keys.remove');
-        chip.setAttribute('aria-label', m2hleLang.t('keys.remove.from', { key: keyName(code), action: a.label }));
-        m2hlePrompts.chip(chip, m2hlePrompts.key(code, keyName(code)), keyName(code));
-        chip.addEventListener('click', () => { list.splice(i, 1); save(); release(); render(); });
-        chips.appendChild(chip);
-      });
-      tr.appendChild(chips);
-
-      const add = document.createElement('button');
-      add.className = 'tool pad-add';
-      add.type = 'button';
-      const on = listening && listening.player === player && listening.id === a.id;
-      add.textContent = m2hleLang.t(on ? 'keys.press' : 'keys.add');
-      add.setAttribute('aria-pressed', String(!!on));
-      add.addEventListener('click', () => listen(a.id));
-      tr.appendChild(add);
-      rows.appendChild(tr);
+      const sub = subOf(a);
+      if (sub) rows.appendChild(subRow(sub));
+      rows.appendChild(keyRow(a));
     }
     const clash = clashes();
     $('key-clash').hidden = !clash;

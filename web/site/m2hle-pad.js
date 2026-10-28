@@ -333,17 +333,9 @@ const m2hlePad = (() => {
     return m;
   }
 
-  function poll() {
-    requestAnimationFrame(poll);
-    const list = pads();
-    if (listening) { capture(list); return; }
-    if (claim && claim(list)) {
-      padMask = 0; pauseHeld = false; showHeld(0);
-      if (ready && Module._web_pad_far_set) Module._web_pad_far_set(0);
-      send();
-      return;
-    }
-
+  /* What the pads hold: the near players' actions, the far players' (a
+   * four-player cabinet's 3P / 4P), and whether any asks for the pause. */
+  function readPads(list) {
     let mask = 0, far = 0, pause = false;
     list.forEach((pad, i) => {
       const r = padRows(pad), m = i === 0 ? rowActions(r) : rowActions(r) & ~CAB_BITS;
@@ -352,12 +344,34 @@ const m2hlePad = (() => {
       pause = pause || !!(r & PAUSE_ROW);
       if (i === 0) showHeld(r);
     });
+    return { mask, far, pause };
+  }
+
+  /* The far players' actions to the board. */
+  function sendFar(far) {
+    if (ready && Module._web_pad_far_set) Module._web_pad_far_set(far >>> 0);
+  }
+
+  /* Something else has taken the pads (claim): the board holds nothing of theirs. */
+  function letGo() {
+    padMask = 0; pauseHeld = false; showHeld(0);
+    sendFar(0);
+    send();
+  }
+
+  function poll() {
+    requestAnimationFrame(poll);
+    const list = pads();
+    if (listening) { capture(list); return; }
+    if (claim && claim(list)) { letGo(); return; }
+
+    let { mask, far, pause } = readPads(list);
     if (pause && !pauseHeld) window.dispatchEvent(new Event('m2hle-pause'));
     pauseHeld = pause;
     if (list.length === 0) showHeld(0);
     if (ready && Module._web_wheel) mask |= wheel(list);
     padMask = mask;
-    if (ready && Module._web_pad_far_set && !listening) Module._web_pad_far_set(far >>> 0);
+    if (!listening) sendFar(far);
     /* Every frame, not only on a change: the emulator forgets what the pad held
      * whenever it lets go of the keyboard (focus lost, the drawer opened), and a
      * direction still held should come straight back. */
@@ -387,25 +401,34 @@ const m2hlePad = (() => {
     return span > 0.25 ? Math.min(1, Math.max(0, (v - r) * x.d / span)) : 0;
   }
 
+  /* Where a pad turns the wheel, -1 .. 1: the furthest of its Left / Right axes. */
+  function padSteer(pad, binds, std) {
+    let st = 0;
+    for (const x of binds.left || []) if (x.a !== undefined) { const v = -(pad.axes[x.a] || 0) * x.d; if (Math.abs(v) > Math.abs(st)) st = v; }
+    for (const x of binds.right || []) if (x.a !== undefined) { const v = (pad.axes[x.a] || 0) * x.d; if (Math.abs(v) > Math.abs(st)) st = v; }
+    if (std) st = Math.abs(st) <= STICK_DEAD ? 0 : Math.sign(st) * (Math.abs(st) - STICK_DEAD) / (1 - STICK_DEAD);
+    return st;
+  }
+
+  /* How far a pad presses a pedal, 0 .. 1: what row is bound to, or a standard
+   * pad's trigger. */
+  function padPedal(pad, binds, std, row, trigger) {
+    let p = std && pad.buttons[trigger] ? pad.buttons[trigger].value : 0;
+    for (const x of binds[row] || []) {
+      const v = x.b !== undefined ? (pad.buttons[x.b] ? pad.buttons[x.b].value : 0) : axisPedal(pad, x);
+      if (v > p) p = v;
+    }
+    return p;
+  }
+
   function wheel(list) {
     if (!Module._web_wheel_on || !Module._web_wheel_on()) { Module._web_wheel(0, 0, 0, 0); return 0; }
     let on = false, steer = 0, accel = 0, brake = 0, mask = 0;
     list.forEach((pad, i) => {
       if (i === 1 && secondIsP2 && !TWIN) return;
       const binds = sets[layoutOf(pad)], std = pad.mapping === 'standard';
-      let st = 0;
-      for (const x of binds.left || []) if (x.a !== undefined) { const v = -(pad.axes[x.a] || 0) * x.d; if (Math.abs(v) > Math.abs(st)) st = v; }
-      for (const x of binds.right || []) if (x.a !== undefined) { const v = (pad.axes[x.a] || 0) * x.d; if (Math.abs(v) > Math.abs(st)) st = v; }
-      if (std) st = Math.abs(st) <= STICK_DEAD ? 0 : Math.sign(st) * (Math.abs(st) - STICK_DEAD) / (1 - STICK_DEAD);
-      const pedal = (row, trigger) => {
-        let p = std && pad.buttons[trigger] ? pad.buttons[trigger].value : 0;
-        for (const x of binds[row] || []) {
-          const v = x.b !== undefined ? (pad.buttons[x.b] ? pad.buttons[x.b].value : 0) : axisPedal(pad, x);
-          if (v > p) p = v;
-        }
-        return p;
-      };
-      const ac = pedal('b1', 7), br = pedal('b2', 6);
+      const st = padSteer(pad, binds, std);
+      const ac = padPedal(pad, binds, std, 'b1', 7), br = padPedal(pad, binds, std, 'b2', 6);
       if (Math.abs(st) > Math.abs(steer)) steer = st;
       accel = Math.max(accel, ac);
       brake = Math.max(brake, br);
