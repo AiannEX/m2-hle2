@@ -352,7 +352,7 @@ static bool load_rom(const char *zip) {
     }
     /* The model lookup is built from the ROM's model table: a new set needs a new one. */
     geo3d_lookup_invalidate();
-    g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    m2_spin_install(&state.romset, &state.cpu, &state.bus);
     link_check_reset();   /* a MASTER alone on the link is asked about once per start */
     input_reset();
     input_attach(&state.bus);
@@ -980,7 +980,7 @@ static volatile int g_pad_resync;
 static void sdl_netplay_reset_cb(void *ctx) {
     (void)ctx;
     if (!g_active_profile) return;
-    g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    m2_spin_install(&state.romset, &state.cpu, &state.bus);
     irqt_reset();
     if (g_sound_on) {
         sound_select_board(g_active_profile->quirks.model1_sound);

@@ -131,6 +131,15 @@ than one pitch step lands past its end again and creeps on through RAM, and
 the alternating loop reads a position that stepped below 0 as past LEA and
 reflects it far beyond the loop.
 
+A forward loop longer than one step is the exception that gets no margin: both
+positions the voice keeps (`cur`, `nxt`) wrap at LEA before the next read, so
+it reads no higher than `max(LEA - 1, cur, nxt)`, the last two for a position
+a register write left past LEA. House of the Dead, Dynamite Cop and Motor Raid
+keep an 8 KB voice at 0x6E000-0x6FFFF, just below the DSP ring at 0x70000;
+with the old margin of `2 * adv + 3` samples its range ran 4 bytes into the
+ring and put 55-61% of their samples in lockstep (#1713). Now none.
+
+
 - `tests/scsp_lazy_test.c` (ctest) runs random voices and DSP programs twice
   with different garbage everywhere outside the RAM they claim. It found both
   traps above; ten planted range bugs each fail it.

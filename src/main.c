@@ -356,7 +356,7 @@ static void load_active_profile(const char *primary_zip) {
         open_backup_ram(homebrew);
         /* The model lookup is built from the ROM's model table: a new set needs a new one. */
         geo3d_lookup_invalidate();
-        g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+        m2_spin_install(&state.romset, &state.cpu, &state.bus);
         link_check_reset();   /* a new set: nothing asked, the TOSlink cable out */
         gems_apply(profile_rom_set(g_active_profile));
         ages_apply(profile_rom_set(g_active_profile));   /* after gems_apply: they share the extra-hook slot */
@@ -471,7 +471,7 @@ static void netplay_reset_board_cb(void *ctx) {
     (void)ctx;
     if (!g_active_profile || !state.romset.loaded) return;
 
-    g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    m2_spin_install(&state.romset, &state.cpu, &state.bus);
     irqt_reset();
 
     if (g_active_profile->quirks.enable_68k_sound) {

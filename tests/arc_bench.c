@@ -223,7 +223,7 @@ static int load_rom(const char *zip, bool sound) {
         }
     }
     if (romset_load(&romset, g_active_profile->load_fn, zip, parent_ptr) != 0) return -1;
-    g_active_profile->install_fn(&romset, &cpu, &bus);
+    m2_spin_install(&romset, &cpu, &bus);
 
     if (sound && g_active_profile->quirks.enable_68k_sound) {
         sound_select_board(g_active_profile->quirks.model1_sound);

@@ -204,7 +204,7 @@ EM_JS(void, web_gpu_renderer, (char *out, int cap), {
 });
 
 static void web_install_board(void) {
-    g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    m2_spin_install(&state.romset, &state.cpu, &state.bus);
     link_check_reset();   /* a new set: nothing asked, the TOSlink cable out */
     irqt_reset();
     if (g_active_profile->quirks.enable_68k_sound) {

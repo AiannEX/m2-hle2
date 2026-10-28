@@ -473,6 +473,228 @@ tile graphics), stores (the recolour) and the arithmetic of the voice (the slot 
 reading the graphics less often (caching decoded cell rows, or redrawing fewer lines), which is a
 change of what is drawn when, not a hoist.
 
+## 2026-10-27: the most expensive functions, all twelve games (Pinboard #1713)
+
+Master at `610ed2f`, after the quiet DSP (#1681) and the cheaper voice loop (#1698). The same bench
+as before (`arc_bench <set>.zip --sound`, attract, no input) on STF for 30,000 frames and on eleven
+other games for 6,000 each, `perf record -F 2000` / `-F 1000 --call-graph fp`. No board code
+changed. The box had a load of ~3, so the times below are rough; the shares are not.
+
+**A correction to `tools/perf_inline.py` first.** It counted samples, but `perf record -F` gives
+each thread samples of different weight: the sound thread sleeps between bursts, and its samples
+stood for 0.94 M cycles each against the main thread's 2.08 M. So the inlined tables above
+(#1474, #1481) put the sound thread at about twice its share; the "by thread" and "by real
+function" numbers came from `perf report`, which weights by period, and stand. The script now
+weights every sample by its period (and checks out against `perf report --sort comm`), and takes
+`--comm NAME` for one thread's profile (`m2-sound`, or the executable's name for the main thread).
+
+### STF
+
+`perf stat` over 3,000 frames: **42.79 G instructions** (#1491: 47.84 G), 3.08 per cycle. The
+sound thread is **24.3%** of the process (31.4% at #1491): the DSP program is down from 9.9% to
+1.5%, skipped while quiet.
+
+By real function: `emu_slice_body` 31.4% (the i960), `game_render_draw_geo_list` 11.7%,
+`s24_draw_tilemap` 8.7%, `m68k_step_core` 7.5%, `render_frame` 5.2%, `scsp_slot_run_pcm` 4.8%,
+`mem_ea` 3.9%, `m68k_rw` 2.4%, `sound_run` 2.2%, `geo3d_emit_tri_uv` 1.8%, `coprogram_write_cb`
+1.5%, `scsp_dsp_prog_sfight_fvipers` 1.5%.
+
+By inlined function, weighted (% of the process):
+
+```
+ 13.77%  i960_step_core                 2.67%  hle_check_synced               1.57%  reg_write
+  6.57%  m68k_step_core                 2.62%  s24_draw_line                  1.47%  tile_compose_cpu
+  5.34%  s24_cell_load                  2.31%  emu_slice_body                 1.34%  reg_read
+  3.53%  mem_fetch2                     1.98%  geo3d_flat_depth               1.33%  scsp_pcm_wave
+  3.36%  memcpy                         1.97%  geo3d_board_luma               1.32%  geo3d_board_normal
+  3.20%  mem_ea                         1.66%  geo3d_emit_tri_uv              1.30%  m68k_direct
+  3.00%  scsp_pcm_run_eg
+```
+
+`memcpy` is the tile compositor's colour lines (1.9%) and `sharc_sincos` (0.3%). The sound thread
+by file: the 68000 52%, the SCSP 35% (the voices `scsp_pcm_run_eg` + `scsp_pcm_wave` 18%, the
+DSP 4%), `sound.h` glue 9%. So **the 68000 is now the sound thread's largest cost**, and its
+cost is the table dispatch (#1474).
+
+### Every game, by subsystem
+
+% of the process, inlined code charged to its own file. "i960" is the interpreter, the bus, the
+run loop, the timers and the hook check; "board timing" is `i960_timing.h`; "coprocessor" is the
+TGP (`tgp.h`, `tgpx4.h`) or the SHARC (`sharc_cpu.h`, `sharc_exec.h`, `cop.h`). Emu and tiles are
+the bench's ms a frame, flat out, under perf.
+
+| set | i960 | board timing | coprocessor | 3D | tiles | sound | emu ms | tiles ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| sfight | 39.7 | | 2.7 | 16.1 | 14.3 | 24.2 | 0.49 | 0.15 |
+| fvipers | 51.9 | | 1.5 | 10.9 | 17.4 | 14.7 | 0.99 | 0.32 |
+| vonj | 49.8 | | 14.3 (SHARC) | 6.4 | 15.1 | 10.8 | 2.43 | 0.54 |
+| doa | 31.8 | | 26.1 (SHARC) | 7.9 | 20.3 | 11.2 | 1.90 | 0.64 |
+| lastbrnx | 37.1 | | 33.4 (SHARC) | 8.9 | 9.1 | 8.6 | 2.52 | 0.29 |
+| hotd | 44.5 | | 18.5 (TGPx4) | 3.9 | 2.0 | 26.2 | 1.87 | 0.05 |
+| dynamcop | 49.9 | | 10.5 (TGP) | 5.3 | 1.2 | 27.3 | 1.79 | 0.03 |
+| motoraid | 44.2 | | 8.8 (TGP) | 9.1 | 10.4 | 22.7 | 1.69 | 0.32 |
+| vf2 | 31.3 | | 26.8 (TGP) | 5.9 | 21.1 | 12.7 | 1.76 | 0.62 |
+| daytona | 21.6 | 23.7 | 10.8 (TGP) | 6.7 | 21.4 | 12.9 | 1.64 | 0.59 |
+| srallyc | 35.5 | **39.4** | 9.4 (TGP) | 5.7 | 1.2 | 6.4 | 3.02 | 0.04 |
+| vcop | 29.8 | **33.6** | 5.1 (TGP) | 6.1 | 3.2 | 14.4 | 2.92 | 0.11 |
+
+(vcop's "sound" holds 7.2% of `z80.h`, which there is its I/O board's Z80, with `model1io.h` 5.4%
+beside it. The rest of each row is the zip load, `model2a.h` / `model2b_cop.h` glue and libc.)
+
+STF's emulation is the cheapest of the twelve by a factor of 2 to 6, and the reason is the next
+section.
+
+### 1. The idle loop: 42-88% of every other game's i960 instructions
+
+A per-address count of the i960's instructions (arc_bench `--profile`, widened to work RAM for
+Sega Rally; frames 1000-3000 of attract) puts most of every game's instructions on one short loop
+that waits for the frame:
+
+| set | i960 instructions a frame | the loop | its share |
+|---|---:|---|---:|
+| sfight | 117,605 | `0x11610`, `ldob 0x500000` + `cmpibe` (skipped, #294) | 68.2% |
+| fvipers | 131,945 | `0x118DC`, the same two words | 42.0% |
+| vf2 | 128,654 | `0x10F98`, the same two words | 48.5% |
+| daytona | 59,157 | `0x1394`, the same two words | 57.4% |
+| hotd | 167,034 | `0x18D4`, four: `ld 0x98000C`, mask, compare, `cmpibe` back | 88.2% |
+| dynamcop | 166,844 | `0x71194`, the same four | 86.7% |
+| motoraid | 144,256 | `0x30204`, the same four | 82.6% |
+| lastbrnx | 169,725 | `0x73F4`, the same four | 83.5% |
+| vcop | 121,137 | `0x9124`, the same four | 88.3% |
+| srallyc | 140,398 | `0x5A379C` in work RAM, five, the same `ld 0x98000C` | 84.4% |
+| doa | 167,620 | `0x27F0`, `ld 0x54B170`, `cmpibne` out, `addo`, `b` back (a counter) | 86.2% |
+| vonj | 252,345 | `0x28E2C`, five: a register-based `ld`, shift, mask, `be` back | 82.4% |
+
+0x98000C is the 2A/2B/2C video control word (MAME `videoctl_r`): six games share one library loop
+that polls it for the frame flip. Only STF hooks `m2_spin_skip` (`sfight.h`; homebrew finds its
+loops with `m2_spin_find`). With it, STF runs about 41,000 instructions a frame (`det_digest`:
+113.7 M iterations skipped in 3,000 frames); the others run all of theirs.
+
+**FV and VF2 are the same two words as STF, and the skip takes them as they are.** A scratch
+build of `arc_bench` and `det_digest` that called `m2_spin_find` after the profile's install
+(nothing else changed):
+
+| set | instructions, 3000 frames, `--sound` | emu ms a frame | `det_digest --cpu --sound`, 3000 frames |
+|---|---|---|---|
+| fvipers | 71.85 G → **48.84 G (−32%)** | 0.98 → 0.57 | identical, 94.4 M iterations skipped |
+| vf2 | 122.68 G → **98.52 G (−20%)** | 1.72 → 1.28 | identical, 99.1 M iterations skipped |
+
+That is the largest gain left on the board, and for those two it is a one-line install (or the
+loop's address in the profile, as STF has it). The others need more than that:
+
+- **Daytona, Sega Rally and Virtua Cop** set `i960_board_timing`, and `m2_spin_skip` declines
+  under it (a turn's cost there depends on the cache and the scoreboard, not the table). Steady in
+  its loop, the cache holds the loop and a turn costs the same each time, so a skip that charges
+  `k` turns of the model's cost is possible, but it is a new piece of exactness to prove.
+- **The `0x98000C` loop** (six games) reads a device, not work RAM. Skipping it needs the bit's
+  next flip on the cycle clock, which is where the board's frame edge already is (#253), so it is
+  the same kind of skip to the horizon, with a different matcher and value.
+- **DOA's** loop counts while it waits (`addo`): the skip would add `k` to the register too.
+  **Virtual-On's** reads through a register. Both are small matchers of their own.
+
+### 2. The board timing model costs more than the interpreter
+
+On the three games that set it, `i960_timing.h` (`i960_bt_charge`, `i960_bt_data`,
+`i960_bt_fetch`, `i960_bt_count`, `i960_bt_branch`) is 24-39% of the process, more than the
+interpreter itself (12-18%). It is per instruction, and 57-88% of those instructions are the idle
+loop above; a skip that works under it takes most of both.
+
+### 3. The SCSP in lockstep on HotD, Dynamite Cop and Motor Raid
+
+`det_digest --profile <set> --frames 1800` prints the chip's counters. On hotd, dynamcop and
+motoraid **55-61% of all samples are made in lockstep** (759,634, 802,661 and 839,235 of ~1.38 M,
+a full sync every ~1.7 samples; STF's scripted fight: 911 in 3.3 M), and the DSP is skipped on only
+17-19% of samples on dynamcop and motoraid (70% on hotd, 91% on STF). A throwaway count of why the chip was coupled: every lockstep sample was "a slot reads
+the DSP's delay line"; never FM, never noise. The slot is the same on each game:
+
+```
+slot 0  range [6E000,70004)  DSP ring [70000,80000)  SA 6E000 LSA 0 LEA 1FFF, 8-bit, forward loop
+```
+
+An 8 KB loop at 0x6E000-0x6FFFF, just below the ring. `scsp_slot_range` adds a margin of
+`2 * adv + 3` samples past the loop end, which takes the range 4 bytes into the ring. The voice
+never reads there: `scsp_pcm_run_eg` steps `cur` and `nxt` and wraps both at LEA before the next
+read, so in a forward loop that `scsp_slot_loop_bounded` accepts it reads no higher than
+`SA + LEA - 1` (the margin is for the pitch LFO and for positions left past LEA by a register write). A bound that is exact for a forward loop with no pitch LFO (the case here) would
+uncouple the chip on all three; the sound thread is 23-27% of those games. Not changed here.
+
+### 4. The coprocessors, the tiles and the rest
+
+- **The SHARC interpreter** (`shc_step`, `shc_pm_rd48`, `shc_op_immmod`, ...) is 26% of DOA and 33%
+  of Last Bronx, 14% of Virtual-On; the **TGP** 27% of VF2 and 11% of Daytona; the **TGPx4** 18.5%
+  of HotD. These run the real copro programs; no single op stands out.
+- **The interpreted SCSP DSP** (`scsp_dsp_step`, 2.6-8.4% on hotd, dynamcop, motoraid, vonj, vf2, doa):
+  only STF/FV's reverb program is compiled (`scsp_dsp_known.h`). Once #3 is fixed, more of it
+  will be skipped while quiet; what remains could be compiled the same way
+  (`tools/gen-scsp-dsp.py`).
+- **The CPU tile compositor** is 14-21% of the games with 2D layers (STF, FV, Daytona, VF2,
+  DOA, Virtual-On), `s24_cell_load`'s graphics read on top (5-11%): the cache-miss stall #1491
+  described. On the desktop the tiles go to the GPU.
+- **The 3D's per-face work** (`game_render_draw_geo_list`, 4-16%) and the 68000 (4-8%) are as
+  #1487 and #1474 left them.
+
+### What to take, in order
+
+1. Hook `m2_spin_skip` on FV and VF2 (their loop is STF's): −32% and −20% of the process,
+   proved frame-identical above. Then a matcher for the shared `0x98000C` loop (six games, 83-88%
+   of their i960 instructions), DOA's and Virtual-On's.
+2. Make the skip work under the board timing model (Daytona, Sega Rally, Virtua Cop: the model is
+   24-39% of the process, and most of it is spent on the idle loop).
+3. Tighten `scsp_slot_range` for a forward loop, so a voice ending just below the DSP ring does not
+   put the chip in lockstep (HotD, Dynamite Cop, Motor Raid).
+4. Compile the other games' DSP programs, once 3 shows how much of them still runs.
+
+### Taken, all four
+
+- **1 and 2: every game gets the idle skip** (`m2_spin_install`, `m2_spin.h`). The skip no longer
+  matches two fixed words: it decodes the loop and runs it three times on a copy of the registers,
+  so a counter (DOA's `addo`, the `0x98000C` loop's) is fine, and so is a load through a register
+  (Virtual-On). Sites are found by scanning the program ROM and work RAM, not listed per profile,
+  and work RAM is scanned again every 64 frames (Sega Rally unpacks its loop there, Pilot Kids
+  copies its own). Under the board timing model a copy of `i960_bt_t` runs along; from the second
+  iteration on it must come back to the same state at the same cost, so `k` iterations charge
+  the first one's cost and `k - 1` of the second's.
+- **3: `scsp_slot_range` gives a forward loop longer than a step no margin** (it reads no higher
+  than `max(LEA - 1, cur, nxt)`). The lockstep samples went from 1.55 M to 0 on HotD and Dynamite
+  Cop, and to 49 on Motor Raid, in 3,000 frames. `scsp_lazy_test` already reaches the case: the
+  bound made one sample too tight fails it on the 12th voice.
+- **4: eight more DSP programs compiled** (`tools/scsp-dsp-programs.txt`): HotD (= Dynamite Cop),
+  Motor Raid, VF2, Virtual-On (= von), DOA, Last Bronx, Air Walkers, Power Sled. After 3 the DSP
+  still ran on 56% of HotD's samples and 88% of Dynamite Cop's and Motor Raid's.
+  Sega Rally, Virtua Cop and Pilot Kids start no program in attract.
+
+Checks: `det_digest --cpu --sound` for 3,000 frames on 18 profiles with the skip on is identical,
+frame by frame, to `--spin-i960`. The old build and the new one with `--spin-i960` match too,
+so the timing model's refactor (`i960_bt_step`) changes nothing. With `--scsp-exact`, the old
+build and the new one match on 12 games for 3,000 frames. That holds 3 and 4 together; the
+quiet-DSP skip moves by its 1 LSB when the chip uncouples. `scsp_dsp_test` (both select kinds)
+and `scsp_lazy_test` pass. There is no `NETPLAY_PROTO_REV` bump: nothing the i960 can read
+changes, and the frames are proved identical to the interpreter's (#294 did not bump either).
+
+User-mode instructions, `det_digest <set> --frames 3000 --sound`, before (09f2fdf) and after:
+
+| set | before | after | | sound thread |
+|---|---:|---:|---:|---|
+| sfight | 64.3 G | 63.7 G | −1% | |
+| fvipers | 103.7 G | 81.0 G | −22% | |
+| vf2 | 117.3 G | 96.4 G | −18% | 18.9 → 12.1 G |
+| daytona | 137.7 G | 97.8 G | −29% | |
+| srallyc | 226.6 G | 84.1 G | **−63%** | |
+| vcop | 210.5 G | 94.7 G | **−55%** | |
+| hotd | 129.3 G | 86.4 G | −33% | 26.1 → 15.6 G |
+| dynamcop | 127.3 G | 79.1 G | −38% | 30.3 → 17.0 G |
+| motoraid | 122.4 G | 79.0 G | −35% | 28.0 → 15.1 G |
+| vonj | 137.3 G | 87.4 G | −36% | 18.7 → 10.8 G |
+| doa | 115.2 G | 87.0 G | −24% | 14.5 → 10.3 G |
+| lastbrnx | 129.8 G | 99.3 G | −24% | 12.4 → 12.5 G |
+| airwlkrs | 97.1 G | 51.1 G | −47% | |
+| powsled | 101.0 G | 53.1 G | −47% | |
+| pltkids | 138.5 G | 70.2 G | −49% | |
+
+STF was already skipped (#294). For Sega Rally and Virtua Cop the skip also takes most of the
+timing model's work.
+
+
 ## How to take one
 
 `perf` comes from `linux-tools-generic` (in the antigravity-dev image; `/usr/local/bin/perf`).
@@ -502,6 +724,7 @@ Then, from a scratch directory (never the ROM folder):
 ```bash
 perf record -F 2000 --call-graph fp -o attract.data -- $B/arc_bench $ROMS_DIR/sfight.zip --sound --frames 30000
 python3 tools/perf_inline.py attract.data $B/arc_bench --top 40          # by inlined function
+python3 tools/perf_inline.py attract.data $B/arc_bench --comm m2-sound   # one thread (the sound board)
 perf report -i attract.data --no-children --sort srcline --stdio -g none   # by source line
 # inclusive, through the inlining: a dwarf unwind (big: 170 MB for 12,000 frames at 500 Hz)
 perf record -F 500 --call-graph dwarf,16384 -o dwarf.data -- $B/arc_bench ... --frames 12000
