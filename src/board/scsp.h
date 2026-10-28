@@ -1103,45 +1103,31 @@ static inline int scsp_pcm_run_inside(const scsp_t *s, const scsp_slot_t *sl, ui
  * of the run only. Nothing reads it in between: a voice that reads the stack
  * (FM) couples the chip, which then runs a sample at a time, and the 68000's
  * read of 0x600 makes the chip catch up first (scsp_r16_catch_up). */
-static SCSP_FORCE_INLINE uint32_t scsp_pcm_run_eg(scsp_t *s, scsp_slot_t *sl, unsigned i, uint32_t k,
-                                                   uint32_t to, int pcm8, int release, int inside, int send) {
-    const int      sbctl = inside ? 0 : (int)SCSP_SBCTL(sl), lpctl = (int)SCSP_LPCTL(sl);
-    const int      stwinh = inside ? 0 : SCSP_STWINH(sl) != 0;
-    const uint32_t sa = SCSP_SA(sl), lsa = SCSP_LSA(sl), lea = SCSP_LEA(sl), step = sl->step;
-    const uint8_t *ram = s->ram;
-    const uint32_t ram_size = s->ram_size;
-    const int32_t  rr = sl->rr;
-    int32_t        vol = sl->vol, eg = scsp_eg_table[vol >> SCSP_EG_SHIFT];
-    uint32_t       cur = sl->cur, nxt = sl->nxt;
-    int            live = 1;
-    int32_t        buf[SCSP_OWED_MAX];
-    const uint32_t want = to - k;
-    uint32_t       n = 0;
-    while (n < want) {
-        int32_t sample = scsp_pcm_wave(s, ram, ram_size, sa, cur, nxt, pcm8, inside);
-        if (sbctl & 1) sample ^= 0x7FFF;
-        if (sbctl & 2) sample = (int16_t)(sample ^ 0x8000);
+/* SBCTL's sign and bit flips on a sample. */
+static SCSP_FORCE_INLINE int32_t scsp_pcm_sbctl(int32_t sample, int sbctl) {
+    if (sbctl & 1) sample ^= 0x7FFF;
+    if (sbctl & 2) sample = (int16_t)(sample ^ 0x8000);
+    return sample;
+}
 
-        cur += step;
-        nxt = cur + (1u << SCSP_SHIFT);
-        const uint32_t ad0 = cur >> SCSP_SHIFT, ad1 = nxt >> SCSP_SHIFT;
-        if (lpctl == 0) {                       /* scsp_pcm_loop; the stop waits for the end of the run */
-            if ((ad0 >= lsa && ad0 >= lea) || (ad1 >= lsa && ad1 >= lea)) live = 0;
-        } else {
-            if (ad0 >= lea) cur = (lsa << SCSP_SHIFT) + (cur - (lea << SCSP_SHIFT));
-            if (ad1 >= lea) nxt = (lsa << SCSP_SHIFT) + (nxt - (lea << SCSP_SHIFT));
-        }
+/* scsp_pcm_run_eg's step on: scsp_pcm_loop with the stop at the end of no
+ * loop left to the caller (0: the voice ends after this sample). */
+static SCSP_FORCE_INLINE int scsp_pcm_eg_step(uint32_t *cur, uint32_t *nxt, uint32_t step,
+                                              int lpctl, uint32_t lsa, uint32_t lea) {
+    *cur += step;
+    *nxt = *cur + (1u << SCSP_SHIFT);
+    const uint32_t ad0 = *cur >> SCSP_SHIFT, ad1 = *nxt >> SCSP_SHIFT;
+    if (lpctl == 0)                         /* scsp_pcm_loop; the stop waits for the end of the run */
+        return !((ad0 >= lsa && ad0 >= lea) || (ad1 >= lsa && ad1 >= lea));
+    if (ad0 >= lea) *cur = (lsa << SCSP_SHIFT) + (*cur - (lea << SCSP_SHIFT));
+    if (ad1 >= lea) *nxt = (lsa << SCSP_SHIFT) + (*nxt - (lea << SCSP_SHIFT));
+    return 1;
+}
 
-        if (release) {                          /* scsp_eg_update's SCSP_RELEASE */
-            vol -= rr;
-            if (vol <= 0) { vol = 0; live = 0; }
-            eg = scsp_eg_table[vol >> SCSP_EG_SHIFT];
-        }
-        buf[n++] = (int32_t)(((int64_t)sample * eg) >> SCSP_SHIFT);
-        if (!live) break;
-    }
-    sl->cur = cur; sl->nxt = nxt; sl->vol = vol;
-
+/* scsp_pcm_run_eg's mix: buf's n samples into the outputs from sample k on,
+ * the DSP's input with send, the sound stack's last two unless stwinh. */
+static SCSP_FORCE_INLINE void scsp_pcm_eg_mix(scsp_t *s, scsp_slot_t *sl, unsigned i, uint32_t k,
+                                              const int32_t *buf, uint32_t n, int send, int stwinh) {
     const int32_t gl = sl->g_dl, gr = sl->g_dr;
     int32_t *const acc_l = s->acc_l + k, *const acc_r = s->acc_r + k;
     for (uint32_t j = 0; j < n; j++) acc_l[j] += (buf[j] * gl) >> SCSP_SHIFT;
@@ -1159,9 +1145,68 @@ static SCSP_FORCE_INLINE uint32_t scsp_pcm_run_eg(scsp_t *s, scsp_slot_t *sl, un
         *((kl & 1u) ? sous1 : sous0) = (int16_t)((buf[n - 1] * gs) >> (SCSP_SHIFT + 1));
         if (n > 1) *((kl & 1u) ? sous0 : sous1) = (int16_t)((buf[n - 2] * gs) >> (SCSP_SHIFT + 1));
     }
+}
+
+static SCSP_FORCE_INLINE uint32_t scsp_pcm_run_eg(scsp_t *s, scsp_slot_t *sl, unsigned i, uint32_t k,
+                                                   uint32_t to, int pcm8, int release, int inside, int send) {
+    const int      sbctl = inside ? 0 : (int)SCSP_SBCTL(sl), lpctl = (int)SCSP_LPCTL(sl);
+    const int      stwinh = inside ? 0 : SCSP_STWINH(sl) != 0;
+    const uint32_t sa = SCSP_SA(sl), lsa = SCSP_LSA(sl), lea = SCSP_LEA(sl), step = sl->step;
+    const uint8_t *ram = s->ram;
+    const uint32_t ram_size = s->ram_size;
+    const int32_t  rr = sl->rr;
+    int32_t        vol = sl->vol, eg = scsp_eg_table[vol >> SCSP_EG_SHIFT];
+    uint32_t       cur = sl->cur, nxt = sl->nxt;
+    int            live = 1;
+    int32_t        buf[SCSP_OWED_MAX];
+    const uint32_t want = to - k;
+    uint32_t       n = 0;
+    while (n < want) {
+        int32_t sample = scsp_pcm_sbctl(scsp_pcm_wave(s, ram, ram_size, sa, cur, nxt, pcm8, inside), sbctl);
+        if (!scsp_pcm_eg_step(&cur, &nxt, step, lpctl, lsa, lea)) live = 0;
+        if (release) {                          /* scsp_eg_update's SCSP_RELEASE */
+            vol -= rr;
+            if (vol <= 0) { vol = 0; live = 0; }
+            eg = scsp_eg_table[vol >> SCSP_EG_SHIFT];
+        }
+        buf[n++] = (int32_t)(((int64_t)sample * eg) >> SCSP_SHIFT);
+        if (!live) break;
+    }
+    sl->cur = cur; sl->nxt = nxt; sl->vol = vol;
+    scsp_pcm_eg_mix(s, sl, i, k, buf, n, send, stwinh);
     k += n;
     if (!live) scsp_slot_stop(sl, 0);
     return k;
+}
+
+/* scsp_slot_run_pcm in one of the two envelopes scsp_pcm_run_eg is for: the
+ * run compiled for this pcm8, release, inside and send. */
+static SCSP_FORCE_INLINE uint32_t scsp_pcm_run_eg_any(scsp_t *s, scsp_slot_t *sl, unsigned i, uint32_t k,
+                                                       uint32_t to, int pcm8, int sbctl, int stwinh, int lpctl) {
+    const int release = sl->state == SCSP_RELEASE;
+    if (!sbctl && !stwinh && scsp_pcm_run_inside(s, sl, to - k, pcm8, lpctl)) {
+        if (!sl->g_mixs) {
+            if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 1, 0) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 1, 0);
+            return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 1, 0) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 1, 0);
+        }
+        if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 1, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 1, 1);
+        return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 1, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 1, 1);
+    }
+    if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 0, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 0, 1);
+    return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 0, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 0, 1);
+}
+
+/* A slot's gains, read once a run (in locals, so the outputs' stores cannot
+ * make the compiler read them again each sample). */
+typedef struct { int32_t gm, gl, gr, gs; unsigned isel; } scsp_pcm_gains_t;
+
+/* scsp_slot_run_pcm's sample k into the outputs and the sound stack. */
+static SCSP_FORCE_INLINE void scsp_pcm_mix_one(scsp_t *s, const scsp_pcm_gains_t g, unsigned i, uint32_t k,
+                                               int32_t sample, int stwinh) {
+    if (!stwinh) s->sous[((s->sous_ptr ^ ((k & 1u) << 5)) + i) & 63] = (int16_t)((sample * g.gs) >> (SCSP_SHIFT + 1));
+    s->acc_mixs[k][g.isel] += (sample * g.gm) >> (SCSP_SHIFT - 2);
+    s->acc_l[k] += (sample * g.gl) >> SCSP_SHIFT;
+    s->acc_r[k] += (sample * g.gr) >> SCSP_SHIFT;
 }
 
 /* The common voice run alone for a stretch: PCM out of sound RAM, played
@@ -1170,35 +1215,21 @@ static SCSP_FORCE_INLINE uint32_t scsp_pcm_run_eg(scsp_t *s, scsp_slot_t *sl, un
  * rather than every sample. Returns the sample it stopped before (the voice
  * ended, or `to`). */
 static uint32_t scsp_slot_run_pcm(scsp_t *s, scsp_slot_t *sl, unsigned i, uint32_t k, uint32_t to) {
-    const unsigned isel = SCSP_ISEL(sl);
-    const int32_t  gm = sl->g_mixs, gl = sl->g_dl, gr = sl->g_dr, gs = sl->g_sous;
     const int      pcm8 = SCSP_PCM8B(sl) != 0, sbctl = (int)SCSP_SBCTL(sl), lpctl = (int)SCSP_LPCTL(sl);
     const int      plfo = SCSP_PLFOS(sl) != 0, alfo = SCSP_ALFOS(sl) != 0, sdir = SCSP_SDIR(sl) != 0;
     const int      stwinh = SCSP_STWINH(sl) != 0, lpslnk = SCSP_LPSLNK(sl) != 0;
     const uint32_t sa = SCSP_SA(sl), lsa = SCSP_LSA(sl), lea = SCSP_LEA(sl), base_step = sl->step;
     const uint8_t *ram = s->ram;
     const uint32_t ram_size = s->ram_size;
+    const scsp_pcm_gains_t g = { sl->g_mixs, sl->g_dl, sl->g_dr, sl->g_sous, SCSP_ISEL(sl) };
     if (!plfo && !alfo && !sdir &&
-        (sl->state == SCSP_RELEASE || (sl->state == SCSP_DECAY2 && SCSP_D2R(sl) == 0))) {
-        const int release = sl->state == SCSP_RELEASE;
-        if (!sbctl && !stwinh && scsp_pcm_run_inside(s, sl, to - k, pcm8, lpctl)) {
-            if (!gm) {
-                if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 1, 0) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 1, 0);
-                return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 1, 0) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 1, 0);
-            }
-            if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 1, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 1, 1);
-            return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 1, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 1, 1);
-        }
-        if (pcm8) return release ? scsp_pcm_run_eg(s, sl, i, k, to, 1, 1, 0, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 1, 0, 0, 1);
-        return release ? scsp_pcm_run_eg(s, sl, i, k, to, 0, 1, 0, 1) : scsp_pcm_run_eg(s, sl, i, k, to, 0, 0, 0, 1);
-    }
+        (sl->state == SCSP_RELEASE || (sl->state == SCSP_DECAY2 && SCSP_D2R(sl) == 0)))
+        return scsp_pcm_run_eg_any(s, sl, i, k, to, pcm8, sbctl, stwinh, lpctl);
     uint32_t cur = sl->cur, nxt = sl->nxt;
     for (; k < to; k++) {
         uint32_t step = base_step;
         if (plfo) step = (uint32_t)(((int64_t)step * scsp_lfo_p(&sl->plfo)) >> SCSP_SHIFT);
-        int32_t sample = scsp_pcm_wave(s, ram, ram_size, sa, cur, nxt, pcm8, 0);
-        if (sbctl & 1) sample ^= 0x7FFF;
-        if (sbctl & 2) sample = (int16_t)(sample ^ 0x8000);
+        int32_t sample = scsp_pcm_sbctl(scsp_pcm_wave(s, ram, ram_size, sa, cur, nxt, pcm8, 0), sbctl);
 
         cur += step;
         nxt = cur + (1u << SCSP_SHIFT);
@@ -1206,10 +1237,7 @@ static uint32_t scsp_slot_run_pcm(scsp_t *s, scsp_slot_t *sl, unsigned i, uint32
         scsp_pcm_loop(sl, lpctl, &cur, &nxt, lsa, lea);
 
         if (!sdir) sample = scsp_slot_env(sl, alfo, sample);
-        if (!stwinh) s->sous[((s->sous_ptr ^ ((k & 1u) << 5)) + i) & 63] = (int16_t)((sample * gs) >> (SCSP_SHIFT + 1));
-        s->acc_mixs[k][isel] += (sample * gm) >> (SCSP_SHIFT - 2);
-        s->acc_l[k] += (sample * gl) >> SCSP_SHIFT;
-        s->acc_r[k] += (sample * gr) >> SCSP_SHIFT;
+        scsp_pcm_mix_one(s, g, i, k, sample, stwinh);
         if (!sl->active) { k++; break; }
     }
     sl->cur = cur; sl->nxt = nxt;
