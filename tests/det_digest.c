@@ -449,7 +449,7 @@ static void link_host_report(void) {
  * net/comm_role.h's, through the reset hook). */
 static void install_board(void *ctx) {
     (void)ctx;
-    g_active_profile->install_fn(&romset, &cpu, &bus);
+    m2_spin_install(&romset, &cpu, &bus);
     if (g_gems_i960 || g_gems_cop || g_gems_verify) gems_apply(profile_rom_set(g_active_profile));
     irqt_reset();
     if (g_active_profile->quirks.enable_68k_sound) {
