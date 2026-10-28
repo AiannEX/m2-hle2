@@ -359,24 +359,9 @@ def retransmits(side):
     return sum(1 for v in seen.values() if v > 1), sum(v - 1 for v in seen.values() if v > 1)
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('a')
-    ap.add_argument('b')
-    ap.add_argument('--timeline', type=int, default=80, help='timeline lines to print (0 = none, -1 = all)')
-    args = ap.parse_args()
-
-    A, B = read_side(args.a), read_side(args.b)
-    for s in (A, B):
-        decode(s)
-        s.name = '%s (%s)' % (s.path.replace('\\', '/').split('/')[-1], s.kind)
-    print('A: %s  %d datagrams, %d events, start %s' % (A.name, len(A.packets), len(A.events), A.start))
-    print('B: %s  %d datagrams, %d events, start %s' % (B.name, len(B.packets), len(B.events), B.start))
-    if not A.packets or not B.packets:
-        print('\nnothing to hold together: a side has no game datagrams (sys_net_dump at Trace? --net-ps3-wire?)')
-        return 1
-
-    # 1. Clocks
+def align_clocks(A, B):
+    """B's clock minus A's, then both sides cut to the stretch both logs cover.
+    Returns the offset, the overlap and the matches each way."""
     coarse = coarse_offset(A, B)
     ab, lost_ab, extra_b = match(A, B, None, coarse)
     ba, lost_ba, extra_a = match(B, A, None, -coarse)
@@ -396,11 +381,12 @@ def main():
     B.packets = [p for p in B.packets if lo <= p[0] - off <= hi]
     A.events = [e for e in A.events if lo - 30 <= e[0] <= hi + 30]
     B.events = [e for e in B.events if lo - 30 <= e[0] - off <= hi + 30]
-    ab, lost_ab, extra_b = match(A, B, None, off)
-    ba, lost_ba, extra_a = match(B, A, None, -off)
+    return off, lo, hi, match(A, B, None, off), match(B, A, None, -off)
+
+
+def print_clocks(A, B, off, ab, ba):
     d_ab = [rx - tx for tx, rx, _ in ab]
     d_ba = [rx - tx for tx, rx, _ in ba]
-    print("(audited: %.1f s of overlap, A's clock %.1f .. %.1f)" % (hi - lo, lo, hi))
     lat_ab = [d - off for d in d_ab]
     lat_ba = [d + off for d in d_ba]
     print('\n== 1. Clocks')
@@ -413,18 +399,23 @@ def main():
             print('  %s one-way: median %.1f ms, p95 %.1f ms, max %.1f ms'
                   % (name, 1000 * statistics.median(lat), 1000 * pct(lat, 0.95), 1000 * max(lat)))
 
-    # 2. Delivery
+
+def segment_names(segs):
+    return ', '.join('ch%s %s%s' % (ch, h['type'] if h else '?', (' ' + m['msg']) if m else '')
+                     for ch, h, m in segs)
+
+
+def print_delivery(A, B, to_b, to_a):
     print('\n== 2. Delivery')
-    for name, sent, pairs, lost, extra in (('A -> B', A, ab, lost_ab, extra_b), ('B -> A', B, ba, lost_ba, extra_a)):
+    for name, sent, (pairs, lost, extra) in (('A -> B', A, to_b), ('B -> A', B, to_a)):
         tx = sum(1 for p in sent.packets if p[1] == 'TX')
         print('  %s: %d sent, %d arrived, %d never arrived, %d arrived unexplained'
               % (name, tx, len(pairs), len(lost), len(extra)))
         for p in lost[:5]:
-            segs = ', '.join('ch%s %s%s' % (ch, h['type'] if h else '?', (' ' + m['msg']) if m else '')
-                             for ch, h, m in p[6])
-            print('      lost at %.3f: %s' % (p[0], segs))
+            print('      lost at %.3f: %s' % (p[0], segment_names(p[6])))
 
-    # 3. Shape
+
+def print_shape(A, B):
     print('\n== 3. What each side sends (channel, RUDP type, flags, message, bytes)')
     sa, sb = shape(A), shape(B)
     keys = sorted(set(sa) | set(sb), key=lambda k: tuple(str(x) for x in k))
@@ -433,7 +424,8 @@ def main():
         mark = '' if (sa[k] > 0) == (sb[k] > 0) else '   <-- only one side'
         print('  %-70s %8d %8d%s' % (' '.join(str(x) for x in k), sa[k], sb[k], mark))
 
-    # 4. Lockstep
+
+def print_lockstep(A, B):
     print('\n== 4. Lockstep: input frames sent')
     for name, side in (('A', A), ('B', B)):
         for r in lockstep(side):
@@ -446,31 +438,68 @@ def main():
                                          1000 * max(gaps) if gaps else 0,
                                          ' '.join('f%d:%d' % x for x in r['delays']) or 'none'))
 
-    # 5. Reliable channel
+
+def print_retransmits(A, B):
     print('\n== 5. Reliable channel 1')
     for name, side in (('A', A), ('B', B)):
         n, extra = retransmits(side)
         print('  %s: %d segments sent more than once (%d extra copies)' % (name, n, extra))
 
-    # 6. Timeline, on A's clock
+
+def packet_events(pk, tag, sh):
+    """A datagram's SYN/RST segments and its session messages, as timeline rows."""
+    ev = []
+    for ch, h, m in pk[6]:
+        if h and h['type'] in ('SYN', 'RST'):
+            ev.append((pk[0] - sh, tag, '%s ch%s %s%s' % (pk[1], ch, h['type'],
+                       ' ACK' if h['flags'] & 0x20 else '')))
+        if m and m['msg'] in ('SyncStart', 'RespSyncStart', 'UpdSetting'):
+            ev.append((pk[0] - sh, tag, '%s %s %s' % (pk[1], m['msg'],
+                       ' '.join('%s=%s' % (k, v) for k, v in m.items() if k not in ('msg', 'len')))))
+    return ev
+
+
+def print_timeline(A, B, off, limit):
+    """The timeline, on A's clock."""
+    ev = [(t, 'A', e) for t, e in A.events] + [(t - off, 'B', e) for t, e in B.events]
+    for side, tag, sh in ((A, 'A', 0.0), (B, 'B', off)):
+        for pk in side.packets:
+            ev += packet_events(pk, tag, sh)
+    ev.sort()
+    print('\n== 6. Timeline (A\'s clock, seconds)')
+    shown = ev if limit < 0 else ev[:limit]
+    for t, tag, e in shown:
+        print('  %10.3f %s %s' % (t, tag, e))
+    if len(shown) < len(ev):
+        print('  ... %d more (--timeline -1 for all)' % (len(ev) - len(shown)))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('a')
+    ap.add_argument('b')
+    ap.add_argument('--timeline', type=int, default=80, help='timeline lines to print (0 = none, -1 = all)')
+    args = ap.parse_args()
+
+    A, B = read_side(args.a), read_side(args.b)
+    for s in (A, B):
+        decode(s)
+        s.name = '%s (%s)' % (s.path.replace('\\', '/').split('/')[-1], s.kind)
+    print('A: %s  %d datagrams, %d events, start %s' % (A.name, len(A.packets), len(A.events), A.start))
+    print('B: %s  %d datagrams, %d events, start %s' % (B.name, len(B.packets), len(B.events), B.start))
+    if not A.packets or not B.packets:
+        print('\nnothing to hold together: a side has no game datagrams (sys_net_dump at Trace? --net-ps3-wire?)')
+        return 1
+
+    off, lo, hi, to_b, to_a = align_clocks(A, B)
+    print("(audited: %.1f s of overlap, A's clock %.1f .. %.1f)" % (hi - lo, lo, hi))
+    print_clocks(A, B, off, to_b[0], to_a[0])
+    print_delivery(A, B, to_b, to_a)
+    print_shape(A, B)
+    print_lockstep(A, B)
+    print_retransmits(A, B)
     if args.timeline:
-        ev = [(t, 'A', e) for t, e in A.events] + [(t - off, 'B', e) for t, e in B.events]
-        for side, tag, sh in ((A, 'A', 0.0), (B, 'B', off)):
-            for pk in side.packets:
-                for ch, h, m in pk[6]:
-                    if h and h['type'] in ('SYN', 'RST'):
-                        ev.append((pk[0] - sh, tag, '%s ch%s %s%s' % (pk[1], ch, h['type'],
-                                   ' ACK' if h['flags'] & 0x20 else '')))
-                    if m and m['msg'] in ('SyncStart', 'RespSyncStart', 'UpdSetting'):
-                        ev.append((pk[0] - sh, tag, '%s %s %s' % (pk[1], m['msg'],
-                                   ' '.join('%s=%s' % (k, v) for k, v in m.items() if k not in ('msg', 'len')))))
-        ev.sort()
-        print('\n== 6. Timeline (A\'s clock, seconds)')
-        shown = ev if args.timeline < 0 else ev[:args.timeline]
-        for t, tag, e in shown:
-            print('  %10.3f %s %s' % (t, tag, e))
-        if len(shown) < len(ev):
-            print('  ... %d more (--timeline -1 for all)' % (len(ev) - len(shown)))
+        print_timeline(A, B, off, args.timeline)
     return 0
 
 
