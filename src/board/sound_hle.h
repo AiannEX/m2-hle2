@@ -98,9 +98,9 @@ typedef struct {
      * capped at byte_60807C; a stray MIDI data byte is dropped, A{C,D,E} are
      * no-ops. */
     bool        eng_manx;
-    /* CRX_drv (Dynamite Cop, The House of the Dead, Motor Raid): another
-     * driver altogether, sound_hle_crx.h; the fields above are STF's. */
-    bool        crx;
+    /* CRX_drv: another driver altogether, sound_hle_crx.h (its builds,
+     * k_crx_builds: 1 Ver3.2.8, 2 Ver3.4.9); the fields above are STF's. */
+    uint8_t     crx;
 } shle_drv_t;
 
 #define SHLE_TABLES_STF   0x602106u, 0x602D9Eu, 0x603CFAu, 0x604B04u, 0x604FB4u, 0x605BE4u, 0x605CA4u, 0x605E24u, 0x601100u
@@ -121,7 +121,9 @@ static const shle_drv_t k_shle_drvs[] = {
     { "airwlkrs", 0x2D6DBD45u, SHLE_TABLES_DOA,   0x00, SHLE_QUEUE_512, true,  true,  false }, /* and Behind Enemy Lines */
     { "manxtt",   0xDC12ACD9u, SHLE_TABLES_MANX,  0x00, SHLE_QUEUE_512, true,  true,  true  },
     /* epr-19113 (Dynamite Cop): CRX_drv Ver3.2.8 */
-    { "dynamcop", 0xBCFE5C9Bu, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0, 0, 0, 0, false, false, false, false, true },
+    { "dynamcop", 0xBCFE5C9Bu, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0, 0, 0, 0, false, false, false, false, 1 },
+    /* epr-21276 (Pilot Kids, both sets): CRX_drv Ver3.4.9 */
+    { "pltkids",  0xE728311Au, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0, 0, 0, 0, false, false, false, false, 2 },
 };
 static const shle_drv_t *g_shle_drv = &k_shle_drvs[0];
 
@@ -223,6 +225,8 @@ typedef struct {
     uint64_t amask_from, amask_until;   /* the main loop has timer A masked: a MIDI event's tracks */
     uint64_t amask_win[20][2];   /* CRX: the windows a MIDI event's tracks mask levels 1-2 */
     uint32_t amask_n;
+    uint32_t amask_soft;     /* CRX 3.4.9: the windows (bits) that only set $C3E bit 4, not SR */
+    uint64_t b_busy_until;   /* CRX 3.4.9: timer B's handler, $C3E bit 1 set, runs till then */
     uint64_t refill_at;      /* CRX: a pass's refills began here, chunk by chunk... */
     uint32_t refill_n;       /* ...this many */
     uint32_t enq;            /* events queued (the handlers' length) */

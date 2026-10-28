@@ -1,9 +1,10 @@
 /*
  * sound_hle_crx.h — CRX_drv ("Ver3.2.8|96 10/28|CRX_drv|byHiroF"), the sound
- * driver of Dynamite Cop, The House of the Dead and Motor Raid, in C in place
- * of the 68000. sound_hle.h includes it and runs it when the program ROM's
- * code is this build's (shle_drv_t.crx); the chip, the MIDI FIFO and the
- * board's clock are sound_hle.h's.
+ * driver of Dynamite Cop, The House of the Dead and Motor Raid, and its
+ * Ver3.4.9 (97 8/26, Pilot Kids), in C in place of the 68000. sound_hle.h
+ * includes it and runs it when the program ROM's code is one of these builds
+ * (shle_drv_t.crx, k_crx_builds); the chip, the MIDI FIFO and the board's
+ * clock are sound_hle.h's.
  *
  * The driver's RAM, absolute (the 68000's a5 is the SCSP, not a base):
  *   0x300  eight sequences x 16 (0 the music, 1-7 effects)
@@ -81,13 +82,39 @@
 #define CRX_QMAX     0xEFAu
 #define CRX_MONO     0xEFBu
 
-/* the driver's own tables (this build's code) */
-#define CRX_T_TRYTONE 0x602E84u
-#define CRX_T_RATE    0x602F44u
-#define CRX_T_FREQ    0x6030C4u
-#define CRX_T_RELEASE 0x600E28u
+/* A build: where its code keeps its tables (the same bytes in both), and what
+ * 3.4.9 does otherwise (CRX_LATE):
+ *   - its main loop sets $C3E bit 4 round a note's tracks, where 3.2.8 sets SR
+ *     0x2200. Timer A finds $C3E set and counts the tick in $C1D, and its next
+ *     run takes the music's sequence once more for each, all at SR 0x2700;
+ *     timer B finds bit 4 (or its own bit 1) and skips its body (sub_6006A2);
+ *   - A0 00 01/02/03 stop their sequences in MIDI in, ahead of the queue;
+ *   - the fixes: the velocity curve's index doubled, drum group 0x7F (the same
+ *     note again takes its voice), a steal with all 32 voices on takes any of
+ *     them, CC 25 (the velocity curve), A0 02 clears the bends, and the sample
+ *     set's copy (move.l blocks, one 256-byte block too many). */
+typedef struct {
+    uint16_t ver;
+    uint32_t trytone, rate, freq, release, coef, init;
+    uint32_t lat_less;      /* its main loop takes an interrupt this much sooner than 3.2.8's */
+} crx_build_t;
+
+static const crx_build_t k_crx_builds[] = {
+    { 0 },
+    { 328, 0x602E84u, 0x602F44u, 0x6030C4u, 0x600E28u, 0x603244u, 0x603344u },
+    { 349, 0x60303Au, 0x6030FAu, 0x60327Au, 0x600ED2u, 0x6033FAu, 0x6034FAu, 4 },   /* pltkids 40-45 s:
+                                                 timer A every 12,707.9 on average against 12,711.8 */
+};
+#define CRX_B         (&k_crx_builds[g_shle_drv->crx])
+#define CRX_LATE      (CRX_B->ver >= 349)
+#define CRX_T_TRYTONE (CRX_B->trytone)
+#define CRX_T_RATE    (CRX_B->rate)
+#define CRX_T_FREQ    (CRX_B->freq)
+#define CRX_T_RELEASE (CRX_B->release)
 #define CRX_T_DSPWORD 0x600320u
-#define CRX_T_COEF    0x603244u
+#define CRX_T_COEF    (CRX_B->coef)
+#define CRX_C3E       0xC3Eu   /* the handlers' busy flags */
+#define CRX_LATE_A    0xC1Du   /* 3.4.9: timer A ticks the music still owes */
 
 /* Board time, clock periods. The handlers' lengths and the dispatch costs are medians from
  * hotd's board traces ($SND_TRACE at 50, 60 and 70 s, interrupts taken out); SCSP.md "CRX_drv"
@@ -117,6 +144,12 @@
 #define CRX_MASK_OFF     480u      /* a note-off read -> its track masked */
 #define CRX_COST_BYTE    22u       /* a move.b loop */
 #define CRX_COST_SWAP    11u       /* the swap's move.w loop, a byte */
+#define CRX_COST_SWAP_L  6u        /* ...3.4.9's move.l blocks */
+#define CRX_COST_DSP     410000u   /* sub_6021B2's fill of the 64 KB delay line, at SR 0x2200 (pltkids
+                                       * 10.3 s: 410,745 from sub_60216C in to rts; a scene per song) */
+#define CRX_DUR_A_PASS   300u      /* 3.4.9: the music's sequence once more for a tick it owed */
+#define CRX_A_MUSIC      400u      /* 3.4.9: timer A's handler at SR 0x2700, the music's first pass */
+#define CRX_DUR_B_SKIP   210u      /* 3.4.9: timer B in a note's window: the reload, $C3E, rte */
 #define CRX_PASS_SAMPLES 4u        /* the main loop over 32 idle records */
 /* EntryPoint: a delay loop, then the clear of sound RAM to 0x70000 (clr.l and
  * dbra, 7.5 clock periods a byte), then the init routines, whose fill of the
@@ -180,6 +213,12 @@ static void crx_enqueue(uint32_t l) {                  /* sub_602AB4 */
 static inline void crx_ctrl(uint8_t v) { sound_ctrl_w(&g_sound, v); }
 
 /* Int3, a MIDI byte: false for 0xFF, which restarts the driver */
+/* 3.4.9: A0 00 01/02/03 stop their sequences in MIDI in, ahead of the queue */
+static void crx_midi_stop(uint8_t b) {
+    if (b < 1 || b > 3) return;
+    for (uint32_t s = b == 3 ? 1 : 0; s < (b == 2 ? 1u : 8u); s++) shle_wb(CRX_SEQS + s * 0x10u, 0);
+}
+
 static bool crx_midi_byte(uint8_t b) {
     if (shle_rb(CRX_ECHO)) shle_sw8(0x407, b);
     if (b & 0x80) {
@@ -201,6 +240,7 @@ static bool crx_midi_byte(uint8_t b) {
                                                : (uint32_t)shle_rb(CRX_RS) << 24 | (uint32_t)b << 16;
         uint16_t w = shle_rw(CRX_QW);
         shle_wl(CRX_QUEUE + (w & 0x3FFu), ev);
+        if (CRX_LATE && (ev >> 16) == 0xA000u) crx_midi_stop(b);
         shle_ww(CRX_QW, w + 4u);
         crx_inc(CRX_QN, 1);
         uint8_t led = shle_rb(CRX_LED);
@@ -300,13 +340,14 @@ static bool crx_sample(uint16_t idx) {
     return shle_rb(CRX_SMPRAM) || crx_hb(0x7D);
 }
 
-static uint32_t crx_steal(void) {                      /* sub_600F88 */
+/* sub_600F88; `any` (3.4.9, all 32 voices on): a sample in ROM may take a voice that is not streaming */
+static uint32_t crx_steal(bool any) {
     uint8_t d1 = 0x20, d6 = 0x20, ram = shle_rb(CRX_SMPRAM);
     uint32_t a1 = 0, a3 = 0;
     g_shle.cost += CRX_COST_STEAL;
     for (uint32_t v = CRX_VOICES; v < CRX_VEND; v += 0x20) {
         uint8_t f = shle_rb(v + 2), o = shle_rb(v + 9);
-        if (!f || (!ram && !(f & 4))) continue;
+        if (!f || (!any && !ram && !(f & 4))) continue;
         if (o <= d1) { d1 = o; a1 = v; }
         if ((f & 0x20) && o <= d6) { d6 = o; a3 = v; }
     }
@@ -317,8 +358,8 @@ static uint32_t crx_steal(void) {                      /* sub_600F88 */
 
 static uint32_t crx_alloc(void) {                      /* sub_600F32 */
     if (!shle_rb(CRX_SMPRAM) && (int8_t)(shle_rb(CRX_SEFF) + shle_rb(CRX_SMUS)) >= (int8_t)crx_hb(0x7D))
-        return crx_steal();
-    if ((uint8_t)(shle_rb(CRX_NMUS) + shle_rb(CRX_NEFF)) == 0x20) return crx_steal();
+        return crx_steal(false);
+    if ((uint8_t)(shle_rb(CRX_NMUS) + shle_rb(CRX_NEFF)) == 0x20) return crx_steal(CRX_LATE);
     uint32_t a = shle_rl(CRX_NEXTV);
     for (int k = 0; k < 32; k++, a += 0x20) {
         if (a >= CRX_VEND) a = CRX_VOICES;
@@ -351,7 +392,7 @@ static uint32_t crx_pool(uint32_t t, uint32_t e) {     /* loc_600856 */
     uint8_t d3 = shle_rb(CRX_SMPRAM);
     if (!d3) {
         if ((int8_t)shle_rb(CRX_SEFF) >= (int8_t)crx_hb(0x7E)) return crx_scan(e, 0);
-        if ((int8_t)(shle_rb(CRX_SEFF) + shle_rb(CRX_SMUS)) >= (int8_t)crx_hb(0x7D)) return crx_steal();
+        if ((int8_t)(shle_rb(CRX_SEFF) + shle_rb(CRX_SMUS)) >= (int8_t)crx_hb(0x7D)) return crx_steal(false);
         d3 = 0x80;
     }
     if ((int8_t)crx_hb(0x7C) > (int8_t)shle_rb(CRX_NEFF)) return crx_alloc();
@@ -593,6 +634,14 @@ static uint32_t crx_drum_voice(uint32_t t, uint32_t e, uint8_t ch) {
     if (x & 0x80) {
         for (uint32_t v = CRX_VOICES; v < CRX_VEND; v += 0x20)
             if (shle_rb(v + 4) == ch && shle_rb(v + 7) == (x & 0x7F)) return 0;
+    } else if (x == 0x7F && CRX_LATE) {                 /* the same note again: its voice */
+        uint32_t from = CRX_VOICES + shle_rl(0xC10);
+        for (uint32_t v = from; v < from + 0x400u; v += 0x20)
+            if (shle_rb(v + 4) == ch && shle_rb(v + 7) == x && shle_rw(v + 0x10) == shle_rw(CRX_NOTE)) {
+                crx_free(v);
+                g_shle.cost += CRX_COST_FREE;
+                return v;
+            }
     } else if (x) {
         for (uint32_t v = CRX_VOICES; v < CRX_VEND; v += 0x20)
             if (shle_rb(v + 4) == ch && shle_rb(v + 7) == x) { crx_free(v); g_shle.cost += CRX_COST_FREE; return v; }
@@ -638,7 +687,7 @@ static void crx_note_split(uint32_t t, uint32_t a2, uint8_t note, uint8_t ch) { 
 static void crx_note_track(uint32_t t, uint8_t note, uint8_t b3, uint8_t ch) {      /* loc_60076C */
     if (!shle_rb(CRX_VELIN)) { crx_note_off_voices(t, ch, (uint16_t)(note | b3 << 8)); return; }
     uint32_t vt = shle_ml(CRX_P(0x28));
-    uint32_t a1 = vt + shle_mw(vt + 2u + shle_rb(t + 0xB));
+    uint32_t a1 = vt + shle_mw(vt + 2u + shle_rb(t + 0xB) * (CRX_LATE ? 2u : 1u));
     shle_wb(CRX_VEL, shle_mb(a1 + shle_rb(CRX_VELIN)));
     uint32_t ins = shle_ml(CRX_P(0x38));
     uint16_t off = shle_mw(ins + 2u + shle_rb(t + 2) * 2u);
@@ -648,9 +697,12 @@ static void crx_note_track(uint32_t t, uint8_t note, uint8_t b3, uint8_t ch) {  
     else crx_note_split(t, a2, note, ch);
 }
 
-/* The tracks run at SR 0x2200 one at a time (cost offsets; crx_dispatch makes them times) */
-static void crx_mask(uint32_t from, uint32_t until) {
+/* The tracks run at SR 0x2200 one at a time (cost offsets; crx_dispatch makes them times);
+ * `soft`: 3.4.9's $C3E bit 4 in its place */
+static void crx_mask(uint32_t from, uint32_t until, bool soft) {
     if (g_shle.amask_n < 20u) {
+        if (soft) g_shle.amask_soft |= 1u << g_shle.amask_n;
+        else      g_shle.amask_soft &= ~(1u << g_shle.amask_n);
         g_shle.amask_win[g_shle.amask_n][0] = from;
         g_shle.amask_win[g_shle.amask_n++][1] = until;
     }
@@ -667,7 +719,7 @@ static void crx_note_on(uint32_t p, uint8_t ch) {      /* sub_60072E */
         uint32_t from = g_shle.cost;
         g_shle.cost += CRX_COST_TRACK;
         crx_note_track(t, note, b3, ch);
-        crx_mask(from, g_shle.cost);
+        crx_mask(from, g_shle.cost, CRX_LATE);
     }
     g_shle.cost += CRX_COST_NOTE;
 }
@@ -676,7 +728,7 @@ static void crx_note_off(uint32_t p, uint8_t ch) {     /* sub_600FEA */
     uint32_t t = crx_first_track(ch);
     if (!t) return;
     crx_note_off_voices(t, ch, (uint16_t)(shle_rb(p) | shle_rb(p + 2) << 8));
-    crx_mask(CRX_MASK_OFF, g_shle.cost);
+    crx_mask(CRX_MASK_OFF, g_shle.cost, CRX_LATE);
 }
 
 static void crx_bend(uint32_t p, uint8_t ch) {         /* sub_601092 */
@@ -880,7 +932,8 @@ static void crx_cc_off(uint8_t ch) {                   /* 50 */
 }
 
 /* the controllers the driver knows, by kind */
-enum { CRX_CC_NONE, CRX_CC_01, CRX_CC_02, CRX_CC_VOL, CRX_CC_PAN, CRX_CC_FIELD, CRX_CC_ENTRY, CRX_CC_HOLD, CRX_CC_LFO, CRX_CC_OFF };
+enum { CRX_CC_NONE, CRX_CC_01, CRX_CC_02, CRX_CC_VOL, CRX_CC_PAN, CRX_CC_FIELD, CRX_CC_ENTRY, CRX_CC_HOLD, CRX_CC_LFO, CRX_CC_OFF,
+       CRX_CC_VELC };
 
 static uint8_t crx_cc_kind(uint8_t cc) {
     static const char k_kind[] =                        /* by controller number, 00-50 */
@@ -890,7 +943,15 @@ static uint8_t crx_cc_kind(uint8_t cc) {
         "6666606000000000"
         "7888888888888800"
         "9";
+    if (cc == 0x25 && CRX_LATE) return CRX_CC_VELC;
     return cc <= 0x50 ? (uint8_t)(k_kind[cc] - '0') : CRX_CC_NONE;
+}
+
+/* 25 (3.4.9, sub_6016B4): the tracks' velocity curve, one there is */
+static void crx_cc_velc(uint8_t ch, uint8_t d0) {
+    if ((int16_t)d0 > (int16_t)shle_mw(shle_ml(CRX_P(0x28)))) return;
+    for (uint32_t t = CRX_TRACKS; t < CRX_TEND; t += 0x20)
+        if (crx_track_on(t, ch)) shle_wb(t + 0xB, d0);
 }
 
 static void crx_cc(uint32_t p, uint8_t ch) {           /* sub_6011A8 */
@@ -908,6 +969,7 @@ static void crx_cc(uint32_t p, uint8_t ch) {           /* sub_6011A8 */
     case CRX_CC_HOLD:  crx_cc_hold(ch, d0); break;
     case CRX_CC_LFO:   crx_cc_lfo(ch, cc, d0); break;
     case CRX_CC_OFF:   crx_cc_off(ch); break;
+    case CRX_CC_VELC:  crx_cc_velc(ch, d0); break;
     default: break;
     }
 }
@@ -1056,17 +1118,26 @@ static void crx_dsp_decode(uint32_t a2) {
     }
 }
 
+/* an event's DSP clear: the main loop busy, levels 1-2 held off */
+static void crx_dsp_cost(void) {
+    uint32_t from = g_shle.cost;
+    g_shle.cost += CRX_COST_DSP;
+    g_shle.stall = true;
+    crx_mask(from, g_shle.cost, false);
+}
+
 static void crx_dsp_load(uint8_t d0) {                 /* loc_602184 */
     uint32_t a2 = shle_ml(CRX_P(0x18));
     if ((a2 & 0x80000000u) || (int16_t)d0 > (int16_t)shle_mw(a2)) return;
     uint16_t off = shle_mw(a2 + 2u + d0 * 2u);
+    crx_dsp_cost();
     crx_dsp_clear();
     shle_wb(CRX_DSPPROG, d0);
     crx_dsp_decode(a2 + off);
 }
 
 static void crx_dsp(uint8_t d0) {                      /* SoundCmd 08 */
-    if (d0 == 0x7F) { shle_wb(CRX_DSPPROG, 0xFF); crx_dsp_clear(); return; }
+    if (d0 == 0x7F) { shle_wb(CRX_DSPPROG, 0xFF); crx_dsp_cost(); crx_dsp_clear(); return; }
     if (d0 == shle_rb(CRX_DSPPROG)) return;
     crx_dsp_load(d0);
 }
@@ -1115,12 +1186,17 @@ static void crx_swap(uint8_t d0) {
         crx_inc(CRX_SWAPN, 1);
         shle_wl(e + 8, shle_rl(e + 8) - src + dst);
         uint32_t len = shle_rl(e + 4) & 0x7FFFFFFFu, words = (uint16_t)(len >> 1) + 1u;
-        shle_copy(dst, src, words * 2u);
-        g_shle.cost += words * 2u * CRX_COST_SWAP;
+        uint32_t n = words * 2u, per = CRX_COST_SWAP;
+        if (CRX_LATE) {                                 /* (len >> 8) + 1 blocks of 256, then the words */
+            n = ((uint16_t)(len >> 8) + 1u) * 256u + (((len & 0xFFu) >> 1) + 1u) * 2u;
+            per = CRX_COST_SWAP_L;
+        }
+        shle_copy(dst, src, n);
+        g_shle.cost += n * per;
         g_shle.stall = true;
         dst += len + (len & 1);
     }
-    crx_mask(from, g_shle.cost);
+    crx_mask(from, g_shle.cost, false);
 }
 
 /* sub_6023A6: a scene: volume, DSP program, EFSDL, sample set and tracks */
@@ -1185,6 +1261,7 @@ static void crx_stop_music(bool from_seq) {            /* A0 02 */
     if (!from_seq) crx_clear(CRX_SEQS, 0x10);
     for (uint32_t v = CRX_VOICES; v < CRX_VEND; v += 0x20)
         if (shle_rb(v + 2) && !(shle_rb(v + 9) & 0x80)) { crx_voice_unbend(v); crx_free(v); }
+    if (CRX_LATE) crx_clear(0xF80, 0x20);
     crx_tracks_unhold();
     crx_apply_volume(shle_rb(CRX_MVOL));
 }
@@ -1611,15 +1688,27 @@ static void crx_fade_in(void) {                         /* sub_602842 */
     crx_enqueue(0xA0010000u | (uint32_t)d0 << 8);
 }
 
-static void crx_timer_a_body(void) {                    /* Int2, sub_602766 */
-    if ((int8_t)shle_rb(CRX_QN) <= -4) return;
-    if (shle_rb(CRX_SEQS) & 0x80) {
-        if (shle_rb(CRX_FADEOUT)) crx_fade_out();
-        if (shle_rb(CRX_FADEIN)) crx_fade_in();
-        crx_seq_due(CRX_SEQS);
+/* Int2, sub_602766 (3.4.9: sub_6028FC). Returns the music's passes, 0 for a queue too full;
+ * *music the events those queued. */
+static unsigned crx_timer_a_body(uint32_t *music) {
+    uint8_t n = shle_rb(CRX_QN);
+    *music = 0;
+    if (CRX_LATE ? n >= 0xFC : (int8_t)n <= -4) return 0;
+    unsigned passes = 0;
+    for (;;) {
+        passes++;
+        if (shle_rb(CRX_SEQS) & 0x80) {
+            if (shle_rb(CRX_FADEOUT)) crx_fade_out();
+            if (shle_rb(CRX_FADEIN)) crx_fade_in();
+            crx_seq_due(CRX_SEQS);
+        }
+        if (!CRX_LATE || !shle_rb(CRX_LATE_A) || passes >= 256) break;
+        crx_inc(CRX_LATE_A, -1);
     }
+    *music = g_shle.enq;
     for (uint32_t s = CRX_SEQS + 0x10; s < CRX_SEQS + 0x80; s += 0x10)
         if (shle_rb(s) & 0x80) crx_seq_due(s);
+    return passes;
 }
 
 /* ---- the main loop: dispatch, streaming ------------------------------------------------------ */
@@ -1798,6 +1887,8 @@ static void crx_boot(uint64_t at) {
     g_shle.l2_free = 0;
     g_shle.a_ack = g_shle.a_busy_until = 0;
     g_shle.amask_n = 0;
+    g_shle.amask_soft = 0;
+    g_shle.b_busy_until = 0;
     g_shle.refill_at = 0;
     g_shle.refill_n = 0;
     g_shle.pass_left = CRX_PASS_SAMPLES;
@@ -1815,7 +1906,7 @@ static void crx_boot(uint64_t at) {
         g_shle.cost += n * CRX_COST_BYTE / 4u;
     }
     crx_boot_tracks();
-    shle_copy(0x2000, 0x603344u, 0x1000);               /* sub_600456 */
+    shle_copy(0x2000, CRX_B->init, 0x1000);             /* sub_600456 */
     uint32_t nins = (uint16_t)shle_ml(CRX_P(0x30)) + 1u;   /* sub_600492: the instruments */
     shle_copy(shle_ml(CRX_P(0x38)), shle_ml(CRX_P(0x2C)), nins);
     g_shle.cost += nins * CRX_COST_BYTE;
@@ -1869,13 +1960,24 @@ static void crx_pass(scsp_t *s, uint64_t now) {
 
 /* ---- the board's time ------------------------------------------------------------------------- */
 
-/* a timer's handler entered at e, its reload `reload_at` into it */
+static inline bool crx_in_window(uint32_t i, uint64_t e) {
+    return e >= g_shle.amask_win[i][0] && e < g_shle.amask_win[i][1];
+}
+
+/* a timer's handler entered at e, its reload `reload_at` into it; 3.4.9's windows hold no one off */
 static inline uint64_t crx_entry(uint64_t due) {
-    uint64_t e = shle_entry(due);
+    uint64_t e = shle_entry(due - (uint64_t)CRX_B->lat_less * SHLE_T16);
     if (crx_refill_wait(e) > e) e += CRX_CHUNK_IRQ;
     for (uint32_t i = 0; i < g_shle.amask_n; i++)
-        if (e >= g_shle.amask_win[i][0] && e < g_shle.amask_win[i][1]) return g_shle.amask_win[i][1];
+        if (!(g_shle.amask_soft >> i & 1) && crx_in_window(i, e)) return g_shle.amask_win[i][1];
     return e;
+}
+
+/* 3.4.9: the main loop is inside a note's tracks at e, $C3E bit 4 set */
+static bool crx_soft_at(uint64_t e) {
+    for (uint32_t i = 0; i < g_shle.amask_n; i++)
+        if ((g_shle.amask_soft >> i & 1) && crx_in_window(i, e)) return true;
+    return false;
 }
 
 /* a handler at e holds up the main loop and the windows still ahead of it */
@@ -1891,6 +1993,7 @@ static void crx_suspend(uint64_t e, uint32_t dur) {
             g_shle.amask_win[i][1] += dur;          /* MIDI (level 3) went in: the mask lasts longer */
         }
     if (e < g_shle.a_busy_until) g_shle.a_busy_until += dur;   /* ...and so does an A it went into */
+    if (e < g_shle.b_busy_until) g_shle.b_busy_until += dur;   /* ...or 3.4.9's B */
 }
 
 /* Timer A's handler at e, dur long, holds off levels 1-2 till its first event goes in the
@@ -1939,6 +2042,28 @@ static bool crx_events_midi(uint64_t now) {
     return true;
 }
 
+/* 3.4.9's timer A (sub_6028FC) at e: $C3E set (a note's tracks, B, another A) only counts the
+ * tick in $C1D; else the music runs at SR 0x2700 once and once more for each tick it owed, then
+ * the effects open to the other levels. */
+static bool crx_timer_a_late(uint64_t e, uint64_t now) {
+    uint32_t dur, music = 0;
+    unsigned passes = 0;
+    bool held = crx_soft_at(e) || e < g_shle.a_busy_until || e < g_shle.b_busy_until;
+    if (held) {
+        crx_inc(CRX_LATE_A, 1);
+        dur = CRX_DUR_A_NESTED;
+    } else {
+        passes = crx_timer_a_body(&music);
+        dur = CRX_DUR_A + (passes > 1 ? passes - 1 : 0) * CRX_DUR_A_PASS + g_shle.enq * CRX_DUR_EVENT;
+    }
+    crx_suspend(e, dur);
+    uint64_t end = e + (passes ? CRX_A_MUSIC + (passes - 1) * CRX_DUR_A_PASS + music * CRX_DUR_EVENT : dur);
+    if (g_shle.l2_free < end) g_shle.l2_free = end;
+    if (!held) g_shle.a_busy_until = e + dur;
+    crx_dispatch(now);
+    return true;
+}
+
 static bool crx_events_timer(uint64_t now) {
     uint64_t ea = crx_entry(g_shle.due_a), eb = crx_entry(g_shle.due_b);
     bool a = ea <= eb;                                  /* A is level 2, B level 1 (SCILV) */
@@ -1949,12 +2074,16 @@ static bool crx_events_timer(uint64_t now) {
     if (a) {
         uint16_t w = crx_hb(0x6A) << 8 | crx_hb(0x6B);
         g_shle.due_a = (e + CRX_RELOAD_AT_A + shle_period((uint8_t)w, (w >> 8) & 7)) * SHLE_T16;
+        if (CRX_LATE) return crx_timer_a_late(e, now);
         bool nested = e < g_shle.a_busy_until;          /* the sequencers miss this tick */
-        if (!nested) crx_timer_a_body();
+        uint32_t music;
+        if (!nested) crx_timer_a_body(&music);
         dur = nested ? CRX_DUR_A_NESTED : CRX_DUR_A + g_shle.enq * CRX_DUR_EVENT;
     } else {
         g_shle.due_b = (e + CRX_RELOAD_AT_B + shle_period(0xC6, 3)) * SHLE_T16;
-        dur = CRX_DUR_B + crx_timer_b_body() * CRX_COST_FREE;
+        if (CRX_LATE && crx_soft_at(e)) dur = CRX_DUR_B_SKIP;      /* 3.4.9: $C3E & 0x12, the body skipped */
+        else dur = CRX_DUR_B + crx_timer_b_body() * CRX_COST_FREE;
+        if (CRX_LATE) g_shle.b_busy_until = e + dur;
     }
     crx_suspend(e, dur);
     if (a) crx_a_level(e, dur);

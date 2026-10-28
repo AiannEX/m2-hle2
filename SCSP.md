@@ -443,16 +443,52 @@ before #1799's chunk wait):
 
 | set | within 30 ms | median / p95 | drift |
 |---|---|---|---|
-| dynamcop | 100.0% | -1.1 / 10.2 (-1.2 / 10.6) | within 13 ms |
-| motoraid | 99.9% | +0.3 / 8.2 (-2.1 / 17.2) | -8 ms at 56 s (-18), +8 at 88 s (+5) |
-| hotd | 100.0% (91.2%) | +0.3 / 10.9 (-2.5 / 23.0) | +4 at 56 s, -12 ms at 78 s (-24), back by 84 s |
-| hotdp | 100.0% (93.4%) | +4.4 / 8.2 (-2.1 / 15.3) | +9 at 38 s (+8), -10 ms at 80 s (-15) |
+| dynamcop | 100.0% | -0.4 / 10.5 (-1.1 / 10.2) | within 12 ms |
+| motoraid | 99.9% | -0.1 / 8.3 (+0.3 / 8.2) | -8 ms at 56 s, +9 at 88 s (+8) |
+| hotd | 100.0% (91.2%) | +2.7 / 10.0 (+0.3 / 10.9) | +7 at 42 s (+3), -10 ms at 78 s (-12), back by 84 s |
+| hotdp | 100.0% (93.4%) | +4.0 / 8.1 (+4.4 / 8.2) | +9 at 38 s, -10 ms at 80 s |
+| pltkids (3.4.9) | 100.0% | -4.0 / 4.7 | flat, -4 ms from 10 s to 88 s |
+
+(Brackets: before #1802's DSP clear and 3.4.9.) hotd's last -12 ms at 78 s was looked at
+again in #1802 and is not one cost. The chunk copy's interrupt masking measured on the board
+(69 clocks) is real but takes hotdp to +6.5 and motoraid's end out; 15 fits only as a fit; the
+rest points at `CRX_LOOP_LAT`, which holds the drift best as it is.
 
 hotdp (the prototype, its own sndpgm0.31) runs the same code as hotd with
 other songs, so it is a second hotd to grade on.
 
+### CRX_drv Ver3.4.9: Pilot Kids (Pinboard #1802)
+
+Pilot Kids' epr-21276 (both sets) is "CRX_drv Ver3.4.9" (`k_crx_builds`,
+`crx` = 2 in its `shle_drv_t`). Aligned against 3.2.8 it has the same RAM
+layout and byte-identical tables, moved (the build's table addresses); what is
+new:
+
+- *Soft masks.* The note-on tracks and the note-off set `$C3E` bit 4 where 3.2.8
+  set SR 0x2200, so A and B are entered as usual: B skips its body
+  (`$C3E & 0x12`, 210 clocks), and A only counts the tick in `$C1D` and goes back.
+  The next A that runs plays the music's sequence once more for each tick it owes
+  (at SR 0x2700, ~300 clocks a pass), so 3.4.9 loses no ticks (pltkids 40-45 s:
+  187 held of 4442, all paid back). `amask_soft`, `crx_timer_a_late`.
+- MIDI in clears A0 00 01/02/03's sequences at once; the velocity curve's index is
+  doubled; drum group 0x7F gives the same note back its voice; a steal with all 32
+  on takes any voice; CC 0x25 sets the tracks' velocity curve; A0 02 clears the
+  bends; the sample swap copies `move.l` blocks (one 256-byte block too many), still
+  at SR 0x2200.
+- Its main loop takes an interrupt sooner: timer A's interval is 12,707.9 clocks
+  on average on the board against the C's 12,711.8, 0.3 ms/s of drift. The build
+  takes 4 off the entry (`lat_less`).
+
+A scene with a DSP program (and A0 01, which reloads it) clears the DSP and fills
+the 64 KB delay line at SR 0x2200 (sub_6021B2): 410,745 clocks, 36 ms with A and B
+held off. Pilot Kids changes scene with each song, so its music started 64 ms early
+in C until the clear was charged (`CRX_COST_DSP`); it is the same code in 3.2.8,
+where the games clear once at boot (dynamcop also at 43 and 71 s).
+
+CRX 3.1.1 (Last Bronx) and 3.0.6 (Power Sled) are older builds still on the 68000.
+
 The i960 cannot tell: det_digest is frame for frame the 68000's on all seven
-sets and hotdp (`--sound-hle`, 1200-1800 frames). The sound board costs 39% less in
+sets, hotdp and pltkids (`--sound-hle`, 1200-1800 frames). The sound board costs 39% less in
 hotd (90 s replay: 3.19 s of CPU on the 68000, 1.95 s in C) and 43% less in
 dynamcop (3.13 to 1.79).
 
