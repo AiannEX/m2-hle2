@@ -251,28 +251,9 @@ static inline void pkt_lockstep_receive(pkt_lockstep_t *p, const void *buf, size
     }
 }
 
-/* May the board run? `local` is this player's input word (netplay.h's layout,
- * NP_BIT_*); on READY, *w0 / *w1 are the two players' words for this frame. */
-static inline pkt_step_t pkt_lockstep_begin_frame(pkt_lockstep_t *p, uint32_t local, uint64_t now_ms,
-                                                  uint32_t *w0, uint32_t *w1) {
-    switch (p->state) {
-        case PKT_OFF:
-        case PKT_ENDED:
-        case PKT_WAIT_PEER:   /* nobody to wait for yet: play on until the barrier's reset */
-            return PKT_STEP_OFF;
-        case PKT_SYNCING:
-            if (!lockstep_barrier_released(&p->ls)) return PKT_STEP_WAIT;
-            p->state = PKT_PLAYING;
-            p->reset_pending = true;
-            break;
-        case PKT_PLAYING:
-            break;
-    }
-    if (p->reset_pending) {
-        p->reset_pending = false;
-        return PKT_STEP_RESET;
-    }
-
+/* This player's input for the frame frame_delay ahead, sent once; the
+ * session's first frames go out neutral before it. */
+static inline void pkt_lockstep_send_input(pkt_lockstep_t *p, uint32_t local) {
     /* Service and test belong to the cabinet: only player 0 may send them. */
     if (p->local_player != 0) local &= 0x3FFu;
     uint32_t send_frame = p->frame + p->ls.frame_delay;
@@ -297,7 +278,31 @@ static inline pkt_step_t pkt_lockstep_begin_frame(pkt_lockstep_t *p, uint32_t lo
         lockstep_submit_local(&p->ls, send_frame, local, &pkt.record);
         p->send(&pkt, sizeof pkt, p->send_ud);
     }
+}
 
+/* May the board run? `local` is this player's input word (netplay.h's layout,
+ * NP_BIT_*); on READY, *w0 / *w1 are the two players' words for this frame. */
+static inline pkt_step_t pkt_lockstep_begin_frame(pkt_lockstep_t *p, uint32_t local, uint64_t now_ms,
+                                                  uint32_t *w0, uint32_t *w1) {
+    switch (p->state) {
+        case PKT_OFF:
+        case PKT_ENDED:
+        case PKT_WAIT_PEER:   /* nobody to wait for yet: play on until the barrier's reset */
+            return PKT_STEP_OFF;
+        case PKT_SYNCING:
+            if (!lockstep_barrier_released(&p->ls)) return PKT_STEP_WAIT;
+            p->state = PKT_PLAYING;
+            p->reset_pending = true;
+            break;
+        case PKT_PLAYING:
+            break;
+    }
+    if (p->reset_pending) {
+        p->reset_pending = false;
+        return PKT_STEP_RESET;
+    }
+
+    pkt_lockstep_send_input(p, local);
     if (!lockstep_ready(&p->ls, p->frame)) {
         if (p->stall_since_ms == 0) {
             p->stall_since_ms = now_ms;

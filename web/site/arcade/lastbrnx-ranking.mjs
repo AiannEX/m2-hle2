@@ -95,7 +95,14 @@ export function parseEntry(bytes, table = 0) {
   const character = NAME_HEX.indexOf(bytesToHex(bytes.subarray(8, 16)));
   const initials = String.fromCharCode(bytes[4], bytes[5], bytes[6]);
   if (character < 0 || !INITIAL.test(initials)) return null;
-  const value = u32(bytes, 0), hex = bytesToHex(bytes);
+  return entryValue(u32(bytes, 0), table, { initials, character, hex: bytesToHex(bytes) });
+}
+
+/* An entry's first word in table `table`: a time, or a survival table's score
+ * (its own character's only), sorted as a time after every real one. Null if
+ * it is out of range. */
+function entryValue(value, table, e) {
+  const { initials, character, hex } = e;
   if (table >= SURVIVAL_TABLE) {
     if (character !== table - SURVIVAL_TABLE || value === 0 || value > MAX_SCORE) return null;
     return { time: SCORE_KEY + MAX_SCORE - value, score: value, initials, character, hex };

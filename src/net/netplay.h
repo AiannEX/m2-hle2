@@ -3205,101 +3205,118 @@ static inline void netplay_pump_deferred_room(void) {
     netplay_take_room(&g_netplay.room_cmd);
 }
 
+/* A named account: a refusal is an answer, not a cue to open a browser. */
+static inline void netplay_cmd_connect(const netplay_cmd_t *cmd) {
+    g_netplay.twitch_wanted      = false;
+    g_netplay.twitch_tried_owner = false;
+    g_netplay.password_other     = false;
+    netplay_do_connect(&cmd->cfg);
+}
+
+static inline void netplay_cmd_search(const netplay_cmd_t *cmd) {
+    rpcn_int_attrs_t want;
+    if (cmd->cfg.filter)
+        netplay_rules_ints(&cmd->cfg.want, g_netplay.ps3, true, cmd->cfg.country, &want);
+    rpcn_session_search(&g_netplay.session, cmd->cfg.browse_yamp, cmd->cfg.filter ? &want : NULL);
+}
+
+static inline void netplay_cmd_force_start(void) {
+    if (netplay_is_host()) g_netplay.force_start = true;
+    else netplay_log("only the room's owner can start a match early");
+}
+
+/* With RPCS3's key, as RPCS3 makes one: the account then signs in there with
+ * the same password. */
+static inline void netplay_cmd_create_account(const netplay_cmd_t *cmd) {
+    rpcn_account_create(&g_netplay.account, cmd->cfg.server, cmd->cfg.port,
+                        netplay_pin_for(cmd->cfg.server, cmd->cfg.fingerprint),
+                        cmd->cfg.npid,
+                        netplay_password_has_other(cmd->cfg.password)
+                            ? netplay_password_key(cmd->cfg.password) : cmd->cfg.password,
+                        cmd->cfg.email);
+}
+
+static inline void netplay_cmd_twitch_start(netplay_cmd_t *cmd) {
+    /* Already signed in? Then this is a login, not a trip to twitch.tv. Before
+     * the server below is overwritten: the stored one is what the token is
+     * compared against. */
+    if (netplay_twitch_reuse(&cmd->cfg)) return;
+    /* Remember the server the flow is being run against: the token it yields
+     * is only good on that one. */
+    snprintf(g_netplay.cfg.server, sizeof(g_netplay.cfg.server), "%s", cmd->cfg.server);
+    g_netplay.cfg.port = cmd->cfg.port;
+    snprintf(g_netplay.cfg.fingerprint, sizeof(g_netplay.cfg.fingerprint), "%s",
+             cmd->cfg.fingerprint);
+    if (rpcn_twitch_begin(&g_netplay.twitch, cmd->cfg.server, cmd->cfg.port,
+                          cmd->cfg.fingerprint))
+        netplay_log("Twitch: asking %s for a device code", cmd->cfg.server);
+    else
+        netplay_log("Twitch: %s", g_netplay.twitch.error);
+}
+
+static inline void netplay_cmd_twitch_forget(void) {
+    g_netplay.cfg.twitch_token[0]  = '\0';
+    g_netplay.cfg.twitch_npid[0]   = '\0';
+    g_netplay.cfg.twitch_server[0] = '\0';
+    rpcn_twitch_reset(&g_netplay.twitch);
+    netplay_settings_save();
+    netplay_log("forgot the stored Twitch login");
+}
+
+/* The Twitch login token and a remembered password alike: a lobby's "Sign
+ * out" is how a player changes account or server, and on a shared machine it
+ * has to mean it. */
+static inline void netplay_cmd_sign_out(void) {
+    netplay_do_disconnect();
+    netplay_settings_backup();
+    g_netplay.cfg.twitch_token[0]  = '\0';
+    g_netplay.cfg.twitch_npid[0]   = '\0';
+    g_netplay.cfg.twitch_server[0] = '\0';
+    g_netplay.cfg.password[0]      = '\0';
+    g_netplay.cfg.token[0]         = '\0';
+    rpcn_twitch_reset(&g_netplay.twitch);
+    netplay_settings_save();
+    netplay_log("signed out");
+}
+
+/* One command from the UI thread, a case each. */
+static inline void netplay_do_cmd(netplay_cmd_t *cmd) {
+    switch (cmd->kind) {
+        case NETPLAY_CMD_CONNECT:     netplay_cmd_connect(cmd); break;
+        case NETPLAY_CMD_DISCONNECT:  netplay_do_disconnect(); break;
+        case NETPLAY_CMD_HOST:
+        case NETPLAY_CMD_JOIN:        netplay_room_or_defer(cmd); break;
+        case NETPLAY_CMD_SEARCH:      netplay_cmd_search(cmd); break;
+        case NETPLAY_CMD_START:       netplay_do_start(); break;
+        case NETPLAY_CMD_STOP:        netplay_do_stop(); break;
+        case NETPLAY_CMD_ENTRY:       netplay_do_entry(cmd->cfg.entry); break;
+        case NETPLAY_CMD_WATCH:       netplay_do_watch(cmd->cfg.watch_only); break;
+        case NETPLAY_CMD_FORCE_START: netplay_cmd_force_start(); break;
+        case NETPLAY_CMD_LEAVE_ROOM:  netplay_do_leave_room(); break;
+        case NETPLAY_CMD_CREATE_ACCOUNT: netplay_cmd_create_account(cmd); break;
+        case NETPLAY_CMD_RESEND_TOKEN:
+            rpcn_account_resend(&g_netplay.account, cmd->cfg.server, cmd->cfg.port,
+                                netplay_pin_for(cmd->cfg.server, cmd->cfg.fingerprint),
+                                cmd->cfg.npid, netplay_password_pick(cmd->cfg.password));
+            break;
+        case NETPLAY_CMD_TWITCH_START:  netplay_cmd_twitch_start(cmd); break;
+        case NETPLAY_CMD_TWITCH_CANCEL:
+            rpcn_twitch_reset(&g_netplay.twitch);
+            netplay_log("Twitch sign-in cancelled");
+            break;
+        case NETPLAY_CMD_TWITCH_FORGET: netplay_cmd_twitch_forget(); break;
+        case NETPLAY_CMD_SIGN_OUT:      netplay_cmd_sign_out(); break;
+        default: break;
+    }
+}
+
 /* True when it took a command. */
 static inline bool netplay_pump_commands(void) {
     netplay_cmd_t cmd;
     bool took = false;
     while (netplay_take_cmd(&cmd)) {
         took = true;
-        switch (cmd.kind) {
-            case NETPLAY_CMD_CONNECT:
-                /* A named account: a refusal is an answer, not a cue to open a
-                 * browser. */
-                g_netplay.twitch_wanted      = false;
-                g_netplay.twitch_tried_owner = false;
-                g_netplay.password_other     = false;
-                netplay_do_connect(&cmd.cfg);
-                break;
-            case NETPLAY_CMD_DISCONNECT: netplay_do_disconnect(); break;
-            case NETPLAY_CMD_HOST:
-            case NETPLAY_CMD_JOIN:       netplay_room_or_defer(&cmd); break;
-            case NETPLAY_CMD_SEARCH: {
-                rpcn_int_attrs_t want;
-                if (cmd.cfg.filter)
-                    netplay_rules_ints(&cmd.cfg.want, g_netplay.ps3, true, cmd.cfg.country, &want);
-                rpcn_session_search(&g_netplay.session, cmd.cfg.browse_yamp, cmd.cfg.filter ? &want : NULL);
-                break;
-            }
-            case NETPLAY_CMD_START:      netplay_do_start(); break;
-            case NETPLAY_CMD_STOP:       netplay_do_stop(); break;
-            case NETPLAY_CMD_ENTRY:      netplay_do_entry(cmd.cfg.entry); break;
-            case NETPLAY_CMD_WATCH:      netplay_do_watch(cmd.cfg.watch_only); break;
-            case NETPLAY_CMD_FORCE_START:
-                if (netplay_is_host()) g_netplay.force_start = true;
-                else netplay_log("only the room's owner can start a match early");
-                break;
-            case NETPLAY_CMD_LEAVE_ROOM: netplay_do_leave_room(); break;
-            /* With RPCS3's key, as RPCS3 makes one: the account then signs in
-             * there with the same password. */
-            case NETPLAY_CMD_CREATE_ACCOUNT:
-                rpcn_account_create(&g_netplay.account, cmd.cfg.server, cmd.cfg.port,
-                                    netplay_pin_for(cmd.cfg.server, cmd.cfg.fingerprint),
-                                    cmd.cfg.npid,
-                                    netplay_password_has_other(cmd.cfg.password)
-                                        ? netplay_password_key(cmd.cfg.password) : cmd.cfg.password,
-                                    cmd.cfg.email);
-                break;
-            case NETPLAY_CMD_RESEND_TOKEN:
-                rpcn_account_resend(&g_netplay.account, cmd.cfg.server, cmd.cfg.port,
-                                    netplay_pin_for(cmd.cfg.server, cmd.cfg.fingerprint),
-                                    cmd.cfg.npid, netplay_password_pick(cmd.cfg.password));
-                break;
-            case NETPLAY_CMD_TWITCH_START:
-                /* Already signed in? Then this is a login, not a trip to
-                 * twitch.tv. Before the server below is overwritten: the stored
-                 * one is what the token is compared against. */
-                if (netplay_twitch_reuse(&cmd.cfg)) break;
-                /* Remember the server the flow is being run against: the token it
-                 * yields is only good on that one. */
-                snprintf(g_netplay.cfg.server, sizeof(g_netplay.cfg.server), "%s", cmd.cfg.server);
-                g_netplay.cfg.port = cmd.cfg.port;
-                snprintf(g_netplay.cfg.fingerprint, sizeof(g_netplay.cfg.fingerprint), "%s",
-                         cmd.cfg.fingerprint);
-                if (rpcn_twitch_begin(&g_netplay.twitch, cmd.cfg.server, cmd.cfg.port,
-                                      cmd.cfg.fingerprint))
-                    netplay_log("Twitch: asking %s for a device code", cmd.cfg.server);
-                else
-                    netplay_log("Twitch: %s", g_netplay.twitch.error);
-                break;
-            case NETPLAY_CMD_TWITCH_CANCEL:
-                rpcn_twitch_reset(&g_netplay.twitch);
-                netplay_log("Twitch sign-in cancelled");
-                break;
-            case NETPLAY_CMD_TWITCH_FORGET:
-                g_netplay.cfg.twitch_token[0]  = '\0';
-                g_netplay.cfg.twitch_npid[0]   = '\0';
-                g_netplay.cfg.twitch_server[0] = '\0';
-                rpcn_twitch_reset(&g_netplay.twitch);
-                netplay_settings_save();
-                netplay_log("forgot the stored Twitch login");
-                break;
-            case NETPLAY_CMD_SIGN_OUT:
-                /* The Twitch login token and a remembered password alike: a
-                 * lobby's "Sign out" is how a player changes account or server,
-                 * and on a shared machine it has to mean it. */
-                netplay_do_disconnect();
-                netplay_settings_backup();
-                g_netplay.cfg.twitch_token[0]  = '\0';
-                g_netplay.cfg.twitch_npid[0]   = '\0';
-                g_netplay.cfg.twitch_server[0] = '\0';
-                g_netplay.cfg.password[0]      = '\0';
-                g_netplay.cfg.token[0]         = '\0';
-                rpcn_twitch_reset(&g_netplay.twitch);
-                netplay_settings_save();
-                netplay_log("signed out");
-                break;
-            default: break;
-        }
+        netplay_do_cmd(&cmd);
     }
     return took;
 }

@@ -82,97 +82,129 @@ public class M2emuControls extends GhidraScript {
 
     static String text(Instruction i) { return i.toString().replace(", ", ","); }
 
+    Address insert;
+    PrintWriter w;
+    Map<Long, String> classOf = new LinkedHashMap<>();
+    int fi = 0, gi = 0;
+
+    static void storeStack(Matcher m, Map<String, Long> regs, Map<Long, Long> stack) {
+        Long v = val(m.group(3), regs);
+        long off = Long.decode(m.group(2));
+        int size = m.group(1).equals("byte") ? 1 : m.group(1).equals("word") ? 2 : 4;
+        for (int b = 0; b < size; b++) {
+            if (v == null) stack.remove(off + b); else stack.put(off + b, (v >> (8 * b)) & 0xff);
+        }
+    }
+
+    boolean callsInsert(String t, Instruction i) {
+        return t.startsWith("CALL ") && i.getFlows().length > 0 && i.getFlows()[0].equals(insert);
+    }
+
+    /* One list entry, built on the stack at [ESI] before the insert call. */
+    String entryRow(Map<Long, Long> stack, Map<String, Long> lea) throws Exception {
+        long base = lea.getOrDefault("ESI", -1L);
+        long word = rd(stack, base, 2), key = rd(stack, base + 4, 4);
+        long type = rd(stack, base + 8, 1), name = rd(stack, base + 12, 4);
+        return String.format("{\"port\": %d, \"mask\": %d, \"key\": %d, \"type\": %d, \"name\": %s}",
+            word & 0xff, word >> 8, key, type, js(cstr(name)));
+    }
+
+    /* A constructor's entries, in call order; its stores to globals go in abs. */
+    List<String> layoutRows(Function f, Map<Long, Long> abs) throws Exception {
+        Map<String, Long> regs = new HashMap<>();
+        Map<Long, Long> stack = new HashMap<>();
+        Map<String, Long> lea = new HashMap<>();
+        List<String> rows = new ArrayList<>();
+        for (Instruction i : currentProgram.getListing().getInstructions(f.getBody(), true)) {
+            String t = text(i);
+            Matcher m;
+            if ((m = STACK.matcher(t)).matches()) {
+                storeStack(m, regs, stack);
+            } else if ((m = ABS.matcher(t)).matches()) {
+                Long v = val(m.group(2), regs);
+                if (v != null) abs.put(Long.decode(m.group(1)), v);
+            } else if ((m = LEA.matcher(t)).matches()) {
+                lea.put(m.group(1), Long.decode(m.group(2)));
+            } else if (callsInsert(t, i)) {
+                rows.add(entryRow(stack, lea));
+                regs.remove("EAX"); regs.remove("ECX"); regs.remove("EDX");
+            } else {
+                if (!trackRegs(t, regs)) lea.remove(t.split("[ ,]").length > 1 ? t.split("[ ,]")[1] : "");
+            }
+        }
+        return rows;
+    }
+
+    boolean isVftable(Symbol s) { return s != null && s.getName().equals("vftable"); }
+
+    void layout(Function f) throws Exception {
+        Map<Long, Long> abs = new LinkedHashMap<>();
+        List<String> rows = layoutRows(f, abs);
+        /* The object: the first global given a vftable here; its class, the last vftable's RTTI namespace. */
+        long obj = -1; String cls = null;
+        for (Map.Entry<Long, Long> e : abs.entrySet()) {
+            Symbol s = getSymbolAt(toAddr(e.getValue()));
+            if (!isVftable(s)) continue;
+            if (obj < 0) obj = e.getKey();
+            if (e.getKey() == obj) cls = s.getParentNamespace().getName();
+        }
+        classOf.put(obj, cls);
+        w.printf("%s\"0x%x\": {\"ctor\": \"0x%x\", \"class\": %s, \"entries\": [%n  %s]}%n", fi++ > 0 ? "," : "",
+            obj, f.getEntryPoint().getOffset(), js(cls), String.join(",\n  ", rows));
+    }
+
+    /* Descriptors given a layout object at + 0x14 in f; every store to a global goes in abs. */
+    List<Long> gameStores(Function f, Map<Long, Long> abs) {
+        Map<String, Long> regs = new HashMap<>();
+        List<Long> descs = new ArrayList<>();
+        for (Instruction i : currentProgram.getListing().getInstructions(f.getBody(), true)) {
+            String t = text(i);
+            Matcher m = ABS.matcher(t);
+            if (!m.matches()) {
+                trackRegs(t, regs);
+                continue;
+            }
+            Long v = val(m.group(2), regs);
+            long a = Long.decode(m.group(1));
+            if (v == null) { abs.remove(a); continue; }
+            abs.put(a, v);
+            if (classOf.containsKey(v)) descs.add(a - 0x14);
+        }
+        return descs;
+    }
+
+    void games(Function f) throws Exception {
+        Map<Long, Long> abs = new HashMap<>();
+        for (long d : gameStores(f, abs)) {
+            String name = cstr(abs.getOrDefault(d + 4, 0L));
+            if (name == null) continue;
+            w.printf("%s{\"name\": %s, \"title\": %s, \"descriptor\": \"0x%x\", \"list\": \"0x%x\", \"class\": %s}%n",
+                gi++ > 0 ? "," : "", js(name), js(cstr(abs.getOrDefault(d + 0x10, 0L))), d,
+                abs.get(d + 0x14), js(classOf.get(abs.get(d + 0x14))));
+        }
+    }
+
     @Override
     public void run() throws Exception {
         String out = getScriptArgs()[0];
-        Address insert = toAddr(LIST_INSERT);
+        insert = toAddr(LIST_INSERT);
         TreeSet<Function> ctors = new TreeSet<>(Comparator.comparing(Function::getEntryPoint));
         for (Reference r : getReferencesTo(insert)) {
             Function f = getFunctionContaining(r.getFromAddress());
             if (f != null && r.getReferenceType().isCall()) ctors.add(f);
         }
-        PrintWriter w = new PrintWriter(new OutputStreamWriter(new FileOutputStream(out), "UTF-8"));
+        w = new PrintWriter(new OutputStreamWriter(new FileOutputStream(out), "UTF-8"));
         w.println("{\"lists\": {");
-        Map<Long, String> classOf = new LinkedHashMap<>();
-        int fi = 0;
-        for (Function f : ctors) {
-            Map<String, Long> regs = new HashMap<>();
-            Map<Long, Long> stack = new HashMap<>();
-            Map<String, Long> lea = new HashMap<>();
-            Map<Long, Long> abs = new LinkedHashMap<>();
-            List<String> rows = new ArrayList<>();
-            for (Instruction i : currentProgram.getListing().getInstructions(f.getBody(), true)) {
-                String t = text(i);
-                Matcher m;
-                if ((m = STACK.matcher(t)).matches()) {
-                    Long v = val(m.group(3), regs);
-                    long off = Long.decode(m.group(2));
-                    int size = m.group(1).equals("byte") ? 1 : m.group(1).equals("word") ? 2 : 4;
-                    for (int b = 0; b < size; b++) {
-                        if (v == null) stack.remove(off + b); else stack.put(off + b, (v >> (8 * b)) & 0xff);
-                    }
-                } else if ((m = ABS.matcher(t)).matches()) {
-                    Long v = val(m.group(2), regs);
-                    if (v != null) abs.put(Long.decode(m.group(1)), v);
-                } else if ((m = LEA.matcher(t)).matches()) {
-                    lea.put(m.group(1), Long.decode(m.group(2)));
-                } else if (t.startsWith("CALL ") && i.getFlows().length > 0 && i.getFlows()[0].equals(insert)) {
-                    long base = lea.getOrDefault("ESI", -1L);
-                    long word = rd(stack, base, 2), key = rd(stack, base + 4, 4);
-                    long type = rd(stack, base + 8, 1), name = rd(stack, base + 12, 4);
-                    rows.add(String.format("{\"port\": %d, \"mask\": %d, \"key\": %d, \"type\": %d, \"name\": %s}",
-                        word & 0xff, word >> 8, key, type, js(cstr(name))));
-                    regs.remove("EAX"); regs.remove("ECX"); regs.remove("EDX");
-                } else {
-                    if (!trackRegs(t, regs)) lea.remove(t.split("[ ,]").length > 1 ? t.split("[ ,]")[1] : "");
-                }
-            }
-            /* The object: the first global given a vftable here; its class, the last vftable's RTTI namespace. */
-            long obj = -1; String cls = null;
-            for (Map.Entry<Long, Long> e : abs.entrySet()) {
-                Symbol s = getSymbolAt(toAddr(e.getValue()));
-                if (s == null || !s.getName().equals("vftable")) continue;
-                if (obj < 0) obj = e.getKey();
-                if (e.getKey() == obj) cls = s.getParentNamespace().getName();
-            }
-            classOf.put(obj, cls);
-            w.printf("%s\"0x%x\": {\"ctor\": \"0x%x\", \"class\": %s, \"entries\": [%n  %s]}%n", fi++ > 0 ? "," : "",
-                obj, f.getEntryPoint().getOffset(), js(cls), String.join(",\n  ", rows));
-        }
+        for (Function f : ctors) layout(f);
         w.println("}, \"games\": [");
         /* Games: a store of a layout object at descriptor + 0x14. */
-        int gi = 0;
         TreeSet<Function> regFns = new TreeSet<>(Comparator.comparing(Function::getEntryPoint));
         for (long obj : classOf.keySet())
             for (Reference r : getReferencesTo(toAddr(obj))) {
                 Function f = getFunctionContaining(r.getFromAddress());
                 if (f != null && !ctors.contains(f)) regFns.add(f);
             }
-        for (Function f : regFns) {
-            Map<String, Long> regs = new HashMap<>();
-            Map<Long, Long> abs = new HashMap<>();
-            List<Long> descs = new ArrayList<>();
-            for (Instruction i : currentProgram.getListing().getInstructions(f.getBody(), true)) {
-                String t = text(i);
-                Matcher m;
-                if ((m = ABS.matcher(t)).matches()) {
-                    Long v = val(m.group(2), regs);
-                    long a = Long.decode(m.group(1));
-                    if (v == null) { abs.remove(a); continue; }
-                    abs.put(a, v);
-                    if (classOf.containsKey(v)) descs.add(a - 0x14);
-                } else {
-                    trackRegs(t, regs);
-                }
-            }
-            for (long d : descs) {
-                String name = cstr(abs.getOrDefault(d + 4, 0L));
-                if (name == null) continue;
-                w.printf("%s{\"name\": %s, \"title\": %s, \"descriptor\": \"0x%x\", \"list\": \"0x%x\", \"class\": %s}%n",
-                    gi++ > 0 ? "," : "", js(name), js(cstr(abs.getOrDefault(d + 0x10, 0L))), d,
-                    abs.get(d + 0x14), js(classOf.get(abs.get(d + 0x14))));
-            }
-        }
+        for (Function f : regFns) games(f);
         w.println("]}");
         w.close();
         println("M2emuControls: " + ctors.size() + " layouts, " + gi + " games -> " + out);
