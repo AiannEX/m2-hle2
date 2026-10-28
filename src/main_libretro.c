@@ -537,7 +537,7 @@ static void lr_attach_sound(void) {
  * and what a netplay barrier repeats on both machines (main_web.c
  * web_install_board). With no slice in progress -- there is one thread. */
 static void lr_install_board(void) {
-    g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    m2_spin_install(&state.romset, &state.cpu, &state.bus);
     link_check_reset();   /* a MASTER alone on the link: asked again for the new set */
     irqt_reset();
     if (g_sound_on) lr_attach_sound();

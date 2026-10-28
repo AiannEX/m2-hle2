@@ -12,7 +12,8 @@
  * So this profile runs any program on the set with none of them: no hooks,
  * interrupts through the program's own interrupt table (irq_vectors), and no
  * frame hook (board_vblank: the run loop marks its frames at the vblank). Its
- * idle loops are found in the program at install (m2_spin_find). It is not
+ * idle loops are found in the program at install, as every game's are
+ * (m2_spin_install). It is not
  * picked by the set's name; profile_for_program picks it when the program's interrupt table does
  * not name the handlers STF's profile does. `--profile sfight_homebrew` picks
  * it outright.
@@ -33,13 +34,12 @@
 
 static const game_profile_t sfight_homebrew_profile;
 
-/* STF's boot, then the program's own idle loops (m2_spin_find): the profile
- * names no addresses, so the vblank waits are found in the program. */
+/* STF's boot and the comm board. */
 static inline void sfight_homebrew_install(const romset_t *rs, i960_cpu_t *cpu, memory_bus_t *bus) {
     sfight_install(rs, cpu, bus);
     m2comm_install(bus, 0x1C0u);
     savestate_extra("sfight_homebrew", "M2COMM", &g_m2comm, sizeof g_m2comm);
-    if (rs->loaded) m2_spin_find(bus, (uint32_t)rs->maincpu_size, &sfight_homebrew_profile);
+
 }
 
 /* A linked cabinet's role, where Fighters Megamix's board build reads it at

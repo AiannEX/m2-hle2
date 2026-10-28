@@ -644,6 +644,57 @@ uncouple the chip on all three; the sound thread is 23-27% of those games. Not c
    put the chip in lockstep (HotD, Dynamite Cop, Motor Raid).
 4. Compile the other games' DSP programs, once 3 shows how much of them still runs.
 
+### Taken, all four
+
+- **1 and 2: every game gets the idle skip** (`m2_spin_install`, `m2_spin.h`). The skip no longer
+  matches two fixed words: it decodes the loop and runs it three times on a copy of the registers,
+  so a counter (DOA's `addo`, the `0x98000C` loop's) is fine, and so is a load through a register
+  (Virtual-On). Sites are found by scanning the program ROM and work RAM, not listed per profile,
+  and work RAM is scanned again every 64 frames (Sega Rally unpacks its loop there, Pilot Kids
+  copies its own). Under the board timing model a copy of `i960_bt_t` runs along; from the second
+  iteration on it must come back to the same state at the same cost, so `k` iterations charge
+  the first one's cost and `k - 1` of the second's.
+- **3: `scsp_slot_range` gives a forward loop longer than a step no margin** (it reads no higher
+  than `max(LEA - 1, cur, nxt)`). The lockstep samples went from 1.55 M to 0 on HotD and Dynamite
+  Cop, and to 49 on Motor Raid, in 3,000 frames. `scsp_lazy_test` already reaches the case: the
+  bound made one sample too tight fails it on the 12th voice.
+- **4: eight more DSP programs compiled** (`tools/scsp-dsp-programs.txt`): HotD (= Dynamite Cop),
+  Motor Raid, VF2, Virtual-On (= von), DOA, Last Bronx, Air Walkers, Power Sled. After 3 the DSP
+  still ran on 56% of HotD's samples and 88% of Dynamite Cop's and Motor Raid's.
+  Sega Rally, Virtua Cop and Pilot Kids start no program in attract.
+
+Checks: `det_digest --cpu --sound` for 3,000 frames on 18 profiles with the skip on is identical,
+frame by frame, to `--spin-i960`. The old build and the new one with `--spin-i960` match too,
+so the timing model's refactor (`i960_bt_step`) changes nothing. With `--scsp-exact`, the old
+build and the new one match on 12 games for 3,000 frames. That holds 3 and 4 together; the
+quiet-DSP skip moves by its 1 LSB when the chip uncouples. `scsp_dsp_test` (both select kinds)
+and `scsp_lazy_test` pass. There is no `NETPLAY_PROTO_REV` bump: nothing the i960 can read
+changes, and the frames are proved identical to the interpreter's (#294 did not bump either).
+
+User-mode instructions, `det_digest <set> --frames 3000 --sound`, before (09f2fdf) and after:
+
+| set | before | after | | sound thread |
+|---|---:|---:|---:|---|
+| sfight | 64.3 G | 63.7 G | −1% | |
+| fvipers | 103.7 G | 81.0 G | −22% | |
+| vf2 | 117.3 G | 96.4 G | −18% | 18.9 → 12.1 G |
+| daytona | 137.7 G | 97.8 G | −29% | |
+| srallyc | 226.6 G | 84.1 G | **−63%** | |
+| vcop | 210.5 G | 94.7 G | **−55%** | |
+| hotd | 129.3 G | 86.4 G | −33% | 26.1 → 15.6 G |
+| dynamcop | 127.3 G | 79.1 G | −38% | 30.3 → 17.0 G |
+| motoraid | 122.4 G | 79.0 G | −35% | 28.0 → 15.1 G |
+| vonj | 137.3 G | 87.4 G | −36% | 18.7 → 10.8 G |
+| doa | 115.2 G | 87.0 G | −24% | 14.5 → 10.3 G |
+| lastbrnx | 129.8 G | 99.3 G | −24% | 12.4 → 12.5 G |
+| airwlkrs | 97.1 G | 51.1 G | −47% | |
+| powsled | 101.0 G | 53.1 G | −47% | |
+| pltkids | 138.5 G | 70.2 G | −49% | |
+
+STF was already skipped (#294). For Sega Rally and Virtua Cop the skip also takes most of the
+timing model's work.
+
+
 ## How to take one
 
 `perf` comes from `linux-tools-generic` (in the antigravity-dev image; `/usr/local/bin/perf`).
