@@ -99,8 +99,10 @@ static bool sent(int dev, const uint8_t *b, size_t n) {
 }
 #define SENT(dev, ...) sent(dev, (const uint8_t[]){ __VA_ARGS__ }, sizeof((const uint8_t[]){ __VA_ARGS__ }))
 
-int main(void) {
-    ffb_out_t none = { 0 };
+/* The forces the tests send, shared by the groups. */
+static ffb_out_t none, race;
+
+static void test_switch(void) {
     lg4ff_update(&none, false);
     CHECK(g_inits == 1 && g_nw == 1 && SENT(0, 0xF8, 0x10), "a G25 in compat mode: f8 10, and nothing else");
     CHECK(g_open[0] == 0 && g_open[1] == 0, "...closed again");
@@ -115,9 +117,11 @@ int main(void) {
     lg4ff_update(&none, false);
     CHECK(g_open[1] == 1, "back as C299: the G25 opens");
     CHECK(g_nw == 1 && SENT(1, 0xF8, 0x81, 0x0E, 0x01), "...its range 270, and no force");
+}
 
+static void test_forces(void) {
     g_nw = 0;
-    ffb_out_t race = { .push = 0x7FFF, .spring = 0x4000, .damper = 0x2000 };
+    race = (ffb_out_t){ .push = 0x7FFF, .spring = 0x4000, .damper = 0x2000 };
     lg4ff_update(&race, false);
     CHECK(SENT(1, 0x11, 0x08, 0xFF, 0x80), "a push: the constant force");
     CHECK(SENT(1, 0xF5) && SENT(1, 0xFE, 0x0D, 0x04, 0x04, 0x60) && SENT(1, 0x14), "the centring: the wheel's spring");
@@ -143,7 +147,9 @@ int main(void) {
     CHECK(SENT(1, 0x43) && SENT(1, 0xFE, 0x0D, 0x03, 0x03, 0x47) && g_nw == 4, "the centring back: the slot stopped, the spring on");
     ffb_out_t kick = { .push = 0x7FFF };
     lg4ff_update(&kick, false);
+}
 
+static void test_let_go(void) {
     g_nw = 0;
     lg4ff_update(&race, true);
     CHECK(SENT(1, 0x13, 0x00) && g_nw == 1, "SDL has the haptic: ours let go");
@@ -155,7 +161,9 @@ int main(void) {
     g_nw = 0;
     lg4ff_release();
     CHECK(SENT(1, 0x13, 0x00) && SENT(1, 0xF5) && SENT(1, 0x83), "the focus lost: everything let go");
+}
 
+static void test_reopen(void) {
     g_fail_writes = true;
     lg4ff_update(&race, false);
     CHECK(g_open[1] == 0, "a failed write closes the wheel");
@@ -174,12 +182,16 @@ int main(void) {
     g_lg4ff_on = false;
     lg4ff_update(&race, false);
     CHECK(g_nw == 0 && g_inits == 1, "--g25 off: nothing");
+}
 
+static void test_options(void) {
     CHECK(lg4ff_option("--g25-range", "1080") && g_lg4ff_range == 900, "--g25-range 1080 is 900");
     CHECK(lg4ff_option("--g25-range", "0") && g_lg4ff_range == 0, "--g25-range 0 leaves it");
     CHECK(lg4ff_option("--g25", "on") && g_lg4ff_on && !lg4ff_option("--g26", "on"), "--g25 on");
+}
 
-    /* A G29 in its PS4 mode. */
+/* A G29 in its PS4 mode. */
+static void test_g29(void) {
     COMPAT = "\\\\?\\hid#vid_046d&pid_c260#7&22&0&0000#{4d1e55b2}";
     NATIVE = "\\\\?\\hid#vid_046d&pid_c24f#7&23&0&0000#{4d1e55b2}";
     g_compat_pid = 0xC260, g_native_pid = 0xC24F, g_rev = 0x8900;
@@ -196,6 +208,15 @@ int main(void) {
     lg4ff_update(&none, false);
     CHECK(g_open[1] == 1 && g_nw == 1 && SENT(1, 0xF8, 0x81, 0x0E, 0x01), "back as C24F: the G29 opens, range 270");
     lg4ff_shutdown();
+}
+
+int main(void) {
+    test_switch();
+    test_forces();
+    test_let_go();
+    test_reopen();
+    test_options();
+    test_g29();
 
     printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED", g_fail, g_fail == 1 ? "" : "s");
     return g_fail ? 1 : 0;
