@@ -39,6 +39,22 @@ static z80_state_t run(const uint8_t *code, size_t n, uint16_t stop) {
     return z;
 }
 
+/* The text a BDOS call at 5 prints: function 2 a character, 9 a $-ended string. */
+static size_t bdos_text(const z80_state_t *z, char *buf, size_t size) {
+    uint8_t fn = (uint8_t)z->bc;
+    size_t k = 0;
+    if (fn == 2) buf[k++] = (char)(uint8_t)z->de;
+    else if (fn == 9) for (uint16_t a = z->de; mem[a] != '$' && k < size; a++) buf[k++] = (char)mem[a];
+    return k;
+}
+
+/* A finished line of ZEX output: a test's line ("....") is an OK or a failure. */
+static void zex_line(const char *line, int *oks, int *bad) {
+    if (!strstr(line, "....")) return;
+    if (strstr(line, "OK")) (*oks)++;
+    else { printf("FAIL: %s\n", line); (*bad)++; }
+}
+
 /* A CP/M program: BDOS 2 and 9 print, a jump to 0 ends it. */
 static int run_zex(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -55,14 +71,12 @@ static int run_zex(const char *path) {
     int bad = 0, oks = 0;
     while (z.pc != 0) {
         if (z.pc == 5) {
-            uint8_t fn = (uint8_t)z.bc;
-            char buf[256]; size_t k = 0;
-            if (fn == 2) buf[k++] = (char)(uint8_t)z.de;
-            else if (fn == 9) for (uint16_t a = z.de; mem[a] != '$' && k < sizeof buf; a++) buf[k++] = (char)mem[a];
+            char buf[256];
+            size_t k = bdos_text(&z, buf, sizeof buf);
             for (size_t j = 0; j < k; j++) {
                 if (buf[j] == '\n' || buf[j] == '\r') {
                     line[ln] = 0;
-                    if (strstr(line, "....")) { if (strstr(line, "OK")) oks++; else { printf("FAIL: %s\n", line); bad++; } }
+                    zex_line(line, &oks, &bad);
                     ln = 0;
                 } else if (ln + 1 < sizeof line) line[ln++] = buf[j];
             }

@@ -493,48 +493,50 @@ static void sshot(ps3ui_shell_t *sh, ps3ui_canvas_t *cv, const char *dir, const 
     write_png(path, cv->rgba, cv->w, cv->h);
 }
 
-static int dump_shell(const char *dir, int w, int h)
+/* n frames of the shell and the netplay app, as main_web.c runs them. */
+static void sframes(ps3ui_shell_t *sh, int n, int session)
 {
-    ps3ui_canvas_t cv = { 0 };
-    ps3ui_canvas_size(&cv, w, h);
-    ps3ui_backend_t be = { fake_status, fake_post, NULL };
-    ps3ui_app_init(&g_ps3ui_app, be);
-    memset(&g_fake, 0, sizeof g_fake);
-    ps3ui_shell_t *sh = &g_ps3ui_shell;
-    ps3ui_shell_init(sh, (ps3ui_host_t){ host_reset, host_apply, NULL, NULL }, &g_ps3ui_app);
+    for (int i = 0; i < n; i++) {
+        ps3ui_shell_frame(sh, 0, 0, session);
+        ps3ui_app_frame(&g_ps3ui_app, 0);
+    }
+}
 
+/* The shell's menus, title to game and back: s01..s12. */
+static void shell_menus(ps3ui_shell_t *sh, ps3ui_canvas_t *cv, const char *dir)
+{
     srun(sh, 20, 0, 0);
-    sshot(sh, &cv, dir, "s01_title");
+    sshot(sh, cv, dir, "s01_title");
     srun(sh, 1, PS3UI_PAD_START, 0);
     srun(sh, 40, 0, 0);
-    sshot(sh, &cv, dir, "s02_main");
+    sshot(sh, cv, dir, "s02_main");
     srun(sh, 1, PS3UI_PAD_CROSS, 0);        /* Arcade */
     srun(sh, 30, 0, 0);
     srun(sh, 1, PS3UI_PAD_DOWN, 0);
     srun(sh, 1, PS3UI_PAD_RIGHT, 0);        /* rounds 2 -> 3 */
     srun(sh, 20, 0, 0);
-    sshot(sh, &cv, dir, "s03_arcade");
+    sshot(sh, cv, dir, "s03_arcade");
     srun(sh, 1, PS3UI_PAD_CIRCLE, 0);
     srun(sh, 20, 0, 0);
     srun(sh, 1, PS3UI_PAD_DOWN, 0);
     srun(sh, 1, PS3UI_PAD_CROSS, 0);        /* Offline Versus */
     srun(sh, 30, 0, 0);
-    sshot(sh, &cv, dir, "s04_versus_wait");
+    sshot(sh, cv, dir, "s04_versus_wait");
     srun(sh, 1, 0, PS3UI_PAD_START);        /* 2P claims */
     srun(sh, 20, 0, 0);
-    sshot(sh, &cv, dir, "s05_versus");
+    sshot(sh, cv, dir, "s05_versus");
     srun(sh, 1, PS3UI_PAD_CIRCLE, 0);
     srun(sh, 20, 0, 0);
     srun(sh, 1, PS3UI_PAD_DOWN, 0);
     srun(sh, 1, PS3UI_PAD_DOWN, 0);
     srun(sh, 1, PS3UI_PAD_CROSS, 0);        /* Help & Options */
     srun(sh, 30, 0, 0);
-    sshot(sh, &cv, dir, "s06_options");
+    sshot(sh, cv, dir, "s06_options");
     srun(sh, 1, PS3UI_PAD_CROSS, 0);        /* Controls */
     srun(sh, 30, 0, 0);
     srun(sh, 1, PS3UI_PAD_RIGHT, 0);        /* Arcade stick 1 */
     srun(sh, 10, 0, 0);
-    sshot(sh, &cv, dir, "s07_controls");
+    sshot(sh, cv, dir, "s07_controls");
     srun(sh, 1, PS3UI_PAD_CROSS, 0);
     srun(sh, 20, 0, 0);
     srun(sh, 1, PS3UI_PAD_DOWN, 0);
@@ -542,17 +544,17 @@ static int dump_shell(const char *dir, int w, int h)
     srun(sh, 30, 0, 0);
     srun(sh, 1, PS3UI_PAD_RIGHT, 0);
     srun(sh, 10, 0, 0);
-    sshot(sh, &cv, dir, "s08_settings");
+    sshot(sh, cv, dir, "s08_settings");
     srun(sh, 1, PS3UI_PAD_CROSS, 0);
     srun(sh, 20, 0, 0);
     srun(sh, 1, PS3UI_PAD_DOWN, 0);
     srun(sh, 1, PS3UI_PAD_CROSS, 0);        /* Credits */
     srun(sh, 30, 0, 0);
-    sshot(sh, &cv, dir, "s08b_credits");
+    sshot(sh, cv, dir, "s08b_credits");
     for (int i = 0; i < PS3UI_CREDITS - 1; i++)
         srun(sh, 1, PS3UI_PAD_DOWN, 0);     /* to the last row: the list scrolls */
     srun(sh, 10, 0, 0);
-    sshot(sh, &cv, dir, "s08c_credits_end");
+    sshot(sh, cv, dir, "s08c_credits_end");
     srun(sh, 1, PS3UI_PAD_CIRCLE, 0);
     srun(sh, 20, 0, 0);
     srun(sh, 1, PS3UI_PAD_CIRCLE, 0);       /* back to main */
@@ -566,31 +568,32 @@ static int dump_shell(const char *dir, int w, int h)
     srun(sh, 20, 0, 0);
     printf("applied versus=%d bytes %u %u %u %u %u %u %u %u\n", g_applied_versus, g_applied[0], g_applied[1],
            g_applied[2], g_applied[3], g_applied[4], g_applied[5], g_applied[6], g_applied[7]);
-    sshot(sh, &cv, dir, "s09_game");
+    sshot(sh, cv, dir, "s09_game");
     srun(sh, 1, PS3UI_PAD_SELECT, 0);       /* pause */
     srun(sh, 30, 0, 0);
-    sshot(sh, &cv, dir, "s10_pause");
+    sshot(sh, cv, dir, "s10_pause");
     srun(sh, 1, PS3UI_PAD_DOWN, 0);
     srun(sh, 1, PS3UI_PAD_DOWN, 0);         /* Exit Game (the blank row skipped) */
     srun(sh, 1, PS3UI_PAD_CROSS, 0);
     srun(sh, 30, 0, 0);
-    sshot(sh, &cv, dir, "s11_exit_confirm");
+    sshot(sh, cv, dir, "s11_exit_confirm");
     srun(sh, 1, PS3UI_PAD_UP, 0);
     srun(sh, 1, PS3UI_PAD_CROSS, 0);        /* Yes */
     srun(sh, 30, 0, 0);
     printf("resets=%d screen=%d\n", g_resets, sh->scr);
-    sshot(sh, &cv, dir, "s12_back_to_main");
+    sshot(sh, cv, dir, "s12_back_to_main");
+}
 
+/* s13: the VS prompt over MAIN MENU. Returns the failures. */
+static int shell_vs_over_main(ps3ui_shell_t *sh, ps3ui_canvas_t *cv, const char *dir)
+{
     /* A VS session the page started while the shell sits on MAIN MENU: the
      * prompt goes over the game, and the shell's own menu takes none of the pad.
      * (Frames as main_web.c runs them: the shell, then the task in a session.) */
     g_fake.state = NETPLAY_PLAYING;
     g_fake.local_player = 0;
     int main_cursor = sh->cursor, fails = 0;
-    for (int i = 0; i < 5; i++) {
-        ps3ui_shell_frame(sh, 0, 0, 1);
-        ps3ui_app_frame(&g_ps3ui_app, 0);
-    }
+    sframes(sh, 5, 1);
     g_fake.results++;
     for (int i = 0; i < 40; i++) {
         uint32_t pad = i == 20 ? PS3UI_PAD_DOWN : 0;
@@ -602,42 +605,76 @@ static int dump_shell(const char *dir, int w, int h)
                 sh->cursor);
         fails++;
     }
-    sshot(sh, &cv, dir, "s13_vs_again_over_shell");
+    sshot(sh, cv, dir, "s13_vs_again_over_shell");
+    return fails;
+}
 
+/* s14: the same from Online Battle. Returns the failures. */
+static int shell_online_again(ps3ui_shell_t *sh, ps3ui_canvas_t *cv, const char *dir)
+{
     /* The same from Online Battle (the libretro core's way in): the lobby is
      * open, the match runs under it, and the result asks. */
-    for (int i = 0; i < 700; i++) {
-        ps3ui_shell_frame(sh, 0, 0, 1);
-        ps3ui_app_frame(&g_ps3ui_app, 0);
-    }
+    int fails = 0;
+    sframes(sh, 700, 1);
     ps3ui_app_close(&g_ps3ui_app);
     ps3ui_shell_go(sh, PS3UI_SH_ONLINE);
     ps3ui_app_open(&g_ps3ui_app);
     g_fake.state = NETPLAY_IN_ROOM;
-    for (int i = 0; i < 60; i++) {
-        ps3ui_shell_frame(sh, 0, 0, 0);
-        ps3ui_app_frame(&g_ps3ui_app, 0);
-    }
+    sframes(sh, 60, 0);
     g_fake.state = NETPLAY_PLAYING;
-    for (int i = 0; i < 60; i++) {
-        ps3ui_shell_frame(sh, 0, 0, 1);
-        ps3ui_app_frame(&g_ps3ui_app, 0);
-    }
+    sframes(sh, 60, 1);
     fprintf(stderr, "online: shell %d view %d app scr %d open %d\n", sh->scr, ps3ui_shell_view(sh), g_ps3ui_app.scr,
             g_ps3ui_app.open);
     g_fake.results++;
-    for (int i = 0; i < 40; i++) {
-        ps3ui_shell_frame(sh, 0, 0, 1);
-        ps3ui_app_frame(&g_ps3ui_app, 0);
-    }
+    sframes(sh, 40, 1);
     fprintf(stderr, "after: shell %d view %d app scr %d open %d\n", sh->scr, ps3ui_shell_view(sh), g_ps3ui_app.scr,
             g_ps3ui_app.open);
     if (ps3ui_shell_view(sh) != PS3UI_VIEW_OVERLAY || g_ps3ui_app.scr != PS3UI_SCR_AGAIN) {
         fprintf(stderr, "FAIL: no prompt from Online Battle\n");
         fails++;
     }
-    sshot(sh, &cv, dir, "s14_again_from_online");
+    sshot(sh, cv, dir, "s14_again_from_online");
+    return fails;
+}
+
+static int dump_shell(const char *dir, int w, int h)
+{
+    ps3ui_canvas_t cv = { 0 };
+    ps3ui_canvas_size(&cv, w, h);
+    ps3ui_backend_t be = { fake_status, fake_post, NULL };
+    ps3ui_app_init(&g_ps3ui_app, be);
+    memset(&g_fake, 0, sizeof g_fake);
+    ps3ui_shell_t *sh = &g_ps3ui_shell;
+    ps3ui_shell_init(sh, (ps3ui_host_t){ host_reset, host_apply, NULL, NULL }, &g_ps3ui_app);
+
+    shell_menus(sh, &cv, dir);
+    int fails = shell_vs_over_main(sh, &cv, dir);
+    fails += shell_online_again(sh, &cv, dir);
     return fails ? 1 : 0;
+}
+
+/* vs <out.png> [w h [frame]]: the VS lobby. */
+static int dump_vs(int argc, char **argv)
+{
+    int w = argc >= 5 ? atoi(argv[3]) : 1280, h = argc >= 5 ? atoi(argv[4]) : 720;
+    float frame = argc >= 6 ? (float)atof(argv[5]) : 40.0f;
+    ps3ui_canvas_t cv = { 0 };
+    ps3ui_canvas_size(&cv, w, h);
+    ps3ui_vs_lobby_t s = { 0 };
+    s.title = "PLAYER MATCH";
+    s.name[0] = "stftest2";
+    s.name[1] = "m2hletest";
+    s.ping_ms[0] = PS3UI_PING_NONE;
+    s.ping_ms[1] = 30;
+    s.ready[1] = 1;
+    s.ready_age[1] = 60.0f;
+    s.countdown = 24;
+    s.left_hint = "SELECT button:Controls";
+    s.hints = "\x03:Opponent's Profile  \x01:Exit  \x02:Ready";
+    s.frame = frame;
+    ps3ui_draw_vs_lobby(&cv, &s);
+    ps3ui_canvas_resolve(&cv);
+    return write_png(argv[2], cv.rgba, w, h) ? 1 : 0;
 }
 
 int main(int argc, char **argv)
@@ -648,27 +685,8 @@ int main(int argc, char **argv)
         return dump_app(argv[2], argc >= 5 ? atoi(argv[3]) : 1280, argc >= 5 ? atoi(argv[4]) : 720);
     if (argc >= 3 && strcmp(argv[1], "sprites") == 0)
         return dump_sprites(argv[2]);
-    if (argc >= 3 && strcmp(argv[1], "vs") == 0) {
-        int w = argc >= 5 ? atoi(argv[3]) : 1280, h = argc >= 5 ? atoi(argv[4]) : 720;
-        float frame = argc >= 6 ? (float)atof(argv[5]) : 40.0f;
-        ps3ui_canvas_t cv = { 0 };
-        ps3ui_canvas_size(&cv, w, h);
-        ps3ui_vs_lobby_t s = { 0 };
-        s.title = "PLAYER MATCH";
-        s.name[0] = "stftest2";
-        s.name[1] = "m2hletest";
-        s.ping_ms[0] = PS3UI_PING_NONE;
-        s.ping_ms[1] = 30;
-        s.ready[1] = 1;
-        s.ready_age[1] = 60.0f;
-        s.countdown = 24;
-        s.left_hint = "SELECT button:Controls";
-        s.hints = "\x03:Opponent's Profile  \x01:Exit  \x02:Ready";
-        s.frame = frame;
-        ps3ui_draw_vs_lobby(&cv, &s);
-        ps3ui_canvas_resolve(&cv);
-        return write_png(argv[2], cv.rgba, w, h) ? 1 : 0;
-    }
+    if (argc >= 3 && strcmp(argv[1], "vs") == 0)
+        return dump_vs(argc, argv);
     fprintf(stderr, "usage: ps3ui_render sprites <dir> | vs <out.png> [w h [frame]]\n");
     return 2;
 }

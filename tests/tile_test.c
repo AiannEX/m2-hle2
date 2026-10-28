@@ -57,6 +57,34 @@ static inline uint16_t ref_s24_sample(const memory_bus_t *bus, int t, int x, int
     *pen = bank * 16 + *ci;
     return pal_read16(bus, *pen);
 }
+/* Where row y splits between tilemap t and its pair: x < *split_x draws
+ * *split_l, the rest split_l ^ 1 (mode 0 draws t through the mask). */
+static inline void ref_s24_row_split(int t, int mode, uint16_t vscr, uint16_t row, int h, int y,
+                                     int *split_l, int *split_x) {
+    *split_l = t; *split_x = 0x7FFF;
+    if (mode == 1) {
+        int nv = (-(int)vscr) & 0x3FF, v = nv & 0x1FF;
+        *split_l = (nv & 0x200) ? t : t ^ 1;
+        if (y >= v) *split_l ^= 1;
+    } else if (mode) {
+        *split_l = (row & 0x200) ? t : t ^ 1;
+        *split_x = h;
+    }
+}
+
+/* One pixel of a tilemap into the layer: every pen when opaque, else the
+ * non-zero pens of category cat. */
+static inline void ref_s24_put(uint16_t *dst, uint8_t *dst_alpha, int i, bool opaque, int cat,
+                               uint16_t color, uint8_t ci, uint8_t pc, int pen) {
+    if (opaque) {
+        dst[i] = color;
+        if (dst_alpha) dst_alpha[i] = pen ? 255 : 0;
+    } else if (ci != 0 && pc == (uint8_t)cat) {
+        dst[i] = color;
+        if (dst_alpha) dst_alpha[i] = 255;
+    }
+}
+
 static inline void ref_s24_draw_tilemap(const memory_bus_t *bus, int t, int cat, bool opaque,
                                     uint16_t *dst, uint8_t *dst_alpha) {
     uint16_t hscr = tileram_word(bus, 0x5000u + (uint32_t)t);
@@ -72,15 +100,8 @@ static inline void ref_s24_draw_tilemap(const memory_bus_t *bus, int t, int cat,
     for (int y = 0; y < VIDEO_HEIGHT; y++) {
         uint16_t row = (hscr & 0x8000) ? tileram_word(bus, hscrtb + (uint32_t)y) : hscr;
         int h = row & 0x1FF;
-        int split_l = t, split_x = 0x7FFF;       /* x < split_x: split_l, else split_l ^ 1 */
-        if (mode == 1) {
-            int nv = (-(int)vscr) & 0x3FF, v = nv & 0x1FF;
-            split_l = (nv & 0x200) ? t : t ^ 1;
-            if (y >= v) split_l ^= 1;
-        } else if (mode) {
-            split_l = (row & 0x200) ? t : t ^ 1;
-            split_x = h;
-        }
+        int split_l, split_x;                    /* x < split_x: split_l, else split_l ^ 1 */
+        ref_s24_row_split(t, mode, vscr, row, h, y, &split_l, &split_x);
         for (int x = 0; x < VIDEO_WIDTH; x++) {
             int l = t;
             if (mode) {
@@ -92,14 +113,7 @@ static inline void ref_s24_draw_tilemap(const memory_bus_t *bus, int t, int cat,
             }
             uint8_t ci, pc; int pen;
             uint16_t color = ref_s24_sample(bus, l, x - h, y + vy, &ci, &pc, &pen);
-            int i = y * VIDEO_WIDTH + x;
-            if (opaque) {
-                dst[i] = color;
-                if (dst_alpha) dst_alpha[i] = pen ? 255 : 0;
-            } else if (ci != 0 && pc == (uint8_t)cat) {
-                dst[i] = color;
-                if (dst_alpha) dst_alpha[i] = 255;
-            }
+            ref_s24_put(dst, dst_alpha, y * VIDEO_WIDTH + x, opaque, cat, color, ci, pc, pen);
         }
     }
 }
