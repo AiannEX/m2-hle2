@@ -1925,6 +1925,7 @@ static void event(const sapp_event* ev) {
 sapp_desc sokol_main(int argc, char* argv[]) {
     { const char *e = getenv("M2HLE_NO_SOUND_BOARD"); if (e && e[0] == '1') g_no_sound_board = 1; }
     { const char *e = getenv("M2HLE_SOUND_HLE"); if (e && e[0] == '1') g_sound_hle_want = 1; }
+    { const char *e = getenv("M2HLE_SCSP_EXACT"); if (e && e[0] == '1') g_scsp_exact = 1; }
     { const char *e = getenv("M2HLE_TEXLOAD_HLE"); if (e && e[0] == '0') g_texload_hle = 0; }
     { const char *e = getenv("M2HLE_SPIN_SKIP"); if (e && e[0] == '0') g_spin_skip = 0; }
     /* The log's own options come first: the first line logged, a warning about
@@ -2090,6 +2091,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             g_no_sound_board = 1;
         } else if (strcmp(argv[i], "--sound-hle") == 0) {
             g_sound_hle_want = 1;
+        } else if (strcmp(argv[i], "--scsp-exact") == 0) {   /* the DSP every sample (scsp.h, "A quiet DSP") */
+            g_scsp_exact = 1;
         } else if (strcmp(argv[i], "--gems-i960") == 0) {
             g_gems_i960 = true;     /* STF's trapped functions in Gems' C (core/gems.h) */
         } else if (strcmp(argv[i], "--gems-cop") == 0) {

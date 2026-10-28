@@ -57,6 +57,7 @@ int main(int argc, char **argv) {
     int scenarios = argc > 2 ? atoi(argv[2]) : 600;
     int samples = argc > 3 ? atoi(argv[3]) : 3000;
     uint32_t run = argc > 4 ? (uint32_t)atoi(argv[4]) : 1;
+    if (getenv("SCSP_EXACT")) g_scsp_exact = atoi(getenv("SCSP_EXACT"));   /* the DSP every sample (scsp.h, "A quiet DSP") */
     if (run < 1) run = 1;
     const char *romdir = test_rom_dir();
     char child[1024], parent[1024];

@@ -9,6 +9,7 @@
  *   1 makes it sync every sample, the old lockstep cost)
  *   $ROMDIR (else $ROMS_DIR): directory with sfight.zip and schamp.zip
  *   $SND_HLE=1: the sound driver in C instead of on the 68000 (sound_hle.h)
+ *   $SCSP_EXACT=1: the DSP every sample instead of skipped while quiet (scsp.h, "A quiet DSP")
  */
 #define NDEBUG 1
 #include "test_rom_dir.h"
@@ -62,7 +63,8 @@ int main(int argc, char **argv) {
     snprintf(child, sizeof child, "%s/sfight.zip", romdir);
     snprintf(parent, sizeof parent, "%s/schamp.zip", romdir);
     if (sfight_load(&rs, child, parent) != 0 || !rs.audiocpu || !rs.samples) { fprintf(stderr, "ROM load failed (%s)\n", romdir); return 1; }
-    if (getenv("SND_HLE")) g_sound_hle_want = atoi(getenv("SND_HLE"));   /* the driver in C (sound_hle.h) */
+    if (getenv("SND_HLE")) g_sound_hle_want = atoi(getenv("SND_HLE"));
+    if (getenv("SCSP_EXACT")) g_scsp_exact = atoi(getenv("SCSP_EXACT"));   /* the DSP every sample (scsp.h, "A quiet DSP") */   /* the driver in C (sound_hle.h) */
     sound_reset();
     sound_load_rom(rs.audiocpu, (uint32_t)rs.audiocpu_size);
     sound_load_samples(rs.samples, (uint32_t)rs.samples_size);
@@ -87,6 +89,8 @@ int main(int argc, char **argv) {
     uint64_t h_ram = fnv(FNV0, s->ram, s->ram_size);
     printf("board: %.2f s of sound in %.3f s  = %.2fx real time\n", seconds, t_board, seconds / t_board);
     printf("hash out %016llx  ram %016llx  dsp steps %d\n", (unsigned long long)h_out, (unsigned long long)h_ram, s->dsp.last_step);
+    printf("quiet DSP: %llu of %llu samples skipped%s\n", (unsigned long long)g_scsp_dsp_skipped,
+           (unsigned long long)s->samples, g_scsp_exact ? " (SCSP_EXACT)" : "");
     printf("lazy chip: %llu full syncs, %llu slots run ahead alone, delay line [%05X, %05X)\n",
            (unsigned long long)s->syncs, (unsigned long long)s->catches, s->dsp_lo, s->dsp_hi);
 

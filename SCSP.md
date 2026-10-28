@@ -143,10 +143,69 @@ reflects it far beyond the loop.
 
 ### What is left
 
-The DSP is now the largest single cost, and in STF it mostly reverberates
-silence. An exact shortcut would have to prove the delay line and TEMP are at a
-fixed point under zero input before skipping a step; that is the next lever,
-not done here.
+The DSP was the largest single cost, and in STF it mostly reverberates
+silence. There is no exact shortcut: integer feedback has no zero fixed point,
+so the delay line and TEMP never settle, they only get small. The quiet DSP
+below skips it once they are, within a measured margin.
+
+## A quiet DSP (`--scsp-exact` for the exact chip)
+
+Measured on the 90 s attract capture (`snd_bench` with counters, Pinboard
+#1681): the DSP's inputs (every MIXS) are zero on 99.8% of samples; EFREG is
+all zero on 69% and within ±2 on 92.6%; the longest run of zero input is 2.98 M
+samples (68 s). The reverb grinds a 24-bit tail round its delay line for the
+whole of it, and that tail is below one output LSB.
+
+`scsp_sample_mix` therefore asks `scsp_dsp_due` before each step. The DSP is a
+filter over its own state -- TEMP, MEMS, EFREG and the ring `[RBP, RBP + RBL)`
+of sound RAM -- and its inputs MIXS and EXTS. Once the inputs have been zero
+for 128 samples, `scsp_dsp_quiet` scans that state: every TEMP, MEMS and ring
+value within `SCSP_DSP_QUIET` (512, 24-bit units) and every EFREG within
+`SCSP_DSP_QUIET_EF` (2). A stable program can only make outputs that small
+from a state that small, so the chip stops running it: EFREG stays as it was,
+DEC stays, the ring stays. It runs again on the first nonzero MIXS or EXTS, on
+any DSP register write (COEF, MADRS, MPRO, RBP/RBL) and on a 68000 write into
+the ring (`scsp_ram_touch`). A program with a TABLE tap can read anywhere in
+RAM and is never skipped; nor is the DSP while the chip is `coupled` (a slot
+playing the ring as PCM). A scan that finds the state loud is not repeated
+for RBL samples, so the scan costs at most one unpack per sample while the
+tail is still decaying, and nothing once the DSP is stopped. The three fields
+it needs (`dsp_frozen`, `dsp_zero_run`, `dsp_check_in`) sit in what was
+padding in `scsp_t`, so every savestate's `LAYOUT` still matches and a state
+from before loads (checked: a state `det_digest --save-at` wrote at frame 1200
+on master loads here and runs on identically).
+
+**The margin, measured** (`tools/scsp-ab.py`, the exact chip's WAV against
+the quiet one's, 90 s of attract through `snd_replay`):
+
+| | exact chip | quiet DSP |
+|---|---|---|
+| DSP samples run | 3,969,000 | 354,908 (91.1% skipped) |
+| `snd_bench`, 90 s of board | 1.79 s | 1.19 s (−34%) |
+| output frames that differ | | 228,738 (5.8%), every one by 1 LSB |
+| max \|diff\| / RMS diff | | 1 LSB / 0.17 LSB, SNR 72.2 dB |
+| difference's spectrum, all bands | | −103 dBFS (exact −28.7 dBFS); worst band 16-22 kHz at 51 dB under it |
+| level shift of any bin above −90 dBFS | | ≤ 0.002 dB |
+
+The 1-LSB frames are the exact chip's −1 tail where the frozen EFREG gives 0.
+
+**What the 68000 and the i960 can see.** The DSP's registers read back
+(0xC00-0xEFF) and the ring's bytes keep the frozen values instead of the
+decaying ones; no Sega driver reads either (STF's never touches the DSP's
+RAM range: 0 reads, 0 writes in 90 s, `scsp_ram_touch` counted). So the
+i960 sees nothing: `det_digest` over 5400 frames of attract and a 6000-frame
+scripted match has every i960 column and the sample clock identical to
+master, and only the sound-RAM hash differs (the ring). Not a
+`NETPLAY_PROTO_REV` bump. `scsp_fuzz` differs from master only in the DEC it
+dumps.
+
+**The exact chip is one switch away**: `--scsp-exact` (m2hle, `det_digest`),
+`M2HLE_SCSP_EXACT=1`, `SCSP_EXACT=1` for `snd_replay`, `snd_bench`, `scsp_fuzz`
+and `m68k_fuzz`. With it every output of this build is `cmp`-identical to
+master's (replay `.bin`/`.ram.bin`/`.regs.bin`/`.wav`, both fuzzes, `det_digest
+--sound` with the sound-RAM hash). Grade against MAME and hold two builds to the same
+bits in that mode; measure the margin of a change to the quiet path with
+`scsp-ab.py`.
 
 ## The driver in C (`--sound-hle`)
 

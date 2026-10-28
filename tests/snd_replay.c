@@ -94,6 +94,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "ROM load failed (%s)\n", romdir); return 1;
     }
     if (getenv("SND_HLE")) g_sound_hle_want = atoi(getenv("SND_HLE"));
+    if (getenv("SCSP_EXACT")) g_scsp_exact = atoi(getenv("SCSP_EXACT"));   /* the DSP every sample (scsp.h, "A quiet DSP") */
     sound_reset();
     sound_load_rom(rs.audiocpu, (uint32_t)rs.audiocpu_size);
     sound_load_samples(rs.samples, (uint32_t)rs.samples_size);

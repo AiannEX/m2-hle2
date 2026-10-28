@@ -218,6 +218,10 @@ typedef struct {
     uint32_t    slot_lo[32], slot_hi[32];   /* sound RAM each running slot may read, [lo, hi) */
     uint32_t    dsp_lo, dsp_hi;             /* sound RAM the DSP reads and writes, [lo, hi) */
     uint32_t    own[0x80000 / 256];         /* per 256-byte granule: the slots whose range covers it */
+    /* "A quiet DSP" (below). In what was padding before sink, so every savestate's LAYOUT still matches. */
+    uint8_t     dsp_frozen;      /* the DSP is skipped: its state is quiet and its inputs silent */
+    uint8_t     dsp_zero_run;    /* samples in a row with every MIXS and EXTS zero, saturating */
+    uint16_t    dsp_check_in;    /* samples before the state is scanned again after a scan found it loud */
     union { void (*sink)(void *ud, int16_t l, int16_t r); uint64_t sink_w; };   /* where made samples go, in order */
     union { void *sink_ud; uint64_t sink_ud_w; };
     uint64_t    syncs, catches;             /* full syncs, and single slots run ahead */
@@ -226,6 +230,21 @@ typedef struct {
 } scsp_t;
 
 #define SCSP_OWED_MAX 1024
+
+/* A quiet DSP (Pinboard #1681). With g_scsp_exact 0 the DSP is skipped while
+ * its inputs are silent and everything it could read is within
+ * SCSP_DSP_QUIET (24-bit units) and its outputs within SCSP_DSP_QUIET_EF;
+ * see "A quiet DSP" below. --scsp-exact / M2HLE_SCSP_EXACT=1 (g_scsp_exact 1)
+ * runs it every sample, bit for bit MAME's. */
+static int g_scsp_exact;
+#ifndef SCSP_DSP_QUIET
+#define SCSP_DSP_QUIET      512
+#endif
+#ifndef SCSP_DSP_QUIET_EF
+#define SCSP_DSP_QUIET_EF   2
+#endif
+#define SCSP_DSP_QUIET_RUN  128      /* silent samples before the state is first scanned */
+static uint64_t g_scsp_dsp_skipped;  /* samples the DSP was not run for (reporting only) */
 
 /* ---- tables --------------------------------------------------------------- */
 
@@ -1213,14 +1232,91 @@ static inline void scsp_sample_out(scsp_t *s, int32_t l, int32_t r) {
     if (s->sink) s->sink(s->sink_ud, (int16_t)(l * mvol / 15), (int16_t)(r * mvol / 15));
 }
 
+/* ---- A quiet DSP ------------------------------------------------------------------
+ *
+ * STF's reverb runs its 84 steps every sample, and in attract its input is
+ * silence 99.8% of the time (measured, Pinboard #1681): the program then only
+ * grinds a tail of 24-bit noise round its delay line, which never reaches
+ * zero (integer feedback has no zero fixed point) but is well under one
+ * output LSB. The DSP is a filter over its own state: TEMP, MEMS, EFREG and
+ * the ring [RBP, RBP + RBL) of sound RAM, plus the inputs MIXS and EXTS. When
+ * the inputs have been zero for SCSP_DSP_QUIET_RUN samples and every value
+ * in that state is within SCSP_DSP_QUIET (and EFREG within
+ * SCSP_DSP_QUIET_EF), a stable program can only make outputs that small
+ * from it, so the chip stops running it: EFREG stays as it was (a constant
+ * within the margin), DEC stays, the ring stays. It runs again on the first
+ * nonzero MIXS or EXTS, on any DSP register write (COEF, MADRS, MPRO, RBP /
+ * RBL) and on a 68000 write into the ring (scsp_ram_touch). A program that
+ * addresses the ring by table (TABLE) can read anywhere, so it is never
+ * skipped; neither is the DSP while the chip is coupled (a slot reading
+ * the ring plays it as PCM).
+ *
+ * What the 68000 can see of it: the DSP's registers read back (0xC00-0xEFF)
+ * and the ring's bytes, which keep the frozen values instead of the decaying
+ * ones, within the margin. No Sega driver reads either (STF's never touches
+ * the DSP's RAM range, measured over 90 s). The sound output differs from the
+ * exact chip's by at most a few LSB (tools/scsp-ab.py measures it; SCSP.md
+ * "A quiet DSP" has the numbers), and what the i960 reads does not change
+ * (det_digest's i960 columns), so this is not a NETPLAY_PROTO_REV bump.
+ * The scan of the state is at most RBL unpacks every RBL samples while the
+ * program is still loud, and nothing once it is skipped. */
+
+static inline void scsp_dsp_wake(scsp_t *s) {
+    s->dsp_frozen = 0;
+    s->dsp_zero_run = 0;
+    s->dsp_check_in = 0;
+}
+
+/* Everything the DSP could read is within the margin: the state it filters. */
+static int scsp_dsp_quiet(const scsp_t *s) {
+    const scsp_dsp_t *d = &s->dsp;
+    if (s->coupled || d->stopped) return 0;
+    for (int i = 0; i < 16; i++) if (d->mixs[i]) return 0;
+    if (d->exts[0] || d->exts[1]) return 0;
+    for (int i = 0; i < 16; i++) if (d->efreg[i] > SCSP_DSP_QUIET_EF || d->efreg[i] < -SCSP_DSP_QUIET_EF) return 0;
+    for (int i = 0; i < 128; i++) if (d->temp[i] > SCSP_DSP_QUIET || d->temp[i] < -SCSP_DSP_QUIET) return 0;
+    for (int i = 0; i < 32; i++) if (d->mems[i] > SCSP_DSP_QUIET || d->mems[i] < -SCSP_DSP_QUIET) return 0;
+    int ring = 0;
+    for (int st = 1; st < d->last_step; st += 2) {         /* only odd steps touch delay memory (MAME) */
+        const uint16_t *p = d->mpro + st * 4;
+        if (!((p[2] >> 13) & 3)) continue;                 /* no MRD, no MWT */
+        if ((p[2] >> 15) & 1) return 0;                    /* TABLE: MADRS + ADRS, anywhere in RAM */
+        if ((p[2] >> 8) & 1) return 0;                     /* NOFL: a raw word, not a packed float */
+        ring = 1;
+    }
+    if (ring) {
+        uint32_t lo = d->rbp << 13;
+        if ((uint64_t)lo + 2u * d->rbl > s->ram_size) return 0;
+        for (uint32_t i = 0; i < d->rbl; i++) {
+            int32_t v = scsp_dsp_unpack(scsp_ram_w(s, lo + 2u * i));
+            if (v > SCSP_DSP_QUIET || v < -SCSP_DSP_QUIET) return 0;
+        }
+    }
+    return 1;
+}
+
+/* Whether this sample's DSP step runs. nz: any MIXS input this sample. */
+static inline int scsp_dsp_due(scsp_t *s, int32_t nz) {
+    if (g_scsp_exact) return 1;
+    if (nz | s->dsp.exts[0] | s->dsp.exts[1]) { scsp_dsp_wake(s); return 1; }
+    if (s->dsp_frozen) { g_scsp_dsp_skipped++; return 0; }
+    if (s->dsp_zero_run < 0xFF) s->dsp_zero_run++;
+    if (s->dsp_zero_run < SCSP_DSP_QUIET_RUN) return 1;
+    if (s->dsp_check_in) { s->dsp_check_in--; return 1; }
+    if (scsp_dsp_quiet(s)) { s->dsp_frozen = 1; g_scsp_dsp_skipped++; return 0; }
+    s->dsp_check_in = (uint16_t)(s->dsp.rbl < 0xFFFF ? s->dsp.rbl : 0xFFFF);
+    return 1;
+}
+
 /* Owed sample k: the slots' sends into the DSP, a DSP step, its effect
  * outputs onto the direct mix, then out. */
 static inline void scsp_sample_mix(scsp_t *s, uint32_t k) {
     int32_t *mx = s->acc_mixs[k];
-    for (int j = 0; j < 16; j++) { s->dsp.mixs[j] += mx[j]; mx[j] = 0; }
+    int32_t nz = 0;
+    for (int j = 0; j < 16; j++) { s->dsp.mixs[j] += mx[j]; nz |= mx[j]; mx[j] = 0; }
     int32_t l = s->acc_l[k], r = s->acc_r[k];
     s->acc_l[k] = s->acc_r[k] = 0;
-    scsp_dsp_step(s);
+    if (scsp_dsp_due(s, nz)) scsp_dsp_step(s);
     for (int i = 0; i < 16; i++) {
         const scsp_slot_t *sl = &s->slot[i];
         if (!SCSP_EFSDL(sl)) continue;
@@ -1397,7 +1493,7 @@ static inline void scsp_ram_touch_slots(scsp_t *s, uint32_t addr, uint32_t end) 
 static inline void scsp_ram_touch(scsp_t *s, uint32_t addr, uint32_t sz, int write) {
     if (!s->owed) return;
     uint32_t end = addr + sz;
-    if (addr < s->dsp_hi && s->dsp_lo < end) { scsp_sync(s); return; }
+    if (addr < s->dsp_hi && s->dsp_lo < end) { scsp_sync(s); if (write) scsp_dsp_wake(s); return; }
     if (!write) return;                                    /* slots only read */
     if (s->hot_dirty) scsp_own_rebuild(s);
     scsp_ram_touch_slots(s, addr, end);
@@ -1504,6 +1600,7 @@ static void scsp_w16_common(scsp_t *s, uint32_t addr, uint16_t v) {
     case 0x01:
         s->dsp.rbl = (8u * 1024u) << ((v >> 7) & 3);
         s->dsp.rbp = v & 0x3F;
+        scsp_dsp_wake(s);
         break;
     case 0x03:                                      /* MIDI out */
         s->mo[s->mo_w++ & 31] = (uint8_t)v;
@@ -1530,6 +1627,7 @@ static void scsp_w16_now(scsp_t *s, uint32_t addr, uint16_t v) {
     if (addr < 0x430) { scsp_w16_common(s, addr, v); return; }
     if (addr < 0x600) return;
     if (addr < 0x700) { s->sous[(addr - 0x600) >> 1] = (int16_t)v; return; }
+    scsp_dsp_wake(s);                               /* "A quiet DSP": a new coefficient, tap or program wakes it */
     if (addr < 0x780) { s->dsp.coef[(addr - 0x700) >> 1] = (int16_t)v; return; }
     /* MADRS is 32 words, 0x780-0x7BF, and 0x7C0-0x7FF is not a mirror of it.
      * MAME makes it one ("MADRS is mirrored twice", from a 2014 array-bounds
