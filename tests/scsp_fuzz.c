@@ -98,6 +98,7 @@ int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: scsp_fuzz <out-file> [scenarios] [samples] [mpro-dump]\n"); return 2; }
     out = fopen(argv[1], "wb");
     if (!out) { fprintf(stderr, "cannot write %s\n", argv[1]); return 1; }
+    if (getenv("SCSP_EXACT")) g_scsp_exact = atoi(getenv("SCSP_EXACT"));   /* the DSP every sample (scsp.h, "A quiet DSP") */
     int scenarios = argc > 2 ? atoi(argv[2]) : 200;
     int samples = argc > 3 ? atoi(argv[3]) : 20000;
     if (argc > 4) {

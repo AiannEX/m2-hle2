@@ -755,6 +755,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--cpu"))                     cpu_cols = true;
         else if (!strcmp(argv[i], "--no-sound-thread"))         g_sound_thread_want = 0;
         else if (!strcmp(argv[i], "--sound-hle"))               g_sound_hle_want = 1;
+        else if (!strcmp(argv[i], "--scsp-exact"))              g_scsp_exact = 1;
         else if (!strcmp(argv[i], "--texload-i960"))            g_texload_hle = 0;
         else if (!strcmp(argv[i], "--spin-i960"))               g_spin_skip = 0;
         else if (!strcmp(argv[i], "--i960-timing") && i + 1 < argc)
@@ -969,9 +970,10 @@ int main(int argc, char **argv) {
             (unsigned long long)snd_out_n, (unsigned long long)snd_out_hash,
             (unsigned long long)fnv(FNV0, g_sound.ram, sizeof g_sound.ram),
             sound_thread_on() ? "sound thread" : "one thread", (unsigned long long)g_emu_times.sound_jobs);
-    fprintf(stderr, "sound: chip syncs %llu, single-slot catch-ups %llu, lockstep samples %llu\n",
+    fprintf(stderr, "sound: chip syncs %llu, single-slot catch-ups %llu, lockstep samples %llu, DSP samples skipped %llu%s\n",
             (unsigned long long)g_sound.scsp.syncs, (unsigned long long)g_sound.scsp.catches,
-            (unsigned long long)g_scsp_coupled_ticks);
+            (unsigned long long)g_scsp_coupled_ticks, (unsigned long long)g_scsp_dsp_skipped,
+            g_scsp_exact ? " (--scsp-exact)" : "");
     fprintf(stderr, "sound: %s; i960 commands %u, bytes that waited a slice %llu, midi drops %u\n",
             g_shle.on ? "driver in C (--sound-hle)" : "68000", g_sound.code_n,
             (unsigned long long)g_sound.midi_holds, g_sound.scsp.mi_drops);

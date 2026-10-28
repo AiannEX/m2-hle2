@@ -872,6 +872,15 @@ B/scsp_lazy_test 5                                      # the lazy chip's RAM ra
 node tools/ab-builds.mjs A/m2hle.exe B/m2hle.exe --marks 600,1800,3600,6000 --sound
 ```
 
+Run every one of those with the exact chip on both sides (`SCSP_EXACT=1` for
+`snd_replay`, `snd_bench`, `scsp_fuzz` and `m68k_fuzz`; `--scsp-exact` for
+`det_digest` and `m2hle`): by default the DSP is skipped while it is quiet (`scsp.h`, "A quiet
+DSP"), which the fuzz shows as a different DEC and `det_digest --sound` as a
+different sound-RAM hash. The margin of the quiet path itself is measured, not
+held to bits: `python tools/scsp-ab.py exact.wav quiet.wav` on two `snd_replay`
+WAVs prints the frames that differ, the max and RMS difference, the SNR and a
+per-octave spectral difference (SCSP.md has master's numbers: 1 LSB, 72 dB).
+
 The SCSP makes its samples late (`scsp.h`, "The chip's own time"), so the
 chip's checks drive it the way the emulator does: `scsp_fuzz` leaves half its
 scenarios alone for long stretches and keeps a quarter "tame" (no FM, no noise,
