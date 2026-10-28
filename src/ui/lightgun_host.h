@@ -243,15 +243,18 @@ static inline int lightgun_host_shape(float cx, float cy, float e, float arm, fl
     return 4;
 }
 
+/* A reticle's arm length, the gap at its centre and its thickness. */
+typedef struct { float arm, gap, t; } lightgun_host_size_t;
+
 /* Player p's reticle at (cx, cy) into out from n: k 0 its outline, 1 the
  * reticle. Returns the new n. */
-static inline int lightgun_host_reticle(int p, int k, float cx, float cy, float arm, float gap, float t,
+static inline int lightgun_host_reticle(int p, int k, float cx, float cy, lightgun_host_size_t sz,
                                         lightgun_host_bar_t *out, int n) {
     float e = k ? 0.0f : 1.0f;           /* the outline's margin */
     uint32_t rgb = k ? (p == 0 ? 0xE02020u : 0x3060FFu) : 0x000000u;
     float a = k ? 1.0f : 0.63f;
     float b[4][4];
-    int nb = lightgun_host_shape(cx, cy, e, arm, gap, t, b);
+    int nb = lightgun_host_shape(cx, cy, e, sz.arm, sz.gap, sz.t, b);
     for (int i = 0; i < nb; i++)
         out[n++] = (lightgun_host_bar_t){ b[i][0], b[i][1], b[i][2], b[i][3], rgb, a };
     return n;
@@ -269,6 +272,7 @@ static inline int lightgun_host_crosshairs(float ox, float oy, float w, float h,
     float arm = h / 384.0f * 10.0f * z, gap = arm * 0.3f;     /* ~10 board pixels */
     float t = h / 384.0f * 1.5f * (z < 1.0f ? 1.0f : z);
     if (t < 1.0f) t = 1.0f;
+    lightgun_host_size_t sz = { arm, gap, t };
     int n = 0;
     if (lightgun_host_flash_tick()) out[n++] = (lightgun_host_bar_t){ ox, oy, ox + w, oy + h, 0xFFFFFFu, 1.0f };
     if (g_lightgun_reticle == LIGHTGUN_RETICLE_OFF) return n;
@@ -277,7 +281,7 @@ static inline int lightgun_host_crosshairs(float ox, float oy, float w, float h,
         float fx, fy;
         lightgun_aim(p, &fx, &fy);
         float cx = ox + fx * w, cy = oy + fy * h;
-        for (int k = 0; k < 2; k++) n = lightgun_host_reticle(p, k, cx, cy, arm, gap, t, out, n);
+        for (int k = 0; k < 2; k++) n = lightgun_host_reticle(p, k, cx, cy, sz, out, n);
     }
     return n;
 }
