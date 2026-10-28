@@ -330,9 +330,8 @@ static inline void tas_ui_branches(void) {
     igEndTable();
 }
 
-/* The movie, a frame a row and an input a column; a click toggles a cell. */
-static inline void tas_ui_roll(void) {
-    igSeparatorText("Inputs");
+/* The roll's buttons: undo, redo, insert, delete, cut. */
+static inline void tas_ui_roll_buttons(void) {
     igBeginDisabled(g_tas.undo_n == 0);
     if (igSmallButton("Undo")) tas_undo(false);
     igEndDisabled();
@@ -350,6 +349,75 @@ static inline void tas_ui_roll(void) {
     igSetItemTooltip("Drop the frames after the cursor");
     igSameLine();
     igCheckbox("A new take cuts the rest", &g_tas.cut);
+}
+
+/* Row f's colour: the cursor's, a frame with no check, the desync's. */
+static inline void tas_ui_row_colour(uint32_t f, bool have) {
+    if (f == g_tas.frame)
+        igTableSetBgColor(ImGuiTableBgTarget_RowBg1, IM_COL32(60, 90, 40, 255), -1);
+    else if (have && !g_tas.mv.check[f])
+        igTableSetBgColor(ImGuiTableBgTarget_RowBg1, IM_COL32(45, 35, 35, 255), -1);
+    if (g_tas.desync == (int64_t)f)
+        igTableSetBgColor(ImGuiTableBgTarget_RowBg1, IM_COL32(150, 30, 30, 255), -1);
+}
+
+/* Frame f's gun 1: where it aims, or off. */
+static inline void tas_ui_gun_cell(uint32_t f) {
+    const uint8_t *gun = g_tas.mv.in[f].gun;
+    if (!gun[0]) return;
+    uint32_t x = 0, y = 0;
+    for (int i = 0; i < 4; i++) {
+        x |= (uint32_t)gun[4 + i] << (8 * i);
+        y |= (uint32_t)gun[8 + i] << (8 * i);
+    }
+    igText(gun[1] ? "off" : "%.2f,%.2f", lightgun__bitsf(x), lightgun__bitsf(y));
+}
+
+/* Row f of the roll: its frame number (a click goes there), a cell an input. */
+static inline void tas_ui_roll_row(uint32_t f, const int *act, int na, int cols, bool gun) {
+    bool have = f < g_tas.mv.n;
+    igTableNextRow();
+    tas_ui_row_colour(f, have);
+    igTableNextColumn();
+    igPushIDInt((int)f);
+    char lbl[24];
+    snprintf(lbl, sizeof lbl, "%u%s", f, f == g_tas.frame ? " >" : "");
+    if (igSelectableEx(lbl, false, 0, (ImVec2){ 0, 0 })) {
+        g_tas.rewinding = false;
+        tas_seek(f <= g_tas.mv.n ? f : g_tas.mv.n, false);
+    }
+    igSetItemTooltip("Go to this frame (the board about to run it)");
+    for (int i = 0; i < na && i + 1 < cols; i++) {
+        igTableNextColumn();
+        uint32_t bit = tas_ui_bit(act[i]);
+        bool on = have && (g_tas.mv.in[f].held & bit);
+        igPushIDInt(i);
+        if (igSelectableEx(on ? s_tas_short[act[i]] : ".", on, 0, (ImVec2){ 26, 0 }) && have)
+            tas_edit_held(f, bit);
+        igPopID();
+    }
+    if (gun) {
+        igTableNextColumn();
+        if (have) tas_ui_gun_cell(f);
+    }
+    igPopID();
+}
+
+/* Keep the cursor's row in view while the board moves. */
+static inline void tas_ui_roll_follow(void) {
+    static uint32_t follow_at = UINT32_MAX;
+    if (follow_at == g_tas.frame) return;
+    follow_at = g_tas.frame;
+    float h = igGetTextLineHeightWithSpacing();
+    float y = h * (float)g_tas.frame;
+    float top = igGetScrollY(), view = igGetWindowHeight() - 2 * h;
+    if (y < top || y > top + view) igSetScrollY(y - view / 2 > 0 ? y - view / 2 : 0);
+}
+
+/* The movie, a frame a row and an input a column; a click toggles a cell. */
+static inline void tas_ui_roll(void) {
+    igSeparatorText("Inputs");
+    tas_ui_roll_buttons();
 
     int act[GAME_INPUT_COUNT], na = 0;
     for (int a = 0; a < GAME_INPUT_COUNT; a++) if (tas_ui_bit(a)) act[na++] = a;
@@ -366,63 +434,14 @@ static inline void tas_ui_roll(void) {
     igTableHeadersRow();
 
     uint32_t rows = g_tas.mv.n + 1;   /* the last row: the frame recording will add */
-    static uint32_t follow_at = UINT32_MAX;
     ImGuiListClipper clipper;
     memset(&clipper, 0, sizeof clipper);
     ImGuiListClipper *clip = &clipper;
     ImGuiListClipper_Begin(clip, (int)rows, -1.0f);
-    while (ImGuiListClipper_Step(clip)) {
-        for (int r = clip->DisplayStart; r < clip->DisplayEnd; r++) {
-            uint32_t f = (uint32_t)r;
-            bool have = f < g_tas.mv.n;
-            igTableNextRow();
-            if (f == g_tas.frame)
-                igTableSetBgColor(ImGuiTableBgTarget_RowBg1, IM_COL32(60, 90, 40, 255), -1);
-            else if (have && !g_tas.mv.check[f])
-                igTableSetBgColor(ImGuiTableBgTarget_RowBg1, IM_COL32(45, 35, 35, 255), -1);
-            if (g_tas.desync == (int64_t)f)
-                igTableSetBgColor(ImGuiTableBgTarget_RowBg1, IM_COL32(150, 30, 30, 255), -1);
-            igTableNextColumn();
-            igPushIDInt(r);
-            char lbl[24];
-            snprintf(lbl, sizeof lbl, "%u%s", f, f == g_tas.frame ? " >" : "");
-            if (igSelectableEx(lbl, false, 0, (ImVec2){ 0, 0 })) {
-                g_tas.rewinding = false;
-                tas_seek(f <= g_tas.mv.n ? f : g_tas.mv.n, false);
-            }
-            igSetItemTooltip("Go to this frame (the board about to run it)");
-            for (int i = 0; i < na && i + 1 < cols; i++) {
-                igTableNextColumn();
-                uint32_t bit = tas_ui_bit(act[i]);
-                bool on = have && (g_tas.mv.in[f].held & bit);
-                igPushIDInt(i);
-                if (igSelectableEx(on ? s_tas_short[act[i]] : ".", on, 0, (ImVec2){ 26, 0 }) && have)
-                    tas_edit_held(f, bit);
-                igPopID();
-            }
-            if (gun) {
-                igTableNextColumn();
-                if (have && g_tas.mv.in[f].gun[0]) {
-                    uint32_t x = 0, y = 0;
-                    for (int i = 0; i < 4; i++) {
-                        x |= (uint32_t)g_tas.mv.in[f].gun[4 + i] << (8 * i);
-                        y |= (uint32_t)g_tas.mv.in[f].gun[8 + i] << (8 * i);
-                    }
-                    igText(g_tas.mv.in[f].gun[1] ? "off" : "%.2f,%.2f", lightgun__bitsf(x), lightgun__bitsf(y));
-                }
-            }
-            igPopID();
-        }
-    }
+    while (ImGuiListClipper_Step(clip))
+        for (int r = clip->DisplayStart; r < clip->DisplayEnd; r++) tas_ui_roll_row((uint32_t)r, act, na, cols, gun);
     ImGuiListClipper_End(clip);
-    /* Keep the cursor's row in view while the board moves. */
-    if (follow_at != g_tas.frame) {
-        follow_at = g_tas.frame;
-        float h = igGetTextLineHeightWithSpacing();
-        float y = h * (float)g_tas.frame;
-        float top = igGetScrollY(), view = igGetWindowHeight() - 2 * h;
-        if (y < top || y > top + view) igSetScrollY(y - view / 2 > 0 ? y - view / 2 : 0);
-    }
+    tas_ui_roll_follow();
     igEndTable();
 }
 

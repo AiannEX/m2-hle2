@@ -3059,21 +3059,28 @@ static void mcp_cmd_replay(const char *req, char *resp, int cap) {
  *   {"edit":F,"xor":BITS}, {"insert":F}, {"delete":F}, {"undo":1}, {"redo":1}
  *   {"branch_save":I}, {"branch_load":I}, {"save":PATH}, {"load":PATH}
  *   {"from":F,"count":N}  the frames' held words and checks in the answer */
-static const char *mcp_tas_do(const char *req) {
-    emu_thread_ctx_t *ctx = g_mcp.emu;
-    uint32_t v = 0, w = 0;
+/* The keys that start, stop, save or load a movie, the first one there
+ * answering for the request: true when one was. */
+static bool mcp_tas_session(emu_thread_ctx_t *ctx, const char *req, const char **err) {
+    uint32_t v = 0;
     char path[512];
-    if (!ctx) return "no board";
     if (mcp_json_get_u32(req, "power_on", &v) && v) {
-        const char *err = tas__busy();
-        if (!err) { g_tas.start_req = true; ctx->request_reset = 1; }
-        return err;
+        *err = tas__busy();
+        if (!*err) { g_tas.start_req = true; ctx->request_reset = 1; }
     }
-    if (mcp_json_get_u32(req, "start", &v) && v)        return tas_start(ctx);
-    if (mcp_json_get_u32(req, "stop", &v) && v)         { tas_stop("asked for"); return NULL; }
-    if (mcp_json_get_u32(req, "resume", &v) && v)       return tas_resume(ctx);
-    if (mcp_json_get_str(req, "save", path, sizeof path)) return tas_save_file(path);
-    if (mcp_json_get_str(req, "load", path, sizeof path)) return tas_load_file(ctx, path, true);
+    else if (mcp_json_get_u32(req, "start", &v) && v)        *err = tas_start(ctx);
+    else if (mcp_json_get_u32(req, "stop", &v) && v)         { tas_stop("asked for"); *err = NULL; }
+    else if (mcp_json_get_u32(req, "resume", &v) && v)       *err = tas_resume(ctx);
+    else if (mcp_json_get_str(req, "save", path, sizeof path)) *err = tas_save_file(path);
+    else if (mcp_json_get_str(req, "load", path, sizeof path)) *err = tas_load_file(ctx, path, true);
+    else return false;
+    return true;
+}
+
+/* The pad and the movie's switches, which hold with or without a movie. */
+static const char *mcp_tas_settings(const char *req) {
+    uint32_t v = 0;
+    char path[512];
     if (mcp_json_get_u32(req, "recording", &v))         g_tas.recording = v != 0;
     if (mcp_json_get_u32(req, "keys_too", &v))          g_tas.keys_too = v != 0;
     if (mcp_json_get_u32(req, "cut", &v))               g_tas.cut = v != 0;
@@ -3091,24 +3098,66 @@ static const char *mcp_tas_do(const char *req) {
         g_tas.pad.aim_x[p] = x; g_tas.pad.aim_y[p] = y;
         g_tas.pad.aim_off[p] = got >= 4 && off;
     }
-    if (!g_tas.on) return NULL;
+    return NULL;
+}
+
+/* The movie's seeks: only with a movie on. */
+static const char *mcp_tas_seeks(const char *req) {
+    uint32_t v = 0;
     if (mcp_json_get_u32(req, "seek", &v))              { g_tas.rewinding = false; tas_seek(v, false); }
     if (mcp_json_get_u32(req, "rewind", &v))            tas_rewind(v, false);
     if (mcp_json_get_u32(req, "undo_rewind", &v) && v && !tas_undo_rewind(false)) return "nothing to undo";
+    return NULL;
+}
+
+/* The movie's edits: only with a movie on. */
+static const char *mcp_tas_edits(const char *req) {
+    uint32_t v = 0, w = 0;
     if (mcp_json_get_u32(req, "edit", &v) && mcp_json_get_u32(req, "xor", &w)) tas_edit_held(v, w);
     if (mcp_json_get_u32(req, "insert", &v))            tas_insert(v, 1);
     if (mcp_json_get_u32(req, "delete", &v))            tas_delete(v, 1);
     if (mcp_json_get_u32(req, "undo", &v) && v && !tas_undo(false)) return "nothing to undo";
     if (mcp_json_get_u32(req, "redo", &v) && v && !tas_undo(true))  return "nothing to redo";
+    return NULL;
+}
+
+/* With a movie on: its seeks, its edits, its branches, then advance. */
+static const char *mcp_tas_movie(emu_thread_ctx_t *ctx, const char *req) {
+    uint32_t v = 0;
+    const char *err = mcp_tas_seeks(req);
+    if (!err) err = mcp_tas_edits(req);
+    if (err) return err;
     if (mcp_json_get_u32(req, "branch_save", &v))       tas_branch_save((int)v);
     if (mcp_json_get_u32(req, "branch_load", &v))       tas_branch_load((int)v);
     if (mcp_json_get_u32(req, "advance", &v) && v)      emu_run_frames(ctx, v);
     return NULL;
 }
 
-static void mcp_cmd_tas(const char *req, char *resp, int cap) {
-    int locked = g_mcp.emu && g_mcp.emu->thread_alive;
-    if (locked) emu_mutex_lock(&g_mcp.emu->mutex);
+static const char *mcp_tas_do(const char *req) {
+    emu_thread_ctx_t *ctx = g_mcp.emu;
+    const char *err = NULL;
+    if (!ctx) return "no board";
+    if (mcp_tas_session(ctx, req, &err)) return err;
+    if ((err = mcp_tas_settings(req)) != NULL) return err;
+    return g_tas.on ? mcp_tas_movie(ctx, req) : NULL;
+}
+
+/* {"from":F,"count":N}: the frames' held words and checks, after resp[k]. */
+static int mcp_tas_frames(const char *req, char *resp, int k, int cap) {
+    uint32_t from = 0, count = 0;
+    if (!mcp_json_get_u32(req, "from", &from) || !mcp_json_get_u32(req, "count", &count)) return k;
+    k += snprintf(resp + k, (size_t)(cap - k), ",\"held\":[");
+    for (uint32_t f = from; f < from + count && f < g_tas.mv.n && k < cap - 64; f++)
+        k += snprintf(resp + k, (size_t)(cap - k), "%s%u", f > from ? "," : "", g_tas.mv.in[f].held);
+    k += snprintf(resp + k, (size_t)(cap - k), "],\"check\":[");
+    for (uint32_t f = from; f < from + count && f < g_tas.mv.n && k < cap - 64; f++)
+        k += snprintf(resp + k, (size_t)(cap - k), "%s%u", f > from ? "," : "", g_tas.mv.check[f]);
+    k += snprintf(resp + k, (size_t)(cap - k), "]");
+    return k;
+}
+
+/* The request done, and the movie's state in resp. */
+static void mcp_tas_answer(const char *req, char *resp, int cap) {
     const char *err = mcp_tas_do(req);
     char msg[260];
     json_escape(msg, sizeof msg, g_tas.msg);
@@ -3121,17 +3170,14 @@ static void mcp_cmd_tas(const char *req, char *resp, int cap) {
              (g_tas.seek_req >= 0 || g_tas.start_req) ? 1 : 0, g_tas.mid ? 1 : 0,
              g_tas.recording ? 1 : 0, g_tas.rerecords, g_tas.gz_n, (long long)g_tas.desync,
              g_tas.undo_n, g_mcp.emu && emu_is_running(g_mcp.emu) ? 1 : 0, msg);
-    uint32_t from = 0, count = 0;
-    if (mcp_json_get_u32(req, "from", &from) && mcp_json_get_u32(req, "count", &count)) {
-        k += snprintf(resp + k, (size_t)(cap - k), ",\"held\":[");
-        for (uint32_t f = from; f < from + count && f < g_tas.mv.n && k < cap - 64; f++)
-            k += snprintf(resp + k, (size_t)(cap - k), "%s%u", f > from ? "," : "", g_tas.mv.in[f].held);
-        k += snprintf(resp + k, (size_t)(cap - k), "],\"check\":[");
-        for (uint32_t f = from; f < from + count && f < g_tas.mv.n && k < cap - 64; f++)
-            k += snprintf(resp + k, (size_t)(cap - k), "%s%u", f > from ? "," : "", g_tas.mv.check[f]);
-        k += snprintf(resp + k, (size_t)(cap - k), "]");
-    }
+    k = mcp_tas_frames(req, resp, k, cap);
     snprintf(resp + k, (size_t)(cap - k), "}");
+}
+
+static void mcp_cmd_tas(const char *req, char *resp, int cap) {
+    int locked = g_mcp.emu && g_mcp.emu->thread_alive;
+    if (locked) emu_mutex_lock(&g_mcp.emu->mutex);
+    mcp_tas_answer(req, resp, cap);
     if (locked) emu_mutex_unlock(&g_mcp.emu->mutex);
 }
 
