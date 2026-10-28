@@ -408,6 +408,20 @@ export async function reachRound(emu, stage, opts = {}) {
     }
 }
 
+/* The live stage objects chained from fa_object0_ram, up to the first free
+ * or implausibly sized one. */
+async function stageObjects(emu) {
+    const objects = [];
+    for (let at = FA_OBJECT0_RAM, i = 0; i < 16; i++) {
+        const b = await emu.readMemory(at, 0x18);
+        const size = b.readUInt32LE(OBJ_SIZE);
+        if (!(b.readUInt32LE(0) >>> 31) || !size || size > 0x4000) break;
+        objects.push({ at, size, routine: b.readUInt32LE(OBJ_ROUTINE), disp: b.readUInt32LE(OBJ_DISP) });
+        at += size;
+    }
+    return objects;
+}
+
 /**
  * Play into a round on `stage` (reachRound) and capture it: the live stage
  * objects are read off fa_object0_ram and each one's age becomes a probe
@@ -424,14 +438,7 @@ export async function captureStage(emu, stage, {
     const prepared = prepare ? await prepare(emu) : null;
     if (prepared) { log(prepared); await emu.waitFrames(2, 20000); }
 
-    const objects = [];
-    for (let at = FA_OBJECT0_RAM, i = 0; i < 16; i++) {
-        const b = await emu.readMemory(at, 0x18);
-        const size = b.readUInt32LE(OBJ_SIZE);
-        if (!(b.readUInt32LE(0) >>> 31) || !size || size > 0x4000) break;
-        objects.push({ at, size, routine: b.readUInt32LE(OBJ_ROUTINE), disp: b.readUInt32LE(OBJ_DISP) });
-        at += size;
-    }
+    const objects = await stageObjects(emu);
     const probes = [...SCENE_PROBES,
         ...objects.map((o, i) => [`obj${i}Age`, o.at + OBJ_AGE, 2]),
         ['stageX', STAGE_POS[0], 4], ['stageY', STAGE_POS[1], 4], ['stageZ', STAGE_POS[2], 4],

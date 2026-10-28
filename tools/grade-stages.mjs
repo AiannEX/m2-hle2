@@ -115,6 +115,30 @@ const PREPARE = {
 /* grading one capture (run in a child process)                                */
 /* =========================================================================== */
 
+/* The model table by its entry's three pointers, and by its mesh alone. */
+function modelIndex(rom, readModelEntry) {
+    const byEntry = new Map(), byMesh = new Map();
+    for (let i = 0; i < rom.game.modelTable.count; i++) {
+        const e = readModelEntry(rom, i);
+        if (!e.meshPtr) continue;
+        const k = `${e.uvPtr}/${e.matPtr}/${e.meshPtr}`;
+        if (!byEntry.has(k)) byEntry.set(k, i);
+        if (!byMesh.has(e.meshPtr)) byMesh.set(e.meshPtr, { model: i, uvPtr: e.uvPtr, matPtr: e.matPtr });
+    }
+    return { byEntry, byMesh };
+}
+
+/* Every model a stage's display list can draw, over each animation's frames. */
+function stageModelSet(list, D) {
+    const stageModels = new Set();
+    for (const e of list) {
+        if (e.anim) for (let f = 0; f < 4096; f++) stageModels.add(D.frameModel(e.anim, f));
+        else stageModels.add(e.model);
+    }
+    stageModels.delete(0);     /* the empty table entry: an animation frame that draws nothing */
+    return stageModels;
+}
+
 async function gradeOne(dir, slot) {
     const scene = JSON.parse(fs.readFileSync(path.join(dir, 'fight-scene.json'), 'utf8'));
     const meta = JSON.parse(fs.readFileSync(path.join(dir, 'fight.json'), 'utf8'));
@@ -125,14 +149,7 @@ async function gradeOne(dir, slot) {
     const { readStageTable } = await nc('stages.js');
     const { readModelEntry } = await nc('romset.js');
 
-    const byEntry = new Map(), byMesh = new Map();
-    for (let i = 0; i < rom.game.modelTable.count; i++) {
-        const e = readModelEntry(rom, i);
-        if (!e.meshPtr) continue;
-        const k = `${e.uvPtr}/${e.matPtr}/${e.meshPtr}`;
-        if (!byEntry.has(k)) byEntry.set(k, i);
-        if (!byMesh.has(e.meshPtr)) byMesh.set(e.meshPtr, { model: i, uvPtr: e.uvPtr, matPtr: e.matPtr });
-    }
+    const { byEntry, byMesh } = modelIndex(rom, readModelEntry);
     const stage = readStageTable(rom)[slot];
     const frameTables = D.readFrameTables(rom);
     const list = D.buildStageDisplayList(stage, frameTables);
@@ -143,12 +160,7 @@ async function gradeOne(dir, slot) {
     const result = { slot, loaded: scene.loaded, ambiguous: scene.ambiguous, frames: marks.length - 1,
                      objects: scene.objects.map((o) => o.disp.toString(16)) };
 
-    const stageModels = new Set();
-    for (const e of list) {
-        if (e.anim) for (let f = 0; f < 4096; f++) stageModels.add(D.frameModel(e.anim, f));
-        else stageModels.add(e.model);
-    }
-    stageModels.delete(0);     /* the empty table entry: an animation frame that draws nothing */
+    const stageModels = stageModelSet(list, D);
 
     result.placement = placement();
     if ([FLYING_CARPET, CANYON_CRUISE, GIANT_WING].includes(slot) && scene.objects.length) result.flight = flight();
@@ -166,17 +178,22 @@ async function gradeOne(dir, slot) {
         const skyDrifts = (stage.flags >>> 0x1b) & 1;
         const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-        function partAt(e, f, om) {
-            const pro = moving ? (D.stageWorldFrame(stage, f, frameTables) ?? []) : [];
-            let ops = D.opsAt(e, f);
-            let world = pro.length > 0 && same(ops.slice(0, pro.length), pro);
-            let half = false;
-            if (!world && slot === CANYON_CRUISE && e.layer === 'sky' && pro.length) {
+        /* A part's ops at frame f with the stage frame's prologue taken off:
+         * world when it was all there, half when only its rotations were. */
+        function unframed(e, f, pro) {
+            const ops = D.opsAt(e, f);
+            if (pro.length > 0 && same(ops.slice(0, pro.length), pro)) return { ops: ops.slice(pro.length), world: true, half: false };
+            if (slot === CANYON_CRUISE && e.layer === 'sky' && pro.length) {
                 /* doom_cnt skips the prologue's translate on this stage. */
                 const rot = pro.filter((op) => op[0] !== 't');
-                if (same(ops.slice(0, rot.length), rot)) { half = true; ops = ops.slice(rot.length); }
+                if (same(ops.slice(0, rot.length), rot)) return { ops: ops.slice(rot.length), world: false, half: true };
             }
-            if (world) ops = ops.slice(pro.length);
+            return { ops, world: false, half: false };
+        }
+
+        function partAt(e, f, om) {
+            const pro = moving ? (D.stageWorldFrame(stage, f, frameTables) ?? []) : [];
+            let { ops, world, half } = unframed(e, f, pro);
             if (om) {
                 const fixed = om.fix(ops, ctx);
                 if (!fixed) return null;
@@ -318,15 +335,36 @@ async function gradeOne(dir, slot) {
                 }
             }
 
-            /* One stage draw: the closest unclaimed part, exact or by one of the two freedoms. */
-            function matchDraw(g) {
-                const pool = byModel.get(g.model) ?? [];
+            /* The unclaimed candidate in pool closest to draw g, each one's err set. */
+            function closest(pool, g) {
                 let best = null;
                 for (const c of pool) {
                     if (claimed.has(c.pi)) continue;
                     c.err = maxdiff(g.m, c.pred);
                     if (!best || c.err < best.err) best = c;
                 }
+                return best;
+            }
+
+            /* The first candidate, closest first, that one of the two freedoms
+             * explains at one of its clocks: the Sphynx head aimed, or a
+             * Flying Carpet pole turned to the camera. */
+            function freedom(pool, g) {
+                for (const c of pool.filter((c) => !claimed.has(c.pi) && !c.post).sort((a, b) => a.err - b.err)) {
+                    const r = residual(c, g);
+                    if (c.model === SPHYNX_HEAD && r.rotation) return { c, kind: 'aimed', r };
+                    if (slot === FLYING_CARPET && list[c.pi].layer === 'poles' && r.aboutY) {
+                        const cam = s16(mark[ix.camYaw]) * ANGLE_UNIT;
+                        if (Math.abs(((r.yaw - cam + 540) % 360) - 180) < 1e-3) return { c, kind: 'billboard', r };
+                    }
+                }
+                return null;
+            }
+
+            /* One stage draw: the closest unclaimed part, exact or by one of the two freedoms. */
+            function matchDraw(g) {
+                const pool = byModel.get(g.model) ?? [];
+                const best = closest(pool, g);
                 if (!best) return;
                 out.draws++;
                 const exact = pool.filter((c) => c.pi === best.pi && c.err <= EPS);
@@ -336,15 +374,7 @@ async function gradeOne(dir, slot) {
                     return;
                 }
                 /* The two freedoms, each tried at every clock the part has. */
-                let freed = null;
-                for (const c of pool.filter((c) => !claimed.has(c.pi) && !c.post).sort((a, b) => a.err - b.err)) {
-                    const r = residual(c, g);
-                    if (c.model === SPHYNX_HEAD && r.rotation) { freed = { c, kind: 'aimed', r }; break; }
-                    if (slot === FLYING_CARPET && list[c.pi].layer === 'poles' && r.aboutY) {
-                        const cam = s16(mark[ix.camYaw]) * ANGLE_UNIT;
-                        if (Math.abs(((r.yaw - cam + 540) % 360) - 180) < 1e-3) { freed = { c, kind: 'billboard', r }; break; }
-                    }
-                }
+                const freed = freedom(pool, g);
                 if (freed) {
                     const fpi = freed.c.pi;
                     claimed.add(fpi); partDrawn[fpi]++;

@@ -402,6 +402,14 @@ def print_audio(s, board_dir, wav_dir, t0, r, off, span):
         print(f'  | {env:.3f} {chroma:.3f}  ' + ' '.join(f'{v:+5.1f}' for v in band), end='')
 
 
+def notes_in_span(mn, on, r, off, span):
+    """How many MIDI notes (on the board's clock) and board key-ons fall
+    before span."""
+    nm = sum(1 for n in mn if n['t'] * r + off < span)
+    nb = sum(1 for e in on if e['t'] < span)
+    return nm, nb
+
+
 def grade_song(s, mid_dir, board_dir, wav_dir, secs):
     """One song's row. Returns its (song, channel, length ok) and (song, channel,
     program, dB) lists, or None when either side has no notes."""
@@ -412,8 +420,7 @@ def grade_song(s, mid_dir, board_dir, wav_dir, secs):
     r, off, sc, med = fit(onsets([n['t'] for n in mn]), onsets([e['t'] for e in on]))
     # M2MidiDec plays a song's loop twice (-l); the board loops for ever
     span = min(secs, on[-1]['t'] + 0.5, mn[-1]['t'] * r + off + 0.5)
-    nm = sum(1 for n in mn if n['t'] * r + off < span)
-    nb = sum(1 for e in on if e['t'] < span)
+    nm, nb = notes_in_span(mn, on, r, off, span)
     p = pitch_agreement(mn, on, r, off, span)
     pairs = clean_pairs(mn, on, r, off, span)
     lens = [(s, ch, ok) for ch, ok in note_lengths(pairs, r)]
