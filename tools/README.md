@@ -1264,6 +1264,21 @@ runs of one build differ by 15% of wall clock and by a fraction of a percent of
 throughput. The window's instruction count is printed beside it, so the milliseconds
 an optimisation is worth are the report's last line.
 
+### The voices in C against the slots (`grade-sound-synth.py`)
+
+`--sound-synth` (`src/board/sound_synth.h`, SCSP.md "The voices in C") plays
+the driver's voices in C instead of the SCSP's slots, and it is meant to be
+bit-exact, so it is `cmp`ed: `grade-sound-synth.py` runs `snd_replay` twice on
+each input under the driver in C, `SND_HLE=1` and `SND_HLE=1 SND_SYNTH=1`, and
+the wav, register-write log, RAM dumps and register dumps must be identical.
+`--exact` runs both with `SCSP_EXACT=1`. On a difference it says where the
+audio first parts.
+
+```sh
+ROMDIR=<zips> python tools/grade-sound-synth.py build/Release/snd_replay.exe cap/synth stim/bgm stim/sfx stim/sys stim/fuzz
+ROMDIR=<zips> python tools/grade-sound-synth.py build/Release/snd_replay.exe cap/synth stim/bgm stim/sfx stim/sys stim/fuzz --exact
+```
+
 ### What the first two states measured (2026-09-22)
 
 **ROUND_MASK** (`0xB820` -> `0xC34C`, the VS screen) is a texture decompression
@@ -1543,6 +1558,7 @@ this MAME's SHARC recompiler fails the COP self-test.
 | `mame/match-replay.lua`, `mame/osage-select.lua` | the autoboot scripts behind `match-replay.mjs --mame` and `grade-osage.mjs --mame` (above) |
 | `mame/snd-capture.lua`, `mame/snd_capture.py`, `mame/snd_compare.py` | the sound board's capture and comparison (see "The sound board") |
 | `grade-sound-hle.py` | the sound driver in C (`--sound-hle`) against the driver on the 68000, over `snd_replay` inputs: notes matched by what they play, timing, holds, audio per window, lasting driver-state differences (see "The driver in C against the 68000") |
+| `grade-sound-synth.py` | the voices in C (`--sound-synth`) against the SCSP's slots, both under the driver in C: wav, register log, RAM and register dumps must be the same bytes (see "The voices in C against the slots") |
 | `grade-midi.py` | the board's music against ValleyBell's M2MidiDec: per-song `snd_replay` inputs, the MIDIs corrected to the board's tempo and channels, then notes, pitch (and absolute pitch against the SF2's root keys), lengths, levels and spectra (see "Music against M2MidiDec") |
 | `tests/cop_replay.c` | replays a coprocessor capture through `sharc_exec()`, command by command with the arguments the firmware read, and checks every word it answers: `cop_replay <prefix> [examples-per-op] [only-op-hex]`. `$COPRO_ROM` names the COP data ROM; `OSAGE=<file>` dumps every `Fn_osage` call and `DRAWS=<file>` the draws as CSV, and `RESYNC` / `STATE_EXACT` tune the matrix-state check (`STATE_EXACT`: any differing bit is a bad state, not only 1e-3) |
 | `tests/snd_replay.c` | MAME's MIDI stream through `board/sound.h`: `snd_replay <mame-prefix> <out-prefix> [seconds]`, `$ROMDIR` for the zips. Run it from two builds and `cmp` the five outputs to prove a sound-board change bit-exact (`tools/snd_stimuli.py` writes four more inputs; see "Holding a sound-board change to the same bits") |

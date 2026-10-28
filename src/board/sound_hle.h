@@ -45,6 +45,7 @@
 
 #include "log.h"
 #include "scsp.h"
+#include "sound_synth.h"
 
 /* ---- where things are ---------------------------------------------------- */
 
@@ -197,13 +198,18 @@ static inline void shle_mww(uint32_t a, uint32_t v) { shle_mwb(a, v >> 8); shle_
  * sees it. */
 static inline void shle_sw(uint32_t off, uint32_t v, int sz) {
     if (sndcap_on()) sndcap_scsp(1, off, v, sz);
-    scsp_write(&g_sound.scsp, off, v, sz);
+    if (g_ssyn.on) {                                    /* the voices in C (sound_synth.h) */
+        if ((off & 0xFFFFu) < 0x400) { ssyn_write(off, v, sz); return; }
+        ssyn_chip_write(off, v, sz);
+    } else {
+        scsp_write(&g_sound.scsp, off, v, sz);
+    }
     if (g_sound.scsp.dsp_moved) sound_map_pages(&g_sound);
 }
 static inline void shle_sw8(uint32_t off, uint32_t v)  { shle_sw(off, v & 0xFF, 1); }
 static inline void shle_sw16(uint32_t off, uint32_t v) { shle_sw(off, v & 0xFFFF, 2); }
 static inline void shle_sw32(uint32_t off, uint32_t v) { shle_sw(off, v, 4); }
-static inline uint16_t shle_sr16(uint32_t off) { return scsp_peek16(&g_sound.scsp, off & ~1u); }
+static inline uint16_t shle_sr16(uint32_t off) { return ssyn_scsp_peek16(off & ~1u); }
 static inline uint8_t shle_sr8(uint32_t off) {
     uint16_t w = shle_sr16(off);
     return (uint8_t)((off & 1) ? w : w >> 8);
@@ -213,6 +219,7 @@ static inline uint8_t shle_sr8(uint32_t off) {
  * monitor (btst #7,$409): which 4 KB half of its window the chip is in. */
 static inline bool shle_ca_upper(unsigned i) {
     scsp_t *s = &g_sound.scsp;
+    if (g_ssyn.on) return ssyn_ca_upper(i);
     if (s->owed && s->done[i] < s->owed) { scsp_slot_run(s, i, s->owed); s->catches++; }
     return (s->slot[i].cur >> (SCSP_SHIFT + 12)) & 1;
 }
@@ -221,7 +228,8 @@ static inline bool shle_ca_upper(unsigned i) {
  * reading: what it owes out of there is made first */
 static void shle_copy(uint32_t dst, uint32_t src, uint32_t n) {
     dst &= 0x7FFFFu;
-    scsp_ram_touch(&g_sound.scsp, dst, n, 1);
+    if (g_ssyn.on) ssyn_ram_touch(dst, n);
+    else           scsp_ram_touch(&g_sound.scsp, dst, n, 1);
     uint8_t *d = g_sound.ram + dst;
     src &= 0xFFFFFFu;
     if (src >= 0x800000u && g_sound.samples) {          /* the sample ROM, as one run where it is one */
@@ -1846,7 +1854,8 @@ static void shle_clear_step(scsp_t *s, uint64_t now) {
     uint64_t to = (now - g_shle.clear_at) / SHLE_CLEAR_BYTE;
     if (to > SOUND_RAM_SIZE) to = SOUND_RAM_SIZE;
     if (to <= g_shle.cleared) return;
-    scsp_ram_touch(s, g_shle.cleared, (uint32_t)to - g_shle.cleared, 1);
+    if (g_ssyn.on) ssyn_ram_touch(g_shle.cleared, (uint32_t)to - g_shle.cleared);
+    else           scsp_ram_touch(s, g_shle.cleared, (uint32_t)to - g_shle.cleared, 1);
     memset(g_sound.ram + g_shle.cleared, 0, (uint32_t)to - g_shle.cleared);
     g_shle.cleared = (uint32_t)to;
 }
@@ -1883,14 +1892,17 @@ static void shle_run(uint32_t n) {
             next = shle_next_due();
         }
         if (--g_shle.pass_left == 0) shle_pass(s, now);
-        scsp_tick(s);
+        if (g_ssyn.on) ssyn_tick();
+        else           scsp_tick(s);
     }
-    scsp_sync(s);
+    if (g_ssyn.on) ssyn_flush();
+    else           scsp_sync(s);
 }
 
 /* Take the HLE for this board, or leave it: at a reset (sound_reset). */
 static inline void shle_reset(void) {
-    g_shle.on = g_sound_hle_want && shle_driver_known();
+    g_shle.on = (g_sound_hle_want || g_sound_synth_want) && shle_driver_known();
+    ssyn_reset(g_shle.on && g_sound_synth_want);
     g_shle.events = g_shle.keyons = g_shle.unknown = 0;
     g_shle.warned_fm = g_shle.warned_a7x = false;
     /* The driver's init comes 0.4 s after reset (SHLE_INIT_CYCLES), as on the

@@ -128,7 +128,9 @@ static int  g_no_sound_board = 0;
  * the SCSP is the same chip either way. The i960 sees the same UART line, so
  * the game runs the same frames (det_digest --sound-hle); what changes is when
  * the notes land, by a millisecond or two, and the cost: about half the sound
- * board's. */
+ * board's. --sound-synth (M2HLE_SOUND_SYNTH=1) takes the driver in C and plays
+ * its voices in C as well, in place of the SCSP's slots (board/sound_synth.h):
+ * the same samples, to the bit. */
 static int  g_kiosk_w    = KIOSK_DEFAULT_WIDTH;
 static int  g_kiosk_h    = KIOSK_DEFAULT_HEIGHT;
 static int  g_kiosk_show = 0;      /* --kiosk-show: start it on screen, not parked */
@@ -1940,6 +1942,7 @@ static void event(const sapp_event* ev) {
 static void env_switches(void) {
     { const char *e = getenv("M2HLE_NO_SOUND_BOARD"); if (e && e[0] == '1') g_no_sound_board = 1; }
     { const char *e = getenv("M2HLE_SOUND_HLE"); if (e && e[0] == '1') g_sound_hle_want = 1; }
+    { const char *e = getenv("M2HLE_SOUND_SYNTH"); if (e && e[0] == '1') g_sound_synth_want = 1; }
     { const char *e = getenv("M2HLE_SCSP_EXACT"); if (e && e[0] == '1') g_scsp_exact = 1; }
     { const char *e = getenv("M2HLE_TEXLOAD_HLE"); if (e && e[0] == '0') g_texload_hle = 0; }
     { const char *e = getenv("M2HLE_SPIN_SKIP"); if (e && e[0] == '0') g_spin_skip = 0; }
@@ -2112,6 +2115,8 @@ static void parse_args(int argc, char **argv) {
             g_no_sound_board = 1;
         } else if (strcmp(argv[i], "--sound-hle") == 0) {
             g_sound_hle_want = 1;
+        } else if (strcmp(argv[i], "--sound-synth") == 0) {   /* and the voices in C (sound_synth.h) */
+            g_sound_synth_want = 1;
         } else if (strcmp(argv[i], "--scsp-exact") == 0) {   /* the DSP every sample (scsp.h, "A quiet DSP") */
             g_scsp_exact = 1;
         } else if (strcmp(argv[i], "--gems-i960") == 0) {

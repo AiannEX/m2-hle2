@@ -9,6 +9,7 @@
  *   1 makes it sync every sample, the old lockstep cost)
  *   $ROMDIR (else $ROMS_DIR): directory with sfight.zip and schamp.zip
  *   $SND_HLE=1: the sound driver in C instead of on the 68000 (sound_hle.h)
+ *   $SND_SYNTH=1: the driver in C and its voices in C, no SCSP slots (sound_synth.h)
  *   $SCSP_EXACT=1: the DSP every sample instead of skipped while quiet (scsp.h, "A quiet DSP")
  */
 #define NDEBUG 1
@@ -120,6 +121,7 @@ int main(int argc, char **argv) {
     snprintf(parent, sizeof parent, "%s/schamp.zip", romdir);
     if (sfight_load(&rs, child, parent) != 0 || !rs.audiocpu || !rs.samples) { fprintf(stderr, "ROM load failed (%s)\n", romdir); return 1; }
     if (getenv("SND_HLE")) g_sound_hle_want = atoi(getenv("SND_HLE"));
+    if (getenv("SND_SYNTH")) g_sound_synth_want = atoi(getenv("SND_SYNTH"));   /* the voices in C too (sound_synth.h) */
     if (getenv("SCSP_EXACT")) g_scsp_exact = atoi(getenv("SCSP_EXACT"));   /* the DSP every sample (scsp.h, "A quiet DSP") */   /* the driver in C (sound_hle.h) */
     sound_reset();
     sound_load_rom(rs.audiocpu, (uint32_t)rs.audiocpu_size);

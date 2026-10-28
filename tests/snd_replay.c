@@ -97,6 +97,7 @@ static int load_board(const char *romdir) {
         fprintf(stderr, "ROM load failed (%s)\n", romdir); return 1;
     }
     if (getenv("SND_HLE")) g_sound_hle_want = atoi(getenv("SND_HLE"));
+    if (getenv("SND_SYNTH")) g_sound_synth_want = atoi(getenv("SND_SYNTH"));   /* the voices in C too (sound_synth.h) */
     if (getenv("SCSP_EXACT")) g_scsp_exact = atoi(getenv("SCSP_EXACT"));   /* the DSP every sample (scsp.h, "A quiet DSP") */
     sound_reset();
     sound_load_rom(rs.audiocpu, (uint32_t)rs.audiocpu_size);
@@ -178,6 +179,7 @@ static void report(uint32_t n, uint32_t nm, size_t next) {
                           (unsigned long long)g_shle.events, (unsigned long long)g_shle.keyons, (unsigned long long)g_shle.unknown);
     if (g_shle.on) printf("sound HLE: %llu refill chunks\n", (unsigned long long)g_shle.chunks_total);
     else if (g_sound_hle_want) printf("sound HLE: driver not known (code hash %08X); the board ran\n", shle_code_hash());
+    if (g_ssyn.on) printf("sound synth: %llu samples, %llu key-ons\n", (unsigned long long)g_ssyn.samples, (unsigned long long)g_ssyn.keyons);
     printf("replayed: %u records, %u marks; 68000 pc 0x%06X; irqs L1 %llu L2 %llu L3 %llu; midi fed %zu\n",
            n, nm, g_sound.m68k.cpu.pc, (unsigned long long)g_sound.irqs[1],
            (unsigned long long)g_sound.irqs[2], (unsigned long long)g_sound.irqs[3], next);

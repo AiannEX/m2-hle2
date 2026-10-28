@@ -313,3 +313,62 @@ Cortex-A55 60 s of it in 4.40 s against 8.21 s (effects storm 5.36 against
 9.11). What is left is the chip, and the DSP is most of that: in STF's music
 its return is exactly zero (measured by muting it), which the DSP shortcut
 under "What is left" would take.
+
+## The voices in C (`--sound-synth`)
+
+`src/board/sound_synth.h` takes the next step (Pinboard #1737): under the
+driver in C, the 32 voices are played in C too, with no SCSP slots. The driver
+keys a note and the synth plays the sample at its pitch, through its envelope,
+LFO and pan, straight into the mix: `--sound-synth`, `M2HLE_SOUND_SYNTH=1`,
+the libretro option "Sound driver" = "In C, voices too", `SND_SYNTH=1` in
+`snd_replay`/`snd_bench`. It implies `--sound-hle` and, like it, takes only
+STF's program ROM; anything else stays on the 68000 and the chip.
+
+**What stays the chip's.** The reverb DSP, its MIXS inputs, the direct outs'
+sum, MVOL and the DAC: common and DSP register writes still go to
+`g_sound.scsp` (`ssyn_chip_write`), and the synth hands each block's voice
+sums and MIXS to the chip's own mixer. The DSP programs are the game's, and
+they are not per-note work.
+
+**Exact, by construction.** Each voice is MAME's arithmetic, not an
+approximation of it: the pitch step `(1024 + FNS) << (OCT + 2)` in 1/4096ths
+of a sample, the linear interpolation between the two samples either side,
+the envelope's rate table and its attack curve, the LFO's waves and its
+pitch/amplitude scale tables, the TL/pan gain tables, the loop modes
+(forward, reverse, alternating), and 8- and 16-bit PCM. So what it plays is
+the chip's sample for sample, and `tools/grade-sound-synth.py` checks that by
+identity: over `snd_replay`'s bgm, sfx, sys and fuzz inputs, with and without
+`SCSP_EXACT`, the audio, the driver's register reads, its RAM and the
+register file are the same bytes. Since the driver in C is graded against the
+68000 (above) and the chip against MAME, the synth carries both gradings.
+
+**What makes it exact, besides the maths:**
+
+- *It catches up where the chip would.* The chip runs its slots up to "now"
+  (`scsp_sync`) on a slot write, on a common write that `scsp_write_syncs`,
+  on a sound RAM write inside the DSP's ring, at a 1024-sample block and at
+  the end of the driver's run; the synth flushes at exactly those points, so
+  the quiet-DSP bookkeeping (`scsp_dsp_due`, the frozen ring) skips the same
+  samples.
+- *A read of one voice runs only that voice.* The driver polls a voice's CA
+  (the streaming refill) and writes sample RAM outside the DSP ring; the chip
+  runs that voice alone up to now for those, and so does the synth
+  (`done[32]`, `ssyn_ca_upper`, `ssyn_ram_touch`).
+- *Peeks don't catch up* (the capture's register dumps, MCP's `read_comm`),
+  as on the chip (`scsp_peek16`); they read the synth's registers when it is
+  on (`ssyn_scsp_peek16`).
+
+**The i960 cannot tell either**: the UART is the same, the driver in C is the
+same, and only what the voices compute moved. `det_digest --sound --sound-synth`
+against `--sound-hle`: same digest and same PCM over 3600 frames of attract;
+with `--rewind 8`, 148 flat-state loads, still the same. No protocol bump.
+
+**Cost.** A note is a sample pointer, a step and an envelope; a steady voice
+(releasing or holding in decay 2, no LFO, a forward loop or none) takes a
+tight loop into a buffer and a vectorised mix. The effects input (30 s) runs
+in 0.20 s against 0.216 s through the slots (`snd_bench`), about 7% less;
+the DSP is still most of what is left.
+
+**Savestates.** The synth's state is the `SNDSYNTH` entry (and rollback's
+`SSYN` part). It is optional: a state saved without it loads with the synth
+off and the chip's slots in charge.

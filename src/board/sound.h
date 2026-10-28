@@ -191,6 +191,8 @@ typedef struct {
 
 static sound_state_t g_sound;
 
+#include "sound_synth.h"   /* the voices in C, in place of the chip's slots (Pinboard #1737) */
+
 /* Wait for the sound thread to finish what it was handed ("The sound thread",
  * below). Anything that reads or changes the sound board from the i960's side
  * calls it first. */
@@ -291,7 +293,7 @@ static inline void sndcap_frame(uint32_t frame, uint32_t frame_counter) {
     uint8_t regs[1072] = {0};
     for (uint32_t o = 0; o < 0x430u; o += 2) {
         if (o >= 0x404u && o < 0x40Au) continue;
-        uint16_t w = scsp_peek16(&g_sound.scsp, o);
+        uint16_t w = ssyn_scsp_peek16(o);
         regs[o] = (uint8_t)w; regs[o + 1] = (uint8_t)(w >> 8);
     }
     fwrite(regs, 1, sizeof regs, c->regsf);
