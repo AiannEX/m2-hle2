@@ -1922,35 +1922,42 @@ static void event(const sapp_event* ev) {
     event_hotkey(ev);
 }
 
-sapp_desc sokol_main(int argc, char* argv[]) {
+/* The switches the environment can set too (a script's or a service's). */
+static void env_switches(void) {
     { const char *e = getenv("M2HLE_NO_SOUND_BOARD"); if (e && e[0] == '1') g_no_sound_board = 1; }
     { const char *e = getenv("M2HLE_SOUND_HLE"); if (e && e[0] == '1') g_sound_hle_want = 1; }
     { const char *e = getenv("M2HLE_SCSP_EXACT"); if (e && e[0] == '1') g_scsp_exact = 1; }
     { const char *e = getenv("M2HLE_TEXLOAD_HLE"); if (e && e[0] == '0') g_texload_hle = 0; }
     { const char *e = getenv("M2HLE_SPIN_SKIP"); if (e && e[0] == '0') g_spin_skip = 0; }
-    /* The log's own options come first: the first line logged, a warning about
-     * any argument below included, opens the file. Without --log, an instance
-     * given its own --mcp-port gets its own file, because instances started
-     * side by side from one directory (a training population) otherwise all
-     * truncate and interleave one m2hle.log (issue #69). */
-    {
-        const char *log_path = NULL, *log_levels = NULL;
-        int port = 0;
-        for (int i = 1; i + 1 < argc; i++) {
-            if      (strcmp(argv[i], "--log") == 0)       log_path   = argv[++i];
-            else if (strcmp(argv[i], "--log-level") == 0) log_levels = argv[++i];
-            else if (strcmp(argv[i], "--mcp-port") == 0)  port       = atoi(argv[++i]);
-        }
-        char per_port[32];
-        if (!log_path && port > 0 && port != g_mcp_port) {
-            snprintf(per_port, sizeof per_port, "m2hle-%d.log", port);
-            log_path = per_port;
-        }
-        log_set_path(log_path);
-        if (log_levels && !log_set_levels(log_levels))
-            LOG_WARN("--log-level %s: expected LEVEL or CHANNEL=LEVEL, comma separated, "
-                     "LEVEL one of debug, info, warn, error, off; keeping everything", log_levels);
+}
+
+/* The log's own options come first: the first line logged, a warning about
+ * any argument below included, opens the file. Without --log, an instance
+ * given its own --mcp-port gets its own file, because instances started
+ * side by side from one directory (a training population) otherwise all
+ * truncate and interleave one m2hle.log (issue #69). */
+static void log_options(int argc, char **argv) {
+    const char *log_path = NULL, *log_levels = NULL;
+    int port = 0;
+    for (int i = 1; i + 1 < argc; i++) {
+        if      (strcmp(argv[i], "--log") == 0)       log_path   = argv[++i];
+        else if (strcmp(argv[i], "--log-level") == 0) log_levels = argv[++i];
+        else if (strcmp(argv[i], "--mcp-port") == 0)  port       = atoi(argv[++i]);
     }
+    char per_port[32];
+    if (!log_path && port > 0 && port != g_mcp_port) {
+        snprintf(per_port, sizeof per_port, "m2hle-%d.log", port);
+        log_path = per_port;
+    }
+    log_set_path(log_path);
+    if (log_levels && !log_set_levels(log_levels))
+        LOG_WARN("--log-level %s: expected LEVEL or CHANNEL=LEVEL, comma separated, "
+                 "LEVEL one of debug, info, warn, error, off; keeping everything", log_levels);
+}
+
+/* Every other option, one case each: a flat list, like the other command-line
+ * parsers SPAGHETTI.md leaves as they are. */
+static void parse_args(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
             strncpy(g_rom_path, argv[++i], sizeof(g_rom_path) - 1);
@@ -2284,15 +2291,11 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             snprintf(g_net_cli.ps3_wire, sizeof(g_net_cli.ps3_wire), "%s", argv[++i]);
         }
     }
-    /* The record switch is the player's (replay.cfg); a headless run keeps
-     * only what its command line says, as the graders boot blank. */
-    if (!g_headless && !g_replay_cli_set) replay_settings_load();
-    if (!g_headless) lightgun_ui_settings_load();   /* the crosshair (Pinboard #1496) */
-    scripts_setup();
-    if (g_headless) exit(headless_main());
-    /* Capture mode wants the game moving, not a first frame held on pause. */
-    if (g_kiosk_on) g_autorun = 1;
+}
 
+/* The window sokol opens: kiosk mode's size, the depth-stencil swapchain
+ * and the icon. */
+static sapp_desc app_desc(void) {
     /* The window's own icon, from the same art as the tray icon (app_icon.h),
      * rendered at each size rather than downscaled from one bitmap. */
     static uint8_t icon16[16 * 16 * 4], icon32[32 * 32 * 4], icon64[64 * 64 * 4];
@@ -2333,4 +2336,19 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             },
         },
     };
+}
+
+sapp_desc sokol_main(int argc, char* argv[]) {
+    env_switches();
+    log_options(argc, argv);
+    parse_args(argc, argv);
+    /* The record switch is the player's (replay.cfg); a headless run keeps
+     * only what its command line says, as the graders boot blank. */
+    if (!g_headless && !g_replay_cli_set) replay_settings_load();
+    if (!g_headless) lightgun_ui_settings_load();   /* the crosshair (Pinboard #1496) */
+    scripts_setup();
+    if (g_headless) exit(headless_main());
+    /* Capture mode wants the game moving, not a first frame held on pause. */
+    if (g_kiosk_on) g_autorun = 1;
+    return app_desc();
 }

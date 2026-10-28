@@ -221,24 +221,29 @@ static bool g_sound_on;             /* the sound board is attached (sound_start 
 /* Keyboard, for desktop runs: the debugger's layout (input.h), which is
  * m2emulator's (Pinboard #1347), and its INPUT_KEYS_DRIVING on a racing
  * cabinet. F1 is the lobby here, so the service button is MAME's 9 alone. */
+static int key_to_action_driving(SDL_Scancode sc) {
+    switch (sc) {
+        case SDL_SCANCODE_UP:   return GAME_INPUT_P1_B1;    /* accelerator */
+        case SDL_SCANCODE_DOWN: return GAME_INPUT_P1_B2;    /* brake */
+        case SDL_SCANCODE_Z:    return GAME_INPUT_P1_B3;    /* VR1 .. VR4 */
+        case SDL_SCANCODE_X:    return GAME_INPUT_P1_B4;
+        case SDL_SCANCODE_C:    return GAME_INPUT_P2_B3;
+        case SDL_SCANCODE_V:    return GAME_INPUT_P2_B4;
+        case SDL_SCANCODE_W:    return GAME_INPUT_P1_UP;    /* shift up */
+        case SDL_SCANCODE_Q:    return GAME_INPUT_P1_DOWN;  /* shift down */
+        case SDL_SCANCODE_A:    return GAME_INPUT_GEAR_1;   /* a gear's button */
+        case SDL_SCANCODE_S:    return GAME_INPUT_GEAR_2;
+        case SDL_SCANCODE_D:    return GAME_INPUT_GEAR_3;
+        case SDL_SCANCODE_F:    return GAME_INPUT_GEAR_4;
+        case SDL_SCANCODE_G:    return GAME_INPUT_GEAR_N;
+        default:                return -1;
+    }
+}
+
 static int key_to_action(SDL_Scancode sc) {
     if (input_keys_driving(g_active_profile)) {
-        switch (sc) {
-            case SDL_SCANCODE_UP:   return GAME_INPUT_P1_B1;    /* accelerator */
-            case SDL_SCANCODE_DOWN: return GAME_INPUT_P1_B2;    /* brake */
-            case SDL_SCANCODE_Z:    return GAME_INPUT_P1_B3;    /* VR1 .. VR4 */
-            case SDL_SCANCODE_X:    return GAME_INPUT_P1_B4;
-            case SDL_SCANCODE_C:    return GAME_INPUT_P2_B3;
-            case SDL_SCANCODE_V:    return GAME_INPUT_P2_B4;
-            case SDL_SCANCODE_W:    return GAME_INPUT_P1_UP;    /* shift up */
-            case SDL_SCANCODE_Q:    return GAME_INPUT_P1_DOWN;  /* shift down */
-            case SDL_SCANCODE_A:    return GAME_INPUT_GEAR_1;   /* a gear's button */
-            case SDL_SCANCODE_S:    return GAME_INPUT_GEAR_2;
-            case SDL_SCANCODE_D:    return GAME_INPUT_GEAR_3;
-            case SDL_SCANCODE_F:    return GAME_INPUT_GEAR_4;
-            case SDL_SCANCODE_G:    return GAME_INPUT_GEAR_N;
-            default:                break;
-        }
+        int a = key_to_action_driving(sc);
+        if (a >= 0) return a;
     }
     switch (sc) {
         case SDL_SCANCODE_UP:    return GAME_INPUT_P1_UP;
@@ -1231,49 +1236,59 @@ static void gun_aim_px(float x, float y) {
     lightgun_host_aim(0, x, y, g_gun_rect[0], g_gun_rect[1], g_gun_rect[2], g_gun_rect[3]);
 }
 
+static void gun_mouse_motion(const SDL_MouseMotionEvent *m, bool live) {
+    if (m->which != SDL_TOUCH_MOUSEID && live && !g_gun_finger_on)
+        gun_aim_px(m->x * g_gun_px_x, m->y * g_gun_px_y);
+}
+
+static void gun_finger_motion(const SDL_TouchFingerEvent *f, bool live) {
+    if (g_gun_finger_on && f->fingerID == g_gun_finger && live)
+        gun_aim_px(f->x * g_gun_fb[0], f->y * g_gun_fb[1]);
+}
+
+/* The mouse's buttons: the left one is the trigger, the right one reloads. */
+static void gun_mouse_button(const SDL_MouseButtonEvent *b, bool down, bool live) {
+    if (b->which == SDL_TOUCH_MOUSEID) return;
+    if (down && (!live || g_gun_finger_on)) return;
+    if (down) gun_aim_px(b->x * g_gun_px_x, b->y * g_gun_px_y);
+    if (b->button == SDL_BUTTON_LEFT)  lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, down);
+    if (b->button == SDL_BUTTON_RIGHT) lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, down);
+}
+
+/* A finger lands: it holds the gun, and fires on the picture or reloads off it. */
+static void gun_finger_down(const SDL_TouchFingerEvent *f, bool live) {
+    if (g_gun_finger_on || !live) return;
+    const float x = f->x * g_gun_fb[0], y = f->y * g_gun_fb[1];
+    const float *r = g_gun_rect;
+    g_gun_finger = f->fingerID;
+    g_gun_finger_on = true;
+    gun_aim_px(x, y);
+    bool on = x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
+    lightgun_host_button(0, on ? LIGHTGUN_HOST_TRIGGER : LIGHTGUN_HOST_RELOAD, true);
+}
+
+/* The finger holding the gun lifts: both its buttons let go. */
+static void gun_finger_up(const SDL_TouchFingerEvent *f) {
+    if (!g_gun_finger_on || f->fingerID != g_gun_finger) return;
+    g_gun_finger_on = false;
+    lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, false);
+    lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, false);
+}
+
 static void gun_event(const SDL_Event *ev) {
     if (!lightgun_host_on()) return;
     const bool live = g_gun_rect[2] > 0.0f;
     switch (ev->type) {
-        case SDL_EVENT_MOUSE_MOTION:
-            if (ev->motion.which != SDL_TOUCH_MOUSEID && live && !g_gun_finger_on)
-                gun_aim_px(ev->motion.x * g_gun_px_x, ev->motion.y * g_gun_px_y);
-            break;
+        case SDL_EVENT_MOUSE_MOTION:      gun_mouse_motion(&ev->motion, live);        break;
         case SDL_EVENT_WINDOW_MOUSE_LEAVE:
             if (!g_gun_finger_on) lightgun_host_aim_away(0);
             break;
-        case SDL_EVENT_MOUSE_BUTTON_DOWN:
-        case SDL_EVENT_MOUSE_BUTTON_UP: {
-            if (ev->button.which == SDL_TOUCH_MOUSEID) break;
-            const bool down = ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
-            if (down && (!live || g_gun_finger_on)) break;
-            if (down) gun_aim_px(ev->button.x * g_gun_px_x, ev->button.y * g_gun_px_y);
-            if (ev->button.button == SDL_BUTTON_LEFT)  lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, down);
-            if (ev->button.button == SDL_BUTTON_RIGHT) lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, down);
-            break;
-        }
-        case SDL_EVENT_FINGER_DOWN: {
-            if (g_gun_finger_on || !live) break;
-            const float x = ev->tfinger.x * g_gun_fb[0], y = ev->tfinger.y * g_gun_fb[1];
-            const float *r = g_gun_rect;
-            g_gun_finger = ev->tfinger.fingerID;
-            g_gun_finger_on = true;
-            gun_aim_px(x, y);
-            bool on = x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
-            lightgun_host_button(0, on ? LIGHTGUN_HOST_TRIGGER : LIGHTGUN_HOST_RELOAD, true);
-            break;
-        }
-        case SDL_EVENT_FINGER_MOTION:
-            if (g_gun_finger_on && ev->tfinger.fingerID == g_gun_finger && live)
-                gun_aim_px(ev->tfinger.x * g_gun_fb[0], ev->tfinger.y * g_gun_fb[1]);
-            break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN: gun_mouse_button(&ev->button, true, live);  break;
+        case SDL_EVENT_MOUSE_BUTTON_UP:   gun_mouse_button(&ev->button, false, live); break;
+        case SDL_EVENT_FINGER_DOWN:       gun_finger_down(&ev->tfinger, live);        break;
+        case SDL_EVENT_FINGER_MOTION:     gun_finger_motion(&ev->tfinger, live);      break;
         case SDL_EVENT_FINGER_UP:
-        case SDL_EVENT_FINGER_CANCELED:
-            if (!g_gun_finger_on || ev->tfinger.fingerID != g_gun_finger) break;
-            g_gun_finger_on = false;
-            lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, false);
-            lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, false);
-            break;
+        case SDL_EVENT_FINGER_CANCELED:   gun_finger_up(&ev->tfinger); break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             g_gun_finger_on = false;
             lightgun_host_release_all();
