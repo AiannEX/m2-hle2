@@ -652,6 +652,12 @@ static int32_t scsp_slot_sample(scsp_t *s, scsp_slot_t *sl, int16_t *sous, unsig
     return sample;
 }
 
+#if defined(_MSC_VER) && !defined(__clang__)
+#define SCSP_FORCE_INLINE __forceinline
+#else
+#define SCSP_FORCE_INLINE inline __attribute__((always_inline))
+#endif
+
 /* ---- DSP ----------------------------------------------------------------------- */
 
 static inline int32_t scsp_sext(int32_t v, int bits) { return (int32_t)((uint32_t)v << (32 - bits)) >> (32 - bits); }
@@ -682,7 +688,7 @@ static inline int scsp_clz32(uint32_t v) {
  * was 2% slower under MSVC: the exponent of any one tap drifts slowly, so the
  * branch predicts, and a predicted branch lets the read's consumers start
  * before the exponent is known. */
-static uint16_t scsp_dsp_pack(int32_t val) {
+static SCSP_FORCE_INLINE uint16_t scsp_dsp_pack(int32_t val) {
     uint32_t sign = ((uint32_t)val >> 23) & 1;
     uint32_t temp = ((uint32_t)val ^ ((uint32_t)val << 1)) & 0xFFFFFFu;
     uint32_t exponent = (uint32_t)scsp_clz32((temp << 8) | 0x80000u);
@@ -690,7 +696,7 @@ static uint16_t scsp_dsp_pack(int32_t val) {
     return (uint16_t)(mant | sign << 15 | exponent << 11);
 }
 
-static int32_t scsp_dsp_unpack(uint16_t val) {
+static SCSP_FORCE_INLINE int32_t scsp_dsp_unpack(uint16_t val) {
     int sign = (val >> 15) & 1;
     int exponent = (val >> 11) & 0xF;
     int32_t uval = (val & 0x7FF) << 11;
@@ -861,7 +867,7 @@ static void scsp_dsp_step(scsp_t *s) {
     scsp_dsp_t *d = &s->dsp;
     if (d->stopped) return;
     if (!d->ops_ok || d->ops_last != d->last_step) scsp_dsp_decode(d);
-    if (d->known) { scsp_dsp_known[d->known - 1].run(s); return; }
+    if (d->known && scsp_dsp_known[d->known - 1].run(s)) return;   /* 0: its ring is past RAM */
     int16_t efreg[17] = {0};     /* [16] takes the SCSP_DK_ANY steps that write no EFREG */
 
     /* The input bank IRA indexes: MEMS, then MIXS << 4, then EXTS << 8. MEMS
@@ -1016,12 +1022,6 @@ static inline void scsp_latch(scsp_t *s) {                /* the slot monitor's 
     uint32_t eg  = (0x1Fu - (uint32_t)(sl->vol >> (SCSP_EG_SHIFT + 5))) & 0x1F;
     s->mslc_data = (uint16_t)((ca << 7) | (sgc << 5) | eg);
 }
-
-#if defined(_MSC_VER) && !defined(__clang__)
-#define SCSP_FORCE_INLINE __forceinline
-#else
-#define SCSP_FORCE_INLINE inline __attribute__((always_inline))
-#endif
 
 /* scsp_slot_wave for scsp_slot_run_pcm: PCM only, no FM, RAM read in place.
  * `inside`: both reads are inside RAM (scsp_pcm_run_inside), no wrap or test.
