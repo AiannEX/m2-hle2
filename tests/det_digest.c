@@ -599,33 +599,23 @@ static void rewind_report(void) {
                 (double)rw.moved[i] / rw.compared);
 }
 
+/* A key script's letters: player 1's, then player 2's, and their actions. */
+static const char k_key_letters[] = "udlr1234scUDLR!@#$SC";
+static const int  k_key_acts[] = {
+    GAME_INPUT_P1_UP, GAME_INPUT_P1_DOWN, GAME_INPUT_P1_LEFT, GAME_INPUT_P1_RIGHT,
+    GAME_INPUT_P1_B1, GAME_INPUT_P1_B2, GAME_INPUT_P1_B3, GAME_INPUT_P1_B4,
+    GAME_INPUT_P1_START, GAME_INPUT_P1_COIN,
+    GAME_INPUT_P2_UP, GAME_INPUT_P2_DOWN, GAME_INPUT_P2_LEFT, GAME_INPUT_P2_RIGHT,
+    GAME_INPUT_P2_B1, GAME_INPUT_P2_B2, GAME_INPUT_P2_B3, GAME_INPUT_P2_B4,
+    GAME_INPUT_P2_START, GAME_INPUT_P2_COIN,
+};
+
 static uint32_t keys_mask(const char *p, const char *end) {
     const game_input_map_t *in = &g_active_profile->input;
     uint32_t m = 0;
     for (; p < end; p++) {
-        switch (*p) {
-            case 'u': m |= in->bits[GAME_INPUT_P1_UP];    break;
-            case 'd': m |= in->bits[GAME_INPUT_P1_DOWN];  break;
-            case 'l': m |= in->bits[GAME_INPUT_P1_LEFT];  break;
-            case 'r': m |= in->bits[GAME_INPUT_P1_RIGHT]; break;
-            case '1': m |= in->bits[GAME_INPUT_P1_B1];    break;
-            case '2': m |= in->bits[GAME_INPUT_P1_B2];    break;
-            case '3': m |= in->bits[GAME_INPUT_P1_B3];    break;
-            case '4': m |= in->bits[GAME_INPUT_P1_B4];    break;
-            case 's': m |= in->bits[GAME_INPUT_P1_START]; break;
-            case 'c': m |= in->bits[GAME_INPUT_P1_COIN];    break;
-            case 'U': m |= in->bits[GAME_INPUT_P2_UP];    break;
-            case 'D': m |= in->bits[GAME_INPUT_P2_DOWN];  break;
-            case 'L': m |= in->bits[GAME_INPUT_P2_LEFT];  break;
-            case 'R': m |= in->bits[GAME_INPUT_P2_RIGHT]; break;
-            case '!': m |= in->bits[GAME_INPUT_P2_B1];    break;
-            case '@': m |= in->bits[GAME_INPUT_P2_B2];    break;
-            case '#': m |= in->bits[GAME_INPUT_P2_B3];    break;
-            case '$': m |= in->bits[GAME_INPUT_P2_B4];    break;
-            case 'S': m |= in->bits[GAME_INPUT_P2_START]; break;
-            case 'C': m |= in->bits[GAME_INPUT_P2_COIN];    break;
-            default: break;
-        }
+        const char *k = *p ? strchr(k_key_letters, *p) : NULL;
+        if (k) m |= in->bits[k_key_acts[k - k_key_letters]];
     }
     return m;
 }
@@ -639,6 +629,38 @@ static void cop_tap(uint32_t tag, uint32_t val) {
 
 static FILE    *trace_out;
 static uint32_t trace_frame;
+
+/* The trace's line for the instruction at ip: the registers' hash after it. */
+static void trace_line(uint32_t ip, const i960_cpu_t *c) {
+    uint64_t h = fnv(FNV0, c->globals.g, sizeof c->globals.g);
+    h = fnv(h, c->locals.r, sizeof c->locals.r);
+    h = fnv(h, &c->sfr.ac, sizeof c->sfr.ac);
+    h = fnv(h, c->fp_regs, sizeof c->fp_regs);
+    fprintf(trace_out, "%08x %016llx\n", ip, (unsigned long long)h);
+}
+
+/* After a traced step: a hook's extra steps, the sound board's interrupts and
+ * the timers; true when the slice stops here (a warning, a watchpoint, an
+ * unknown COP command). */
+static bool trace_after_step(emu_thread_ctx_t *ctx, uint64_t *steps, int *i) {
+    if (g_hle_extra) { ctx->total_steps += g_hle_extra; *steps += g_hle_extra; *i += (int)g_hle_extra; g_hle_extra = 0; }
+    if (s_irq_in_service && g_active_profile) emu_service_sound_again(ctx);
+    else if (g_irqt_sound_kick && g_active_profile) { g_irqt_sound_kick = 0; emu_offer_sound(ctx); }
+    emu_timers_after_step(ctx);
+    return g_log.warn_triggered || g_wp.hit || g_sharc.unknown_triggered;
+}
+
+/* The end of a traced slice: the frame edge, the sound, the snapshots. */
+static void trace_slice_end(emu_thread_ctx_t *ctx) {
+    bool frame = g_vblank_edge != 0;
+    if (frame && g_active_profile->quirks.board_vblank) {
+        cop_geo_frame_edge(); dl_frame_edge(ctx->bus, g_emu_frames); hle_match_replay_edge(ctx->bus);
+    }
+    emu_sound_slice_end(frame);
+    if (g_active_profile->quirks.geo_displaylist) geodl_capture(ctx->bus);
+    ctx->cpu_prev_snapshot = ctx->cpu_snapshot;
+    ctx->cpu_snapshot      = *ctx->cpu;
+}
 
 /* emu_slice_body (emu_thread.h), with a line per instruction. */
 static void trace_slice(emu_thread_ctx_t *ctx) {
@@ -654,28 +676,10 @@ static void trace_slice(emu_thread_ctx_t *ctx) {
         if (i960_step_hot(ctx->cpu, ctx->bus) != 0) break;
         ctx->total_steps++;
         steps++;
-        const i960_cpu_t *c = ctx->cpu;
-        uint64_t h = fnv(FNV0, c->globals.g, sizeof c->globals.g);
-        h = fnv(h, c->locals.r, sizeof c->locals.r);
-        h = fnv(h, &c->sfr.ac, sizeof c->sfr.ac);
-        h = fnv(h, c->fp_regs, sizeof c->fp_regs);
-        fprintf(trace_out, "%08x %016llx\n", ip, (unsigned long long)h);
-        if (g_hle_extra) { ctx->total_steps += g_hle_extra; steps += g_hle_extra; i += (int)g_hle_extra; g_hle_extra = 0; }
-        if (s_irq_in_service && g_active_profile) emu_service_sound_again(ctx);
-        else if (g_irqt_sound_kick && g_active_profile) { g_irqt_sound_kick = 0; emu_offer_sound(ctx); }
-        emu_timers_after_step(ctx);
-        if (g_log.warn_triggered) break;
-        if (g_wp.hit) break;
-        if (g_sharc.unknown_triggered) break;
+        trace_line(ip, ctx->cpu);
+        if (trace_after_step(ctx, &steps, &i)) break;
     }
-    bool frame = g_vblank_edge != 0;
-    if (frame) {
-        if (g_active_profile->quirks.board_vblank) { cop_geo_frame_edge(); dl_frame_edge(ctx->bus, g_emu_frames); hle_match_replay_edge(ctx->bus); }
-    }
-    emu_sound_slice_end(frame);
-    if (g_active_profile->quirks.geo_displaylist) geodl_capture(ctx->bus);
-    ctx->cpu_prev_snapshot = ctx->cpu_snapshot;
-    ctx->cpu_snapshot      = *ctx->cpu;
+    trace_slice_end(ctx);
 }
 
 /* --inputs: a session's words and checks, indexed by session frame. */
@@ -863,12 +867,9 @@ static int parse_args(dd_opts_t *o, int argc, char **argv) {
 
 /* The profile, the script or input log, the ROM set and the board, up to a
  * running one (from --load's state if there is one). 0, or 2 to exit with. */
-static int board_setup(dd_opts_t *o, const char *set) {
-    log_init();
-    mem_init(&bus, NULL, 0);
-    i960_reset(&cpu);
-    bp_init();
-    wp_init();
+/* The profile, then the script or the input log (the run's length from it).
+ * 0, or 2. */
+static int board_inputs(dd_opts_t *o) {
     for (size_t i = 0; i < g_profile_count; i++)
         if (!strcmp(g_profiles[i]->id, o->profile_id)) g_active_profile = g_profiles[i];
     if (!g_active_profile) { fprintf(stderr, "no %s profile\n", o->profile_id); return 2; }
@@ -878,14 +879,33 @@ static int board_setup(dd_opts_t *o, const char *set) {
         if (!o->frames_given || o->frames > in_n) o->frames = in_n;
         fprintf(stderr, "replaying %u session frames from %s\n", (unsigned)in_n, o->inputs_path);
     }
+    return 0;
+}
 
-    /* A directory of region images (--export-roms) loads as it is. Otherwise
-     * the web build's load: one zip, read whole, strict by CRC. */
-    if (romset_is_dir(set)) {
-        if (romset_load_dir(&romset, set) != 0) return 2;
-    } else if (load_zip_set(set) != 0) {
-        return 2;
-    }
+/* A directory of region images (--export-roms) loads as it is. Otherwise
+ * the web build's load: one zip, read whole, strict by CRC. 0, or 2. */
+static int board_load_set(const char *set) {
+    if (romset_is_dir(set)) return romset_load_dir(&romset, set) != 0 ? 2 : 0;
+    return load_zip_set(set) != 0 ? 2 : 0;
+}
+
+/* --load's state. A board from a state: what it prints from here on has to
+ * be what the run that saved it printed. The sample hash starts here. 0, or 2. */
+static int board_load_state(void) {
+    const char *err = state_mem ? mem_state_load(&emu, load_path) : emu_state_load_now(&emu, load_path);
+    if (err) { fprintf(stderr, "--load %s: %s\n", load_path, err); return 2; }
+    snd_out_hash = FNV0; snd_out_n = 0;
+    fprintf(stderr, "loaded %s at frame %u\n", load_path, (unsigned)g_emu_frames);
+    return 0;
+}
+
+static int board_setup(dd_opts_t *o, const char *set) {
+    log_init();
+    mem_init(&bus, NULL, 0);
+    i960_reset(&cpu);
+    bp_init();
+    wp_init();
+    if (board_inputs(o) || board_load_set(set)) return 2;
 
     if (room_role != GAME_LINK_ALONE && !m2comm_phantom && !m2comm_udp) {
         fprintf(stderr, "--room-role needs --m2comm-phantom or --m2comm-udp\n");
@@ -897,15 +917,7 @@ static int board_setup(dd_opts_t *o, const char *set) {
     emu_ctx_init(&emu, &cpu, &bus);
     emu_run(&emu);
     sound_set_tap(snd_out_tap, NULL);
-    if (load_path) {
-        /* A board from a state: what it prints from here on has to be what
-         * the run that saved it printed. The sample hash starts here. */
-        const char *err = state_mem ? mem_state_load(&emu, load_path) : emu_state_load_now(&emu, load_path);
-        if (err) { fprintf(stderr, "--load %s: %s\n", load_path, err); return 2; }
-        snd_out_hash = FNV0; snd_out_n = 0;
-        fprintf(stderr, "loaded %s at frame %u\n", load_path, (unsigned)g_emu_frames);
-    }
-    return 0;
+    return load_path ? board_load_state() : 0;
 }
 
 /* The digest file, a follow feed out or in, and the rewind ring. 0, or 2. */
@@ -989,6 +1001,28 @@ static void frame_print(const dd_opts_t *o, FILE *out) {
     fputc('\n', out);
 }
 
+/* One slice (traced on --trace's frame), the link's host clock around its
+ * frame edge. */
+static emu_slice_result_t run_slice(bool frame_edge) {
+    if (frame_edge && link_host_on()) link_host_frame_start();
+    if (trace_out && g_emu_frames + 1 == trace_frame) trace_slice(&emu);
+    else                                              emu_slice_body(&emu);
+    emu_slice_result_t r = emu_slice_finish(&emu);
+    if (r == EMU_SLICE_FRAME && link_host_on()) link_host_frame_end();
+    if (r == EMU_SLICE_FRAME) m2comm_phantom_frame_edge(&emu);
+    return r;
+}
+
+/* A frame done: the log check, --save-frame, the rewind ring, the digest
+ * line. 0, or 2 when the save failed. */
+static int run_frame_done(const dd_opts_t *o, FILE *out, dd_run_t *run) {
+    if (in_n && g_emu_frames - 1 < in_n) frame_check_log(run);
+    if (save_frame && g_emu_frames == save_frame && !frame_save_at()) return 2;
+    if (rewind_k && !rewind_frame(&emu, g_emu_frames)) return 0;
+    if (g_emu_frames >= o->from) frame_print(o, out);
+    return 0;
+}
+
 /* The board up to --frames, a digest line per frame from --from. 0, or 2. */
 static int run_frames(const dd_opts_t *o, FILE *out, dd_run_t *run) {
     int at = 0;
@@ -997,23 +1031,14 @@ static int run_frames(const dd_opts_t *o, FILE *out, dd_run_t *run) {
         if (rewind_slice(&emu)) at = 0;   /* the script again from its start, up to the frame gone back to */
         frame_inputs(&at);
         if (follow_in && !follow_next_ready(&emu)) break;
-        if (frame_edge && link_host_on()) link_host_frame_start();
-        if (trace_out && g_emu_frames + 1 == trace_frame) trace_slice(&emu);
-        else                                              emu_slice_body(&emu);
-        emu_slice_result_t r = emu_slice_finish(&emu);
+        emu_slice_result_t r = run_slice(frame_edge);
         run->slices++;
         frame_edge = r == EMU_SLICE_FRAME;
-        if (r == EMU_SLICE_FRAME && link_host_on()) link_host_frame_end();
-        if (r == EMU_SLICE_FRAME) m2comm_phantom_frame_edge(&emu);
         if (r == EMU_SLICE_STOPPED) {
             fprintf(stderr, "board stopped at frame %u, IP 0x%08X\n", (unsigned)g_emu_frames, cpu.sfr.ip);
             break;
         }
-        if (r != EMU_SLICE_FRAME) continue;
-        if (in_n && g_emu_frames - 1 < in_n) frame_check_log(run);
-        if (save_frame && g_emu_frames == save_frame && !frame_save_at()) return 2;
-        if (rewind_k && !rewind_frame(&emu, g_emu_frames)) continue;
-        if (g_emu_frames >= o->from) frame_print(o, out);
+        if (r == EMU_SLICE_FRAME && run_frame_done(o, out, run)) return 2;
     }
     return 0;
 }

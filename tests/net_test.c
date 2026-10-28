@@ -222,45 +222,57 @@ static void test_ready_gates(void) {
  * Run for every delay the room word can carry: above 4 the frame that was
  * lost is further behind the newest than one record reaches.
  */
+/* A peer's frame f, if it has not sent it yet: submitted, and passed to the
+ * other side while the link is up. */
+static void stalled_submit(lockstep_t *from, lockstep_t *to, uint32_t f, uint32_t tag, bool up) {
+    lockstep_record_t rec;
+    if (from->last_local_frame != LOCKSTEP_INVALID_FRAME && f <= from->last_local_frame) return;
+    lockstep_submit_local(from, f, tag | f, &rec);
+    if (up) lockstep_on_record(to, &rec);
+}
+
+/* 200 ticks of both peers playing, the A to B direction lost from tick 30. */
+static void stalled_play(pair_t *p, uint32_t delay, uint32_t *fa, uint32_t *fb) {
+    lockstep_record_t rec;
+    for (uint32_t f = 0; f < delay; f++) {               /* netplay_seed_delay_frames */
+        lockstep_submit_local(&p->a, f, 0, &rec); lockstep_on_record(&p->b, &rec);
+        lockstep_submit_local(&p->b, f, 0, &rec); lockstep_on_record(&p->a, &rec);
+    }
+    bool a_to_b_up = true;
+    for (int tick = 0; tick < 200; tick++) {
+        if (tick == 30) a_to_b_up = false;               /* the burst starts ... */
+        stalled_submit(&p->a, &p->b, *fa + delay, 0xA000u, a_to_b_up);
+        stalled_submit(&p->b, &p->a, *fb + delay, 0xB000u, true);
+        if (lockstep_ready(&p->a, *fa)) (*fa)++;
+        if (lockstep_ready(&p->b, *fb)) (*fb)++;
+    }
+}
+
+/* One resend from each, exactly as netplay_resend_inputs walks it. */
+static void stalled_resend(pair_t *p) {
+    lockstep_record_t rec;
+    for (int side = 0; side < 2; side++) {
+        lockstep_t *from = side ? &p->b : &p->a, *to = side ? &p->a : &p->b;
+        uint32_t floor = lockstep_resend_floor(from), top = from->last_local_frame;
+        for (int sent = 0; sent < 4; sent++) {
+            lockstep_fill_record(from, top, &rec);
+            lockstep_on_record(to, &rec);
+            if (top < floor + LOCKSTEP_REDUNDANCY) break;
+            top -= LOCKSTEP_REDUNDANCY;
+        }
+    }
+}
+
 static void test_stalled_repair(void) {
     for (uint32_t delay = 0; delay <= 10; delay++) {
         pair_t p;
         pair_begin(&p, 1, delay);
         uint32_t fa = 0, fb = 0;
-        lockstep_record_t rec;
-        for (uint32_t f = 0; f < delay; f++) {           /* netplay_seed_delay_frames */
-            lockstep_submit_local(&p.a, f, 0, &rec); lockstep_on_record(&p.b, &rec);
-            lockstep_submit_local(&p.b, f, 0, &rec); lockstep_on_record(&p.a, &rec);
-        }
-
-        bool a_to_b_up = true;
-        for (int tick = 0; tick < 200; tick++) {
-            if (tick == 30) a_to_b_up = false;           /* the burst starts ... */
-            if (p.a.last_local_frame == LOCKSTEP_INVALID_FRAME || fa + delay > p.a.last_local_frame) {
-                lockstep_submit_local(&p.a, fa + delay, 0xA000u | (fa + delay), &rec);
-                if (a_to_b_up) lockstep_on_record(&p.b, &rec);
-            }
-            if (p.b.last_local_frame == LOCKSTEP_INVALID_FRAME || fb + delay > p.b.last_local_frame) {
-                lockstep_submit_local(&p.b, fb + delay, 0xB000u | (fb + delay), &rec);
-                lockstep_on_record(&p.a, &rec);
-            }
-            if (lockstep_ready(&p.a, fa)) fa++;
-            if (lockstep_ready(&p.b, fb)) fb++;
-        }
+        stalled_play(&p, delay, &fa, &fb);
         /* ... and is over. Both are stalled, so neither has anything new to say. */
         bool deadlocked = !lockstep_ready(&p.a, fa) && !lockstep_ready(&p.b, fb);
 
-        /* One resend from each, exactly as netplay_resend_inputs walks it. */
-        for (int side = 0; side < 2; side++) {
-            lockstep_t *from = side ? &p.b : &p.a, *to = side ? &p.a : &p.b;
-            uint32_t floor = lockstep_resend_floor(from), top = from->last_local_frame;
-            for (int sent = 0; sent < 4; sent++) {
-                lockstep_fill_record(from, top, &rec);
-                lockstep_on_record(to, &rec);
-                if (top < floor + LOCKSTEP_REDUNDANCY) break;
-                top -= LOCKSTEP_REDUNDANCY;
-            }
-        }
+        stalled_resend(&p);
         bool repaired = lockstep_ready(&p.a, fa) || lockstep_ready(&p.b, fb);
         bool intact = true;
         for (uint32_t f = delay; f < fb + delay; f++)
@@ -274,6 +286,25 @@ static void test_stalled_repair(void) {
 }
 
 /* ---- (C) protobuf ---------------------------------------------------- */
+typedef struct { int seen; uint64_t bare; uint32_t wrapped, nested; char str[32]; } pb_readback_t;
+
+/* test_protobuf's message read back: field 1 bare, 2 a wrapper, 3 a string,
+ * 4 a submessage holding a wrapper. Returns the reader, at its end. */
+static pb_reader_t pb_readback(const uint8_t *buf, uint32_t len, pb_readback_t *rb) {
+    pb_reader_t r = pb_reader(buf, len);
+    while (pb_next(&r)) {
+        rb->seen++;
+        if (r.field == 1) rb->bare = r.varint;
+        if (r.field == 2) rb->wrapped = pb_as_wrapped(&r);
+        if (r.field == 3) pb_copy_string(&r, rb->str, sizeof(rb->str));
+        if (r.field == 4) {
+            pb_reader_t sub = pb_sub(&r);
+            while (pb_next(&sub)) if (sub.field == 1) rb->nested = pb_as_wrapped(&sub);
+        }
+    }
+    return r;
+}
+
 static void test_protobuf(void) {
     uint8_t buf[256];
     pb_writer_t w;
@@ -288,21 +319,12 @@ static void test_protobuf(void) {
     }
     CHECK(w.ok, "the writer stayed within its buffer");
 
-    int seen = 0;
-    uint64_t bare = 0;
-    uint32_t wrapped = 0, nested = 0;
-    char str[32] = {0};
-    pb_reader_t r = pb_reader(buf, w.used);
-    while (pb_next(&r)) {
-        seen++;
-        if (r.field == 1) bare = r.varint;
-        if (r.field == 2) wrapped = pb_as_wrapped(&r);
-        if (r.field == 3) pb_copy_string(&r, str, sizeof(str));
-        if (r.field == 4) {
-            pb_reader_t sub = pb_sub(&r);
-            while (pb_next(&sub)) if (sub.field == 1) nested = pb_as_wrapped(&sub);
-        }
-    }
+    pb_readback_t rb = { 0 };
+    pb_reader_t r = pb_readback(buf, w.used, &rb);
+    int seen = rb.seen;
+    uint64_t bare = rb.bare;
+    uint32_t wrapped = rb.wrapped, nested = rb.nested;
+    const char *str = rb.str;
     CHECK(seen == 4 && r.ok, "every field read back");
     CHECK(bare == 7, "a bare varint round trips");
     CHECK(wrapped == 300, "a uint16 wrapper round trips through its inner value");

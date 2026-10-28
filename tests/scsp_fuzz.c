@@ -97,6 +97,30 @@ static void random_voice(scsp_t *s, int sl) {
 static uint8_t ram[0x80000];
 static int prog;   /* this scenario's DSP program: 0 the compiled one, 1 random, 2 none */
 
+/* A random DSP program of 1-128 steps, its TEMP addresses mostly in range. */
+static void scenario_random_program(scsp_t *s) {
+    int len = 1 + (int)(rnd() % 128);
+    for (int i = 0; i < 512; i++) {
+        uint16_t w = i < len * 4 ? (uint16_t)rnd() : 0;
+        if (i % 4 == 1 && ((w >> 6) & 0x3F) > 0x31 && rnd() % 16) w = (uint16_t)((w & ~0x0FC0u) | ((rnd() % 0x32) << 6));
+        scsp_write(s, 0x800 + i * 2, w, 2);
+    }
+}
+
+/* A DSP program: the compiled one, or random, or none; random coefficients
+ * and taps; started. */
+static void scenario_program(scsp_t *s) {
+    prog = (int)(rnd() % 3);
+    for (int i = 0; i < 64; i++) scsp_write(s, 0x700 + i * 2, (uint16_t)rnd(), 2);
+    for (int i = 0; i < 32; i++) scsp_write(s, 0x780 + i * 2, (uint16_t)rnd(), 2);
+    if (prog == 0 && have_known) {
+        for (int i = 0; i < 512; i++) scsp_write(s, 0x800 + i * 2, known_prog[i], 2);
+    } else if (prog == 1) {
+        scenario_random_program(s);
+    }
+    scsp_write(s, 0x800 + 0x3F0, (uint16_t)scsp_read(s, 0xBF0, 2), 2);   /* start it */
+}
+
 /* A scenario's chip: its seed, random sound RAM, a reset, the mixer, a DSP
  * program and the interrupt registers. Its event spacing. */
 static uint32_t scenario_start(scsp_t *s, int sc, uint64_t *clock) {
@@ -114,21 +138,7 @@ static uint32_t scenario_start(scsp_t *s, int sc, uint64_t *clock) {
     scsp_write(s, 0x400, 0x000F | (rnd() & 1 ? 0x0100 : 0), 2);   /* MVOL, DAC18B sometimes */
     { uint16_t rb = (uint16_t)(rnd() & 0x1FF);                      /* RBL/RBP */
       scsp_write(s, 0x402, tame ? (uint16_t)(0x30 | (rb & 0x80)) : rb, 2); }
-    /* a DSP program: the compiled one, or random, or none */
-    prog = (int)(rnd() % 3);
-    for (int i = 0; i < 64; i++) scsp_write(s, 0x700 + i * 2, (uint16_t)rnd(), 2);
-    for (int i = 0; i < 32; i++) scsp_write(s, 0x780 + i * 2, (uint16_t)rnd(), 2);
-    if (prog == 0 && have_known) {
-        for (int i = 0; i < 512; i++) scsp_write(s, 0x800 + i * 2, known_prog[i], 2);
-    } else if (prog == 1) {
-        int len = 1 + (int)(rnd() % 128);
-        for (int i = 0; i < 512; i++) {
-            uint16_t w = i < len * 4 ? (uint16_t)rnd() : 0;
-            if (i % 4 == 1 && ((w >> 6) & 0x3F) > 0x31 && rnd() % 16) w = (uint16_t)((w & ~0x0FC0u) | ((rnd() % 0x32) << 6));
-            scsp_write(s, 0x800 + i * 2, w, 2);
-        }
-    }
-    scsp_write(s, 0x800 + 0x3F0, (uint16_t)scsp_read(s, 0xBF0, 2), 2);   /* start it */
+    scenario_program(s);
     /* interrupt levels and enables */
     scsp_write(s, 0x424, (uint16_t)rnd(), 2);
     scsp_write(s, 0x426, (uint16_t)rnd(), 2);
