@@ -242,11 +242,12 @@ static struct retro_core_option_v2_definition option_defs[] = {
     { "m2hle_sound_driver", "Sound driver", NULL,
       "Where the game's sound driver runs. 68000: on the sound board's own processor, as the arcade board runs it. "
       "In C: ported to C, playing through the same sound chip; about half the sound board's work, so cooler on a "
-      "handheld. The game and online play are the same either way; notes can land a millisecond or two apart. "
-      "Sonic the Fighters only (other games keep the 68000). Takes effect when the game is next loaded.",
+      "handheld. In C, voices too: the driver's notes played in C as well, in place of the chip's voices; the same "
+      "sound, to the bit. The game and online play are the same either way; notes can land a millisecond or two apart. "
+      "Games whose sound program it does not know keep the 68000. Takes effect when the game is next loaded.",
       NULL, NULL,
-      { { "68000", "68000 (the board)" }, { "c", "In C (lighter)" }, { NULL, NULL } },
-      "68000" },
+      { { "c", "In C (lighter)" }, { "68000", "68000 (the board)" }, { "synth", "In C, voices too" }, { NULL, NULL } },
+      "c" },
     { "m2hle_gems_i960", "Gems C: main CPU functions", NULL,
       "Run about 45 of the game's heaviest main-CPU functions as Sega's own C from Sonic Gems Collection, in "
       "place of the arcade program. Lighter, but not the board: each counts as one instruction, so the game's "
@@ -412,7 +413,10 @@ static void lr_read_live_options(void) {
 static void lr_read_load_options(void) {
     const char *v;
     if ((v = lr_var("m2hle_sound")))  opt.sound  = strcmp(v, "disabled") != 0;
-    if ((v = lr_var("m2hle_sound_driver"))) g_sound_hle_want = !strcmp(v, "c");   /* read at the next sound_reset */
+    if ((v = lr_var("m2hle_sound_driver"))) {          /* read at the next sound_reset */
+        g_sound_hle_want   = !strcmp(v, "c");
+        g_sound_synth_want = !strcmp(v, "synth");
+    }
     if ((v = lr_var("m2hle_gems_i960"))) g_gems_i960 = !strcmp(v, "enabled");   /* gems_apply at load */
     if ((v = lr_var("m2hle_gems_cop")))  g_gems_cop  = !strcmp(v, "enabled");
     if ((v = lr_var("m2hle_online")))
@@ -488,7 +492,7 @@ static void lr_set_options(void) {
         { "m2hle_resolution", "Internal resolution; " LR_DEFAULT_RES "|native|double|triple|quadruple|fullscreen" },
         { "m2hle_stf_version", "Sonic the Fighters version; console|arcade" },
         { "m2hle_sound",      "Sound board; " LR_DEFAULT_SOUND "|enabled|disabled" },
-        { "m2hle_sound_driver", "Sound driver; 68000|c" },
+        { "m2hle_sound_driver", "Sound driver; c|68000|synth" },
         { "m2hle_gems_i960",  "Gems C: main CPU functions; disabled|enabled" },
         { "m2hle_gems_cop",   "Gems C: coprocessor; disabled|enabled" },
         { "m2hle_sound_thread", "Sound board on its own core; enabled|disabled" },
@@ -537,7 +541,7 @@ static void lr_attach_sound(void) {
  * and what a netplay barrier repeats on both machines (main_web.c
  * web_install_board). With no slice in progress -- there is one thread. */
 static void lr_install_board(void) {
-    g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    m2_spin_install(&state.romset, &state.cpu, &state.bus);
     link_check_reset();   /* a MASTER alone on the link: asked again for the new set */
     irqt_reset();
     if (g_sound_on) lr_attach_sound();
@@ -808,6 +812,23 @@ static struct { uint32_t frame, held; } g_lr_script[LR_SCRIPT_MAX];
 static int      g_lr_script_n = -1, g_lr_script_at;
 static uint32_t g_lr_script_held;
 
+/* A script step's letter: P1's u d l r, buttons 1 to 4, s(tart) and c(oin). */
+static uint32_t lr_script_key(const game_input_map_t *in, char k) {
+    switch (k) {
+        case 'u': return in->bits[GAME_INPUT_P1_UP];
+        case 'd': return in->bits[GAME_INPUT_P1_DOWN];
+        case 'l': return in->bits[GAME_INPUT_P1_LEFT];
+        case 'r': return in->bits[GAME_INPUT_P1_RIGHT];
+        case '1': return in->bits[GAME_INPUT_P1_B1];
+        case '2': return in->bits[GAME_INPUT_P1_B2];
+        case '3': return in->bits[GAME_INPUT_P1_B3];
+        case '4': return in->bits[GAME_INPUT_P1_B4];
+        case 's': return in->bits[GAME_INPUT_P1_START];
+        case 'c': return in->bits[GAME_INPUT_P1_COIN];
+        default:  return 0;
+    }
+}
+
 static void lr_script_load(void) {
     g_lr_script_n = 0;
     const char *p = getenv("M2HLE_SCRIPT");
@@ -820,21 +841,7 @@ static void lr_script_load(void) {
         const char *end = strchr(colon, ',');
         if (!end) end = colon + strlen(colon);
         uint32_t held = 0;
-        for (const char *k = colon + 1; k < end; k++) {
-            switch (*k) {
-                case 'u': held |= in->bits[GAME_INPUT_P1_UP];    break;
-                case 'd': held |= in->bits[GAME_INPUT_P1_DOWN];  break;
-                case 'l': held |= in->bits[GAME_INPUT_P1_LEFT];  break;
-                case 'r': held |= in->bits[GAME_INPUT_P1_RIGHT]; break;
-                case '1': held |= in->bits[GAME_INPUT_P1_B1];    break;
-                case '2': held |= in->bits[GAME_INPUT_P1_B2];    break;
-                case '3': held |= in->bits[GAME_INPUT_P1_B3];    break;
-                case '4': held |= in->bits[GAME_INPUT_P1_B4];    break;
-                case 's': held |= in->bits[GAME_INPUT_P1_START]; break;
-                case 'c': held |= in->bits[GAME_INPUT_P1_COIN];  break;
-                default: break;
-            }
-        }
+        for (const char *k = colon + 1; k < end; k++) held |= lr_script_key(in, *k);
         g_lr_script[g_lr_script_n].frame = (uint32_t)frame;
         g_lr_script[g_lr_script_n].held  = held;
         g_lr_script_n++;
@@ -1852,6 +1859,15 @@ static void lr_draw_pass(int w, int h, bool lobby, bool overlay, ps3ui_canvas_t 
     }
 }
 
+/* Over the game: the script's drawing, the guns' crosshairs and the link
+ * question; true when any drew. */
+static bool lr_draw_over_game(ps3ui_canvas_t *cv, int w, int h) {
+    bool text = lr_lua_draw(cv, w, h);
+    if (lr_gun_draw(cv, w, h)) text = true;
+    if (link_check_pad_draw(cv)) text = true;
+    return text;
+}
+
 static void lr_draw(bool ran) {
     int w, h;
     ps3ui_view_t view = g_shell_on ? ps3ui_shell_view(&g_ps3ui_shell)
@@ -1867,9 +1883,7 @@ static void lr_draw(bool ran) {
     hprof_phase(3);
     static ps3ui_canvas_t lobby_cv;
     ps3ui_gpu_record(&lobby_cv, w, h);
-    bool text = !lobby && lr_lua_draw(&lobby_cv, w, h);
-    if (!lobby && lr_gun_draw(&lobby_cv, w, h)) text = true;
-    if (!lobby && link_check_pad_draw(&lobby_cv)) text = true;
+    bool text = !lobby && lr_draw_over_game(&lobby_cv, w, h);
     if (lobby || overlay) lr_draw_record_lobby(&lobby_cv);
 
     lr_draw_pass(w, h, lobby, overlay || text, &lobby_cv);
@@ -2611,6 +2625,35 @@ static bool lr_run_frame(uint32_t held, bool board_paused) {
     return ran;
 }
 
+/* This frame's pads: P1 and P2 here (P2 only outside a session), P3 and P4
+ * into far_held, the shell's or the script's when they have them. */
+static uint32_t lr_frame_held(bool in_session, bool *board_paused) {
+    uint32_t held = g_shell_on ? lr_port_held_shell(0) : lr_port_held(0) | lr_wheel();
+    /* Port 2 is the second player on this machine -- not in a session, where
+     * each machine is one player. */
+    if (!in_session) held |= g_shell_on ? lr_port_held_shell(1) : lr_port_held(1);
+    /* Ports 3 and 4: players 3 and 4 of a four-player cabinet, only on this
+     * machine too (the board reads them only outside a session). */
+    uint32_t far_bits = !in_session && input_four_players() ? lr_port_held(2) | lr_port_held(3) : 0;
+    if (g_shell_on && !lr_shell_input(board_paused)) held = far_bits = 0;
+    if (!in_session) held = lr_script_held(held);
+    g_input.far_held = far_bits;
+    return held;
+}
+
+/* A MASTER alone on the link (#1449): the question has the pad, and the
+ * board waits for the answer. Then Test, if that was the answer. */
+static uint32_t lr_link_frame(bool in_session, uint32_t held, bool *board_paused) {
+    link_check_frame(g_emu_frames);
+    link_ask_state_t link = in_session ? LINK_ASK_NONE : link_check_pad_frame(lr_lobby_pad(), g_emu_frames);
+    if (link != LINK_ASK_NONE) held = g_input.far_held = 0;
+    static link_ask_state_t link_was;
+    if (link == LINK_ASK_ASKING && link_was != LINK_ASK_ASKING) lr_log(RETRO_LOG_WARN, "%s", link_check_line());
+    link_was = link;
+    if (link == LINK_ASK_ASKING) *board_paused = true;
+    return held | link_check_test_bits();
+}
+
 RETRO_API void retro_run(void) {
     hprof_tick();   /* the in-process profiler: M2HLE_HOSTPROF or /tmp/m2hle-hostprof (host_prof.h) */
     bool updated = false;
@@ -2625,33 +2668,14 @@ RETRO_API void retro_run(void) {
     }
 
     input_poll_cb();
-    uint32_t held = g_shell_on ? lr_port_held_shell(0) : lr_port_held(0) | lr_wheel();
-    /* Port 2 is the second player on this machine -- not in a session, where
-     * each machine is one player. */
-    bool in_session = lr_in_session();
-    if (!in_session) held |= g_shell_on ? lr_port_held_shell(1) : lr_port_held(1);
-    /* Ports 3 and 4: players 3 and 4 of a four-player cabinet, only on this
-     * machine too (the board reads them only outside a session). */
-    uint32_t far_bits = !in_session && input_four_players() ? lr_port_held(2) | lr_port_held(3) : 0;
-    bool board_paused = false;
-    if (g_shell_on && !lr_shell_input(&board_paused)) held = far_bits = 0;
-    if (!in_session) held = lr_script_held(held);
-    g_input.far_held = far_bits;
+    bool in_session = lr_in_session(), board_paused = false;
+    uint32_t held = lr_frame_held(in_session, &board_paused);
 
     if (opt.online == LR_ONLINE_RPCN) lr_rpcn_toasts();
 
     hprof_phase(0);   /* the frame log's phases: 0 input, 1 board, 2 audio, 3-5 lr_draw, 6 sound wait */
     int64_t snd_wait0 = g_emu_times.sound_wait_us;
-    /* A MASTER alone on the link (#1449): the question has the pad, and the
-     * board waits for the answer. Then Test, if that was the answer. */
-    link_check_frame(g_emu_frames);
-    link_ask_state_t link = in_session ? LINK_ASK_NONE : link_check_pad_frame(lr_lobby_pad(), g_emu_frames);
-    if (link != LINK_ASK_NONE) held = g_input.far_held = 0;
-    static link_ask_state_t link_was;
-    if (link == LINK_ASK_ASKING && link_was != LINK_ASK_ASKING) lr_log(RETRO_LOG_WARN, "%s", link_check_line());
-    link_was = link;
-    if (link == LINK_ASK_ASKING) board_paused = true;
-    held |= link_check_test_bits();
+    held = lr_link_frame(in_session, held, &board_paused);
     bool ran = lr_run_frame(held, board_paused);
 
     g_lr_runs++;

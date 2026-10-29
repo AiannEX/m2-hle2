@@ -208,9 +208,12 @@ typedef struct {
     /* The I/O board is a 315-5649 with a wheel, pedals and a gear lever
      * (io_5649.h): input_attach serves its analog mux and gearbox, driven by
      * the held bits named in `wheel`; `view` are the cabinet's view buttons
-     * (VR1-VR4), named so in the Controls window. */
+     * (VR1-VR4), named so in the Controls window. `bike`: a motorbike's
+     * (MAME manxtt: Motor Raid), channel 0 the throttle, 1 the brake and 2
+     * the bank (LEFT / RIGHT lean it, reversed), IN1 a button port and no
+     * lever. */
     bool     io_5649;
-    struct { uint32_t left, right, accel, brake, shift_up, shift_down, view[4]; } wheel;
+    struct { uint32_t left, right, accel, brake, shift_up, shift_down, view[4]; bool bike; } wheel;
 
     /* The I/O board is a Model 1 one behind a dual-port RAM (model1io.h: its
      * Z80 runs the program in the set's iocpu region). The wheel, pedals and

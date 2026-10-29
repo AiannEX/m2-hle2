@@ -1371,6 +1371,68 @@ static void ps3ui_draw_button(ps3ui_canvas_t *cv, int code, float x, float basel
     ps3ui_draw_image(cv, im, m, opacity, PS3UI_BLEND_NORMAL, NULL);
 }
 
+/* The menus' blue backdrop: dark blue down to darker. */
+static void ps3ui__paint_bg_grada(ps3ui_image_t *im)
+{
+    for (int y = 0; y < im->h; y++)
+        ps3ui__rect(im, 0, y, im->w, y + 1,
+                    ps3ui__mix(ps3ui__hex4(0x122868, 255), ps3ui__hex4(0x001735, 255),
+                               (float)y / (float)(im->h - 1)));
+}
+
+/* The thick rail over a panel: grey, white, grey. */
+static void ps3ui__paint_ovr_line_mid(ps3ui_image_t *im)
+{
+    ps3ui__rect(im, 0, 0, 3, im->h, ps3ui__hex4(PS3UI__GREY, 255));
+    ps3ui__rect(im, 3, 0, 13, im->h, ps3ui__hex4(0xFFFFFF, 255));
+    ps3ui__rect(im, 13, 0, 16, im->h, ps3ui__hex4(PS3UI__GREY, 255));
+}
+
+/* The thick rail's end. */
+static void ps3ui__paint_ovr_line_edg(ps3ui_image_t *im)
+{
+    ps3ui__rect(im, 0, 0, 16, 16, ps3ui__hex4(PS3UI__GREY, 255));
+    ps3ui__rect(im, 3, 0, 13, 13, ps3ui__hex4(0xFFFFFF, 0xFD));
+}
+
+/* The thin rail under a panel: grey, white, grey, clear. */
+static void ps3ui__paint_udr_line_mid(ps3ui_image_t *im)
+{
+    ps3ui__rect(im, 0, 0, 3, im->h, ps3ui__hex4(PS3UI__GREY, 255));
+    ps3ui__rect(im, 3, 0, 6, im->h, ps3ui__hex4(0xFFFFFF, 0xF6));
+    ps3ui__rect(im, 6, 0, 9, im->h, ps3ui__hex4(PS3UI__GREY, 255));
+    ps3ui__rect(im, 9, 0, 10, im->h, ps3ui__hex4(0xFFFFFF, 0));
+}
+
+/* The thin rail's outside corner, bottom right: grey, white, grey bent 90 degrees. */
+static void ps3ui__paint_udr_line_cnr(ps3ui_image_t *im)
+{
+    for (int y = 0; y < im->h; y++)
+        for (int x = 0; x < im->w; x++) {
+            ps3ui__c4 c = ps3ui__hex4(PS3UI__GREY, 255);
+            if (x < 7 && y < 7 && (x >= 4 || y >= 4)) c = ps3ui__hex4(0xFFFFFF, 0xF8);
+            if (x == 0 && y == 0) c = ps3ui__hex4(0xFFFFFF, 0);
+            ps3ui__put(im, x, y, c);
+        }
+}
+
+/* The match window's top corner. The bottom border stops short of the left
+ * edge: the panel's white side rail runs on down from there. */
+static void ps3ui__paint_win_top_cnr(ps3ui_image_t *im)
+{
+    ps3ui__paint_plate(im, 200.0f, 1, 1, 1, 1);
+    ps3ui__rect(im, 3, im->h - 3, 13, im->h, ps3ui__hex4(0xFFFFFF, 0xFC));
+}
+
+/* The match window's bottom corner: white in a grey frame. */
+static void ps3ui__paint_win_btm_cnr(ps3ui_image_t *im)
+{
+    ps3ui__rect(im, 0, 0, im->w, im->h, ps3ui__hex4(0xFFFFFF, 255));
+    ps3ui__rect(im, 0, 0, 3, im->h, ps3ui__hex4(PS3UI__GREY, 255));
+    ps3ui__rect(im, 0, 13, im->w, im->h, ps3ui__hex4(PS3UI__GREY, 255));
+    ps3ui__rect(im, 13, 0, 16, 3, ps3ui__hex4(PS3UI__GREY, 255));
+}
+
 /* ---- the sprite table ------------------------------------------------------ */
 
 static struct {
@@ -1386,60 +1448,22 @@ static void ps3ui_paint(int id, ps3ui_image_t *im)
     case PS3UI_SPR_CHIP_CYAN:   ps3ui__rect(im, 0, 0, im->w, im->h, ps3ui__hex4(0x00FFFF, 255)); break;
     case PS3UI_SPR_CHIP_D_BLUE: ps3ui__rect(im, 0, 0, im->w, im->h, ps3ui__hex4(0x184684, 255)); break;
     case PS3UI_SPR_CHIP_L_BLUE: ps3ui__rect(im, 0, 0, im->w, im->h, ps3ui__hex4(0x00BAFF, 255)); break;
-    case PS3UI_SPR_BG_GRADA:
-        for (int y = 0; y < im->h; y++)
-            ps3ui__rect(im, 0, y, im->w, y + 1,
-                        ps3ui__mix(ps3ui__hex4(0x122868, 255), ps3ui__hex4(0x001735, 255),
-                                   (float)y / (float)(im->h - 1)));
-        break;
-    case PS3UI_SPR_HW_PLA_CENTER:
-        ps3ui__rect(im, 0, 0, im->w, im->h, ps3ui__hex4(PS3UI__PANEL, PS3UI__PANEL_A));
-        break;
+    case PS3UI_SPR_BG_GRADA:         ps3ui__paint_bg_grada(im); break;
+    case PS3UI_SPR_HW_PLA_CENTER:    ps3ui__rect(im, 0, 0, im->w, im->h, ps3ui__hex4(PS3UI__PANEL, PS3UI__PANEL_A)); break;
     case PS3UI_SPR_HW_PLA_OVR_MID: case PS3UI_SPR_HW_PLA_SIDE: case PS3UI_SPR_HW_PLA_UDR_MID:
     case PS3UI_SPR_HW_PLA_OVR_CNR: case PS3UI_SPR_HW_PLA_UDR_CNR:
         ps3ui__paint_pla(im, id);
         break;
-    case PS3UI_SPR_HW_OVR_LINE_MID:
-        ps3ui__rect(im, 0, 0, 3, im->h, ps3ui__hex4(PS3UI__GREY, 255));
-        ps3ui__rect(im, 3, 0, 13, im->h, ps3ui__hex4(0xFFFFFF, 255));
-        ps3ui__rect(im, 13, 0, 16, im->h, ps3ui__hex4(PS3UI__GREY, 255));
-        break;
-    case PS3UI_SPR_HW_OVR_LINE_EDG:
-        ps3ui__rect(im, 0, 0, 16, 16, ps3ui__hex4(PS3UI__GREY, 255));
-        ps3ui__rect(im, 3, 0, 13, 13, ps3ui__hex4(0xFFFFFF, 0xFD));
-        break;
-    case PS3UI_SPR_HW_UDR_LINE_MID:
-        ps3ui__rect(im, 0, 0, 3, im->h, ps3ui__hex4(PS3UI__GREY, 255));
-        ps3ui__rect(im, 3, 0, 6, im->h, ps3ui__hex4(0xFFFFFF, 0xF6));
-        ps3ui__rect(im, 6, 0, 9, im->h, ps3ui__hex4(PS3UI__GREY, 255));
-        ps3ui__rect(im, 9, 0, 10, im->h, ps3ui__hex4(0xFFFFFF, 0));
-        break;
-    case PS3UI_SPR_HW_UDR_LINE_CNR:
-        /* the thin rail's outside corner, bottom right: grey, white, grey bent 90 degrees */
-        for (int y = 0; y < im->h; y++)
-            for (int x = 0; x < im->w; x++) {
-                ps3ui__c4 c = ps3ui__hex4(PS3UI__GREY, 255);
-                if (x < 7 && y < 7 && (x >= 4 || y >= 4)) c = ps3ui__hex4(0xFFFFFF, 0xF8);
-                if (x == 0 && y == 0) c = ps3ui__hex4(0xFFFFFF, 0);
-                ps3ui__put(im, x, y, c);
-            }
-        break;
+    case PS3UI_SPR_HW_OVR_LINE_MID:  ps3ui__paint_ovr_line_mid(im); break;
+    case PS3UI_SPR_HW_OVR_LINE_EDG:  ps3ui__paint_ovr_line_edg(im); break;
+    case PS3UI_SPR_HW_UDR_LINE_MID:  ps3ui__paint_udr_line_mid(im); break;
+    case PS3UI_SPR_HW_UDR_LINE_CNR:  ps3ui__paint_udr_line_cnr(im); break;
     case PS3UI_SPR_HW_OVR_LINE_CNR_L: ps3ui__paint_tab(im); break;
     case PS3UI_SPR_PLA_S_EDG:        ps3ui__paint_plate(im, 204.0f, 1, 1, 1, 1); break;
     case PS3UI_SPR_PLA_S_MID:        ps3ui__paint_plate(im, 204.0f, 1, 1, 0, 0); break;
-    case PS3UI_SPR_MATCH_WIN_TOP_CNR:
-        /* the bottom border stops short of the left edge: the panel's white
-         * side rail runs on down from there */
-        ps3ui__paint_plate(im, 200.0f, 1, 1, 1, 1);
-        ps3ui__rect(im, 3, im->h - 3, 13, im->h, ps3ui__hex4(0xFFFFFF, 0xFC));
-        break;
+    case PS3UI_SPR_MATCH_WIN_TOP_CNR: ps3ui__paint_win_top_cnr(im); break;
     case PS3UI_SPR_MATCH_WIN_TOP_MID: ps3ui__paint_plate(im, 200.0f, 1, 1, 0, 0); break;
-    case PS3UI_SPR_MATCH_WIN_BTM_CNR:
-        ps3ui__rect(im, 0, 0, im->w, im->h, ps3ui__hex4(0xFFFFFF, 255));
-        ps3ui__rect(im, 0, 0, 3, im->h, ps3ui__hex4(PS3UI__GREY, 255));
-        ps3ui__rect(im, 0, 13, im->w, im->h, ps3ui__hex4(PS3UI__GREY, 255));
-        ps3ui__rect(im, 13, 0, 16, 3, ps3ui__hex4(PS3UI__GREY, 255));
-        break;
+    case PS3UI_SPR_MATCH_WIN_BTM_CNR: ps3ui__paint_win_btm_cnr(im); break;
     case PS3UI_SPR_MATCH_S_WIN_MID:  ps3ui__paint_glass(im, 0); break;
     case PS3UI_SPR_MATCH_S_WIN_SIDE: ps3ui__paint_glass(im, 1); break;
     case PS3UI_SPR_MATCH_VS_VS:      ps3ui__paint_vs(im); break;

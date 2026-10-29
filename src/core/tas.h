@@ -641,9 +641,12 @@ static inline tas_input_t tas__pad_input(void) {
     return in;
 }
 
-/* The input frame `f` runs on: the movie's, or (recording) the pad's written in. */
+/* The input frame `f` runs on: the movie's, or (recording) the pad's written in.
+ * A seek asked for and not taken up yet plays too: a movie opened on a
+ * running board had its first frame taken from the pad before the seek began,
+ * and that take cut the rest of the movie (Pinboard #1640). */
 static inline tas_input_t tas__frame_input(uint32_t f) {
-    bool play = g_tas.seeking || (!g_tas.recording && f < g_tas.mv.n);
+    bool play = g_tas.seeking || ((!g_tas.recording || g_tas.seek_req >= 0) && f < g_tas.mv.n);
     if (play || g_tas.mid) return f < g_tas.mv.n ? g_tas.mv.in[f] : (tas_input_t){ 0 };
     tas_input_t in = tas__pad_input();
     if (f < g_tas.mv.n) {
@@ -720,6 +723,14 @@ static inline int tas_slowdown(void) {
 
 /* ---- Between slices (the emu thread, outside the mutex) --------------------------- */
 
+/* Whether a seek to target starts from greenzone state g rather than running
+ * on from here. */
+static inline bool tas__seek_loads(uint32_t target, int g) {
+    if (target == 0 && g_tas.frame == 0 && !g_tas.mid && !g_tas.stale) return false;
+    return g_tas.mid || g_tas.stale || target < g_tas.frame || (target == g_tas.frame && target > 0)
+        || g_tas.gz[g].frame > g_tas.frame;
+}
+
 static inline void tas__seek_service(emu_thread_ctx_t *ctx) {
     uint32_t target = (uint32_t)g_tas.seek_req;
     bool resume = g_tas.seek_resume;
@@ -731,10 +742,7 @@ static inline void tas__seek_service(emu_thread_ctx_t *ctx) {
     /* Land by running into the target, so its picture is drawn. */
     int g = tas__gz_at_or_before(target ? target - 1 : 0);
     if (g < 0) return;
-    bool load = g_tas.mid || g_tas.stale || target < g_tas.frame || (target == g_tas.frame && target > 0)
-             || g_tas.gz[g].frame > g_tas.frame;
-    if (target == 0 && g_tas.frame == 0 && !g_tas.mid && !g_tas.stale) load = false;
-    if (load) tas__gz_load(ctx, g);
+    if (tas__seek_loads(target, g)) tas__gz_load(ctx, g);
     g_tas.resume_after = resume || was_running;
     if (g_tas.frame < target) {
         sound_settle();
@@ -754,6 +762,19 @@ static inline void tas__seek_service(emu_thread_ctx_t *ctx) {
     }
 }
 
+/* A movie on: a seek paused, asked for, and the greenzone's states. */
+static inline void tas__pump_on(emu_thread_ctx_t *ctx) {
+    /* A pause in the middle of a seek: it stops where it is. */
+    if (g_tas.seeking && ctx->run_state == EMU_STOPPED) {
+        g_tas.seeking = false;
+        sound_settle();
+        g_sound_mute = 0;
+    }
+    if (g_tas.seek_req >= 0) tas__seek_service(ctx);
+    if (!g_tas.mid && (g_tas.frame % tas__gz_every() == 0 || ctx->run_state == EMU_STOPPED))
+        tas__gz_save(ctx);
+}
+
 /* reset_pending: a reset is asked for and not done yet (a start waits for it). */
 static inline void tas_pump(emu_thread_ctx_t *ctx, bool session, bool reset_pending) {
     if (!M2HLE_DEV_TOOLS || (!g_tas.on && g_tas.seek_req < 0 && !g_tas.start_req)) return;
@@ -765,15 +786,7 @@ static inline void tas_pump(emu_thread_ctx_t *ctx, bool session, bool reset_pend
     }
     if (g_tas.on && session) tas_break("a netplay session took the board");
     if (g_tas.on) {
-        /* A pause in the middle of a seek: it stops where it is. */
-        if (g_tas.seeking && ctx->run_state == EMU_STOPPED) {
-            g_tas.seeking = false;
-            sound_settle();
-            g_sound_mute = 0;
-        }
-        if (g_tas.seek_req >= 0) tas__seek_service(ctx);
-        if (!g_tas.mid && (g_tas.frame % tas__gz_every() == 0 || ctx->run_state == EMU_STOPPED))
-            tas__gz_save(ctx);
+        tas__pump_on(ctx);
     } else {
         g_tas.seek_req = -1;
     }
@@ -867,6 +880,56 @@ static inline void *tas__extract(mz_zip_archive *z, const char *name, size_t *n)
     return i < 0 ? NULL : mz_zip_reader_extract_to_heap(z, (mz_uint)i, n, 0);
 }
 
+/* tas.json's fields. */
+typedef struct {
+    char     profile[32], settings[128], branches[128];
+    uint32_t format, rerecords;
+    int      wskip;
+} tas__label_t;
+
+/* tas.json (*json, jn bytes, NUL-ended here) into lab, and the inputs into t;
+ * NULL, or why the movie will not load. */
+static inline const char *tas__read_label(char **json, size_t jn, tas__label_t *lab, tas_track_t *t,
+                                          const uint8_t *ins, size_t in_n) {
+    memset(lab, 0, sizeof *lab);
+    lab->wskip = 1;
+    char *j = (char *)realloc(*json, jn + 1);
+    if (j) { *json = j; j[jn] = 0; }
+    json_get_u32(*json, "format", &lab->format);
+    json_get_str(*json, "profile", lab->profile, sizeof lab->profile);
+    json_get_u32(*json, "rerecords", &lab->rerecords);
+    json_get_int(*json, "warning_skip", &lab->wskip);
+    json_get_str(*json, "settings", lab->settings, sizeof lab->settings);
+    json_get_str(*json, "branches", lab->branches, sizeof lab->branches);
+    if (lab->format != TAS_FORMAT)                      return "a movie of another format";
+    if (strcmp(lab->profile, g_active_profile->id))      return "a movie of another game (load its ROM first)";
+    if (!tas__inputs_unpack(t, ins, in_n))              return "the movie's inputs are damaged";
+    return NULL;
+}
+
+/* The branches tas.json lists ("N:frame;..."), each from its branch-N.bin. */
+static inline void tas__load_branches(mz_zip_archive *z, const char *branches) {
+    for (const char *p = branches; *p;) {
+        int i = -1;
+        unsigned fr = 0;
+        if (sscanf(p, "%d:%u", &i, &fr) == 2 && i >= 0 && i < TAS_BRANCHES) {
+            char name[32];
+            snprintf(name, sizeof name, "branch-%d.bin", i);
+            size_t bn = 0;
+            uint8_t *b = (uint8_t *)tas__extract(z, name, &bn);
+            if (b && tas__inputs_unpack(&g_tas.branch[i].track, b, bn)) {
+                g_tas.branch[i].used = true;
+                g_tas.branch[i].frame = fr;
+                snprintf(g_tas.branch[i].when, sizeof g_tas.branch[i].when, "from the file");
+            }
+            free(b);
+        }
+        const char *s = strchr(p, ';');
+        if (!s) break;
+        p = s + 1;
+    }
+}
+
 /* Open a movie: the board goes to its start, and the movie is played up to
  * its end (resume false: it stops there). Mutex held, between slices. */
 static inline const char *tas_load_file(emu_thread_ctx_t *ctx, const char *path, bool to_end) {
@@ -881,23 +944,9 @@ static inline const char *tas_load_file(emu_thread_ctx_t *ctx, const char *path,
     uint8_t *ins = (uint8_t *)tas__extract(&z, "inputs.bin", &in_n);
     tas_track_t t;
     memset(&t, 0, sizeof t);
-    char profile[32] = "", settings[128] = "", branches[128] = "";
-    uint32_t format = 0, rerecords = 0;
-    int wskip = 1;
+    tas__label_t lab;
     if (!json || !anchor || !ins) err = "not a movie (an entry is missing)";
-    else {
-        char *j = (char *)realloc(json, jn + 1);
-        if (j) { json = j; json[jn] = 0; }
-        json_get_u32(json, "format", &format);
-        json_get_str(json, "profile", profile, sizeof profile);
-        json_get_u32(json, "rerecords", &rerecords);
-        json_get_int(json, "warning_skip", &wskip);
-        json_get_str(json, "settings", settings, sizeof settings);
-        json_get_str(json, "branches", branches, sizeof branches);
-        if (format != TAS_FORMAT)                      err = "a movie of another format";
-        else if (strcmp(profile, g_active_profile->id)) err = "a movie of another game (load its ROM first)";
-        else if (!tas__inputs_unpack(&t, ins, in_n))   err = "the movie's inputs are damaged";
-    }
+    else err = tas__read_label(&json, jn, &lab, &t, ins, in_n);
     if (!err) {
         tas__reset_movie();
         free(g_tas.anchor);
@@ -906,31 +955,13 @@ static inline const char *tas_load_file(emu_thread_ctx_t *ctx, const char *path,
         anchor = NULL;
         g_tas.mv = t;
         memset(&t, 0, sizeof t);
-        g_tas.rerecords = rerecords;
-        snprintf(g_tas.profile, sizeof g_tas.profile, "%s", profile);
-        g_tas.warning_skip = wskip;
+        g_tas.rerecords = lab.rerecords;
+        snprintf(g_tas.profile, sizeof g_tas.profile, "%s", lab.profile);
+        g_tas.warning_skip = lab.wskip;
         follow_settings(g_tas.settings);
-        sscanf(settings, "%d,%d,%d,%d,%d,%d,%d,%d", &g_tas.settings[0], &g_tas.settings[1], &g_tas.settings[2],
+        sscanf(lab.settings, "%d,%d,%d,%d,%d,%d,%d,%d", &g_tas.settings[0], &g_tas.settings[1], &g_tas.settings[2],
                &g_tas.settings[3], &g_tas.settings[4], &g_tas.settings[5], &g_tas.settings[6], &g_tas.settings[7]);
-        for (const char *p = branches; *p;) {
-            int i = -1;
-            unsigned fr = 0;
-            if (sscanf(p, "%d:%u", &i, &fr) == 2 && i >= 0 && i < TAS_BRANCHES) {
-                char name[32];
-                snprintf(name, sizeof name, "branch-%d.bin", i);
-                size_t bn = 0;
-                uint8_t *b = (uint8_t *)tas__extract(&z, name, &bn);
-                if (b && tas__inputs_unpack(&g_tas.branch[i].track, b, bn)) {
-                    g_tas.branch[i].used = true;
-                    g_tas.branch[i].frame = fr;
-                    snprintf(g_tas.branch[i].when, sizeof g_tas.branch[i].when, "from the file");
-                }
-                free(b);
-            }
-            const char *s = strchr(p, ';');
-            if (!s) break;
-            p = s + 1;
-        }
+        tas__load_branches(&z, lab.branches);
         err = tas__restart(ctx);
         if (!err) tas_seek(to_end ? g_tas.mv.n : 0, false);
         snprintf(g_tas.msg, sizeof g_tas.msg, "%s", err ? err : "movie opened");

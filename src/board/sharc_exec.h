@@ -721,6 +721,20 @@ static inline void sharc_osage_segment(uint32_t rec) {
  * The i960 hands a segment's matrix straight to set_obj_fifo and reads the
  * point written back into the record (os_set_osage_after). With only the
  * type words answered, every segment took its matrix off an empty FIFO. */
+/* n DM words from src to dst. */
+static inline void sharc_dm_copy(uint32_t dst, uint32_t src, uint32_t n) {
+    for (uint32_t k = 0; k < n; k++) sharc_dm_set(dst + k, sharc_dm_get(src + k));
+}
+
+/* A type-1 record at rec: the current matrix, then the two more. */
+static inline void sharc_osage_matrix(uint32_t rec) {
+    for (int c = 0; c < 3; c++)
+        for (int r = 0; r < 3; r++) g_sharc.rot[c][r] = sharc_dm_getf(rec + (uint32_t)(c * 3 + r));
+    for (int i = 0; i < 3; i++) g_sharc.pos[i] = sharc_dm_getf(rec + 9u + (uint32_t)i);
+    sharc_dm_copy(0x3037Au, rec + 12, 12);
+    sharc_dm_copy(0x30386u, rec + 24, 12);
+}
+
 static inline void sharc_osage(uint32_t arg) {
     uint32_t p = 0x1400000u + arg;
     for (int guard = 0; guard < 4096; guard++) {
@@ -728,17 +742,10 @@ static inline void sharc_osage(uint32_t arg) {
         sharc_push_u(type);
         switch (type) {
             case 0: return;
-            case 1:
-                p += 0x25;
-                for (int c = 0; c < 3; c++)
-                    for (int r = 0; r < 3; r++) g_sharc.rot[c][r] = sharc_dm_getf(rec + (uint32_t)(c * 3 + r));
-                for (int i = 0; i < 3; i++) g_sharc.pos[i] = sharc_dm_getf(rec + 9u + (uint32_t)i);
-                for (uint32_t k = 0; k < 12; k++) sharc_dm_set(0x3037Au + k, sharc_dm_get(rec + 12 + k));
-                for (uint32_t k = 0; k < 12; k++) sharc_dm_set(0x30386u + k, sharc_dm_get(rec + 24 + k));
-                break;
-            case 2: p += 0x1F; for (uint32_t k = 0; k < 30; k++) sharc_dm_set(0x30342u + k, sharc_dm_get(rec + k)); break;
-            case 3: p += 3;    for (uint32_t k = 0; k < 2;  k++) sharc_dm_set(0x30360u + k, sharc_dm_get(rec + k)); break;
-            case 4: p += 4;    for (uint32_t k = 0; k < 3;  k++) sharc_dm_set(0x30362u + k, sharc_dm_get(rec + k)); break;
+            case 1: p += 0x25; sharc_osage_matrix(rec); break;
+            case 2: p += 0x1F; sharc_dm_copy(0x30342u, rec, 30); break;
+            case 3: p += 3;    sharc_dm_copy(0x30360u, rec, 2); break;
+            case 4: p += 4;    sharc_dm_copy(0x30362u, rec, 3); break;
             case 5: p += 0xC;  sharc_osage_segment(rec); break;
             default: return;   /* the firmware's jump table ends at 5 */
         }

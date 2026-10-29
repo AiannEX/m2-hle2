@@ -56,6 +56,7 @@
 #include "debug_window.h"
 #include "av_stream.h"     /* --av-port raw A/V server (transport + the audio tap) */
 #include "av_capture.h"    /* ...and its offscreen target + async GPU readback */
+#include "game_shot.h"     /* the bridge's screenshot: the game's picture as a PNG */
 #include "mcp_bridge.h"    /* --mcp TCP debug server (ported from m2-hle) */
 #include "netplay_window.h"  /* the RPCN netplay front-end */
 #include "replay_window.h"   /* the Replays menu and the playback window */
@@ -122,12 +123,15 @@ static int  g_no_pads    = 0;      /* --no-pads: no gamepads or wheels (and no S
  * the graders must leave it on. A netplay reset attaches the sound board
  * regardless (netplay_reset_board_cb): the other machine runs one. */
 static int  g_no_sound_board = 0;
-/* --sound-hle (or M2HLE_SOUND_HLE=1): run the sound driver in C instead of on
- * the 68000 (board/sound_hle.h), where the program ROM is one it knows (STF's);
- * the SCSP is the same chip either way. The i960 sees the same UART line, so
+/* The sound driver runs in C instead of on the 68000 (board/sound_hle.h) where
+ * the program ROM is one it knows; --sound-68k (or M2HLE_SOUND_HLE=0) keeps the
+ * 68000 for every game (--sound-hle, the old switch, is the default now). The
+ * SCSP is the same chip either way. The i960 sees the same UART line, so
  * the game runs the same frames (det_digest --sound-hle); what changes is when
  * the notes land, by a millisecond or two, and the cost: about half the sound
- * board's. */
+ * board's. --sound-synth (M2HLE_SOUND_SYNTH=1) takes the driver in C and plays
+ * its voices in C as well, in place of the SCSP's slots (board/sound_synth.h):
+ * the same samples, to the bit. */
 static int  g_kiosk_w    = KIOSK_DEFAULT_WIDTH;
 static int  g_kiosk_h    = KIOSK_DEFAULT_HEIGHT;
 static int  g_kiosk_show = 0;      /* --kiosk-show: start it on screen, not parked */
@@ -355,7 +359,7 @@ static void load_active_profile(const char *primary_zip) {
         open_backup_ram(homebrew);
         /* The model lookup is built from the ROM's model table: a new set needs a new one. */
         geo3d_lookup_invalidate();
-        g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+        m2_spin_install(&state.romset, &state.cpu, &state.bus);
         link_check_reset();   /* a new set: nothing asked, the TOSlink cable out */
         gems_apply(profile_rom_set(g_active_profile));
         ages_apply(profile_rom_set(g_active_profile));   /* after gems_apply: they share the extra-hook slot */
@@ -470,7 +474,7 @@ static void netplay_reset_board_cb(void *ctx) {
     (void)ctx;
     if (!g_active_profile || !state.romset.loaded) return;
 
-    g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    m2_spin_install(&state.romset, &state.cpu, &state.bus);
     irqt_reset();
 
     if (g_active_profile->quirks.enable_68k_sound) {
@@ -902,6 +906,7 @@ static void init_renderer(void) {
     state.file_dialog = IGFD_Create();
     video_init(&state.video);
     game_render_init();
+    game_shot_set_renderer(true);
     post_shader_init();
     shader_ui_load();
     if (g_shader_preset[0] && !post_shader_load(g_shader_preset))
@@ -1175,6 +1180,7 @@ static bool headless_gpu_init(void) {
     });
     if (!sg_isvalid()) { LOG_ERROR("av: sokol_gfx setup failed on the headless device"); return false; }
     game_render_init();
+    game_shot_set_renderer(true);
     video_init(&state.video);
     LOG_INFO("av: headless graphics up (no window, no swapchain); tiles on the %s",
              state.video.gpu ? "GPU" : "CPU");
@@ -1310,6 +1316,7 @@ static bool headless_gpu_init(void) {
     });
     if (!sg_isvalid()) { LOG_ERROR("av: sokol_gfx setup failed on the headless context"); return false; }
     game_render_init();
+    game_shot_set_renderer(true);
     video_init(&state.video);
     LOG_INFO("av: headless graphics up (EGL %d.%d surfaceless, %s, %s); tiles on the %s",
              (int)major, (int)minor, (const char *)glGetString(GL_RENDERER),
@@ -1379,12 +1386,19 @@ static void headless_tray_start(void) {
         kiosk_set_label(g_active_profile->display_name);
 }
 
+/* The bridge's screenshot (game_shot.h): the game across the target, as the
+ * A/V tap draws it, with the frame the renderer last prepared. */
+static void game_shot_draw(int w, int h) {
+    game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset,
+                    (game_rect_t){0, 0, w, h}, 1.0f);
+}
+
 /* One headless A/V frame, when one is due. */
-static void headless_av_frame(void) {
+static bool headless_av_frame(void) {
     /* One render per board frame, and only while somebody is reading:
      * with no client this is a poll loop and nothing else. */
     uint64_t av_frame = 0, av_sample = 0;
-    if (!(av_capture_due(&av_frame, &av_sample) && av_stream_active())) return;
+    if (!(av_capture_due(&av_frame, &av_sample) && av_stream_active())) return false;
     game_frame_prepare(&state.video, &state.geo3d, &state.bus,
                        &state.romset, true);
     /* With an overlay loaded the board is letterboxed into the
@@ -1408,6 +1422,16 @@ static void headless_av_frame(void) {
     overlay_host_draw();
     sg_end_pass();
     av_capture_submit(av_frame, av_sample);
+    sg_commit();
+    return true;
+}
+
+/* A headless screenshot: the frame the A/V pass just prepared, or one prepared
+ * for it when no client is reading. */
+static void headless_shot(bool prepared) {
+    if (!game_shot_pending()) return;
+    if (!prepared) game_frame_prepare(&state.video, &state.geo3d, &state.bus, &state.romset, true);
+    game_shot_service(game_shot_draw, g_emu_frames);
     sg_commit();
 }
 
@@ -1451,7 +1475,7 @@ static void headless_loop(bool av_on) {
         tray_headless_tick(g_emu_frames);
         link_check_frame(g_emu_frames);   /* the bridge's link_check "test" answer */
         if (av_on) {
-            headless_av_frame();
+            headless_shot(headless_av_frame());
             headless_sleep_ms(1);
         } else {
             emu_sleep_ms(5);
@@ -1698,6 +1722,52 @@ static void window_draw_game(int ox, int oy, int w, int h, bool post, bool win_o
     extract_model_tick();
 }
 
+/* A bridge caller may ask for the object viewer's window: it owns the
+ * viewer's settings but not this flag, which is the frontend's. */
+static void frame_objview_request(void) {
+    if (g_objview.window_request >= 0) {
+        state.show_objview       = (g_objview.window_request != 0);
+        g_objview.window_request = -1;
+    }
+}
+
+/* Where the game goes in the window, the overlay painted; true when an
+ * overlay (or an announcement) is up. */
+static bool frame_game_box(int *ox, int *oy, int *w, int *h) {
+    int win_ox = 0, win_oy = 0, win_gw = 0, win_gh = 0;
+    bool win_overlay = window_overlay_paint(&win_ox, &win_oy, &win_gw, &win_gh);
+
+    window_game_rect(ox, oy, w, h);
+    /* An overlay owns the whole window: the board goes where the plugin
+     * was told it would be, so the window and the stream show the identical
+     * composition rather than two letterboxes of the same picture. */
+    if (win_overlay) { *ox = win_ox; *oy = win_oy; *w = win_gw; *h = win_gh; }
+    /* With no plugin, an announcement still goes up, over the window's own
+     * game box. */
+    else if (!s_av_mirror && overlay_host_announcing()) {
+        int menu_h = s_menu_bar_visible ? (int)(igGetFrameHeight() * sapp_dpi_scale()) : 0;
+        overlay_host_paint(sapp_width(), sapp_height(), *ox, *oy, *w, *h, menu_h, g_emu_frames);
+        win_overlay = true;
+    }
+    return win_overlay;
+}
+
+/* The filter reads the game from a target of its own and covers only the
+ * game's rectangle. Not while the window mirrors the A/V stream: that
+ * target is the stream's composition, overlay and all. True when it is on. */
+static bool frame_post_source(int w, int h, float lerp_t) {
+    const bool post = !s_av_mirror && !g_stereo.on && post_shader_active();
+    if (post) {
+        int sw, sh;
+        post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, w, h, &sw, &sh);
+        post_shader_begin_source(sw, sh, &state.pass_action);
+        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){0, 0, sw, sh}, lerp_t);
+        post_shader_end_source();
+        post_shader_prepare(w, h);
+    }
+    return post;
+}
+
 static void frame(void) {
     /* `quit` over the bridge. Capture mode would otherwise swallow the close,
      * which is the point of capture mode -- so say we mean it. */
@@ -1738,46 +1808,15 @@ static void frame(void) {
      * the whole window. */
     s_menu_bar_visible = draw_ui && menu_bar_should_show();
 
-    /* A bridge caller may ask for the object viewer's window: it owns the
-     * viewer's settings but not this flag, which is the frontend's. */
-    if (g_objview.window_request >= 0) {
-        state.show_objview       = (g_objview.window_request != 0);
-        g_objview.window_request = -1;
-    }
-
+    frame_objview_request();
     if (draw_ui) draw_windows();
     if (draw_ui) link_check_prompt(&state.emu);
 
     av_stream_pass();
 
-    int win_ox = 0, win_oy = 0, win_gw = 0, win_gh = 0;
-    bool win_overlay = window_overlay_paint(&win_ox, &win_oy, &win_gw, &win_gh);
-
     int ox, oy, w, h;
-    window_game_rect(&ox, &oy, &w, &h);
-    /* An overlay owns the whole window: the board goes where the plugin
-     * was told it would be, so the window and the stream show the identical
-     * composition rather than two letterboxes of the same picture. */
-    if (win_overlay) { ox = win_ox; oy = win_oy; w = win_gw; h = win_gh; }
-    /* With no plugin, an announcement still goes up, over the window's own
-     * game box. */
-    else if (!s_av_mirror && overlay_host_announcing()) {
-        int menu_h = s_menu_bar_visible ? (int)(igGetFrameHeight() * sapp_dpi_scale()) : 0;
-        overlay_host_paint(sapp_width(), sapp_height(), ox, oy, w, h, menu_h, g_emu_frames);
-        win_overlay = true;
-    }
-    /* The filter reads the game from a target of its own and covers only the
-     * game's rectangle. Not while the window mirrors the A/V stream: that
-     * target is the stream's composition, overlay and all. */
-    const bool post = !s_av_mirror && !g_stereo.on && post_shader_active();
-    if (post) {
-        int sw, sh;
-        post_shader_source_size(VIDEO_WIDTH, VIDEO_HEIGHT, w, h, &sw, &sh);
-        post_shader_begin_source(sw, sh, &state.pass_action);
-        game_frame_draw(&state.video, &state.geo3d, &state.bus, &state.romset, (game_rect_t){0, 0, sw, sh}, lerp_t);
-        post_shader_end_source();
-        post_shader_prepare(w, h);
-    }
+    bool win_overlay = frame_game_box(&ox, &oy, &w, &h);
+    const bool post = frame_post_source(w, h, lerp_t);
 
     sg_begin_pass(&(sg_pass){
         .action    = state.pass_action,
@@ -1798,6 +1837,8 @@ static void frame(void) {
      * MCP request is waiting. */
     if (!draw_ui) g_objview.preview_open = 0;   /* capture mode shows no windows */
     objview_service(&state.romset, &state.bus);
+    /* The bridge's screenshot, the same way: its own offscreen pass. */
+    game_shot_service(game_shot_draw, g_emu_frames);
 
     sg_commit();
 
@@ -1827,6 +1868,7 @@ static void cleanup(void) {
     if (state.file_dialog) { IGFD_Destroy(state.file_dialog); state.file_dialog = NULL; }
     romset_free(&state.romset);
     objview_shutdown();
+    game_shot_shutdown();
     m2lua_ui_shutdown();
     overlay_host_shutdown();   /* before game_render_shutdown: it owns sg images */
     av_capture_shutdown();
@@ -1839,6 +1881,11 @@ static void cleanup(void) {
     log_file_close();
 }
 
+/* F5/F6/F7: n instructions, when the board is stopped. */
+static void hotkey_step(int n) {
+    if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, n);
+}
+
 /* The debugger's hotkeys: Esc quits, F9 runs or stops the board, F5/F6/F7
  * step it and F8 reboots the sound board. */
 static void event_hotkey(const sapp_event* ev) {
@@ -1849,20 +1896,14 @@ static void event_hotkey(const sapp_event* ev) {
             else if (state.emu_started && state.romset.loaded && !state.cpu.halted)
                 emu_run(&state.emu);
             break;
-        case SAPP_KEYCODE_F5:
-            if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, 1);
-            break;
-        case SAPP_KEYCODE_F6:
-            if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, 10);
-            break;
+        case SAPP_KEYCODE_F5: hotkey_step(1); break;
+        case SAPP_KEYCODE_F6: hotkey_step(10); break;
         case SAPP_KEYCODE_F8:
             /* Reboot the sound board. The driver can lose its command stream and
              * go permanently silent; this recovers it without dropping the run. */
             emu_sound_restart(&state.emu);
             break;
-        case SAPP_KEYCODE_F7:
-            if (!emu_is_running(&state.emu) && state.romset.loaded) emu_step(&state.emu, 100);
-            break;
+        case SAPP_KEYCODE_F7: hotkey_step(100); break;
         default: break;
     }
 }
@@ -1898,34 +1939,43 @@ static void event(const sapp_event* ev) {
     event_hotkey(ev);
 }
 
-sapp_desc sokol_main(int argc, char* argv[]) {
+/* The switches the environment can set too (a script's or a service's). */
+static void env_switches(void) {
     { const char *e = getenv("M2HLE_NO_SOUND_BOARD"); if (e && e[0] == '1') g_no_sound_board = 1; }
-    { const char *e = getenv("M2HLE_SOUND_HLE"); if (e && e[0] == '1') g_sound_hle_want = 1; }
+    { const char *e = getenv("M2HLE_SOUND_HLE"); if (e && (e[0] == '0' || e[0] == '1')) g_sound_hle_want = e[0] == '1'; }
+    { const char *e = getenv("M2HLE_SOUND_SYNTH"); if (e && e[0] == '1') g_sound_synth_want = 1; }
+    { const char *e = getenv("M2HLE_SCSP_EXACT"); if (e && e[0] == '1') g_scsp_exact = 1; }
     { const char *e = getenv("M2HLE_TEXLOAD_HLE"); if (e && e[0] == '0') g_texload_hle = 0; }
     { const char *e = getenv("M2HLE_SPIN_SKIP"); if (e && e[0] == '0') g_spin_skip = 0; }
-    /* The log's own options come first: the first line logged, a warning about
-     * any argument below included, opens the file. Without --log, an instance
-     * given its own --mcp-port gets its own file, because instances started
-     * side by side from one directory (a training population) otherwise all
-     * truncate and interleave one m2hle.log (issue #69). */
-    {
-        const char *log_path = NULL, *log_levels = NULL;
-        int port = 0;
-        for (int i = 1; i + 1 < argc; i++) {
-            if      (strcmp(argv[i], "--log") == 0)       log_path   = argv[++i];
-            else if (strcmp(argv[i], "--log-level") == 0) log_levels = argv[++i];
-            else if (strcmp(argv[i], "--mcp-port") == 0)  port       = atoi(argv[++i]);
-        }
-        char per_port[32];
-        if (!log_path && port > 0 && port != g_mcp_port) {
-            snprintf(per_port, sizeof per_port, "m2hle-%d.log", port);
-            log_path = per_port;
-        }
-        log_set_path(log_path);
-        if (log_levels && !log_set_levels(log_levels))
-            LOG_WARN("--log-level %s: expected LEVEL or CHANNEL=LEVEL, comma separated, "
-                     "LEVEL one of debug, info, warn, error, off; keeping everything", log_levels);
+}
+
+/* The log's own options come first: the first line logged, a warning about
+ * any argument below included, opens the file. Without --log, an instance
+ * given its own --mcp-port gets its own file, because instances started
+ * side by side from one directory (a training population) otherwise all
+ * truncate and interleave one m2hle.log (issue #69). */
+static void log_options(int argc, char **argv) {
+    const char *log_path = NULL, *log_levels = NULL;
+    int port = 0;
+    for (int i = 1; i + 1 < argc; i++) {
+        if      (strcmp(argv[i], "--log") == 0)       log_path   = argv[++i];
+        else if (strcmp(argv[i], "--log-level") == 0) log_levels = argv[++i];
+        else if (strcmp(argv[i], "--mcp-port") == 0)  port       = atoi(argv[++i]);
     }
+    char per_port[32];
+    if (!log_path && port > 0 && port != g_mcp_port) {
+        snprintf(per_port, sizeof per_port, "m2hle-%d.log", port);
+        log_path = per_port;
+    }
+    log_set_path(log_path);
+    if (log_levels && !log_set_levels(log_levels))
+        LOG_WARN("--log-level %s: expected LEVEL or CHANNEL=LEVEL, comma separated, "
+                 "LEVEL one of debug, info, warn, error, off; keeping everything", log_levels);
+}
+
+/* Every other option, one case each: a flat list, like the other command-line
+ * parsers SPAGHETTI.md leaves as they are. */
+static void parse_args(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
             strncpy(g_rom_path, argv[++i], sizeof(g_rom_path) - 1);
@@ -2066,6 +2116,12 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             g_no_sound_board = 1;
         } else if (strcmp(argv[i], "--sound-hle") == 0) {
             g_sound_hle_want = 1;
+        } else if (strcmp(argv[i], "--sound-68k") == 0) {    /* the game's sound program on the 68000 */
+            g_sound_hle_want = 0;
+        } else if (strcmp(argv[i], "--sound-synth") == 0) {   /* and the voices in C (sound_synth.h) */
+            g_sound_synth_want = 1;
+        } else if (strcmp(argv[i], "--scsp-exact") == 0) {   /* the DSP every sample (scsp.h, "A quiet DSP") */
+            g_scsp_exact = 1;
         } else if (strcmp(argv[i], "--gems-i960") == 0) {
             g_gems_i960 = true;     /* STF's trapped functions in Gems' C (core/gems.h) */
         } else if (strcmp(argv[i], "--gems-cop") == 0) {
@@ -2257,15 +2313,11 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             snprintf(g_net_cli.ps3_wire, sizeof(g_net_cli.ps3_wire), "%s", argv[++i]);
         }
     }
-    /* The record switch is the player's (replay.cfg); a headless run keeps
-     * only what its command line says, as the graders boot blank. */
-    if (!g_headless && !g_replay_cli_set) replay_settings_load();
-    if (!g_headless) lightgun_ui_settings_load();   /* the crosshair (Pinboard #1496) */
-    scripts_setup();
-    if (g_headless) exit(headless_main());
-    /* Capture mode wants the game moving, not a first frame held on pause. */
-    if (g_kiosk_on) g_autorun = 1;
+}
 
+/* The window sokol opens: kiosk mode's size, the depth-stencil swapchain
+ * and the icon. */
+static sapp_desc app_desc(void) {
     /* The window's own icon, from the same art as the tray icon (app_icon.h),
      * rendered at each size rather than downscaled from one bitmap. */
     static uint8_t icon16[16 * 16 * 4], icon32[32 * 32 * 4], icon64[64 * 64 * 4];
@@ -2306,4 +2358,19 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             },
         },
     };
+}
+
+sapp_desc sokol_main(int argc, char* argv[]) {
+    env_switches();
+    log_options(argc, argv);
+    parse_args(argc, argv);
+    /* The record switch is the player's (replay.cfg); a headless run keeps
+     * only what its command line says, as the graders boot blank. */
+    if (!g_headless && !g_replay_cli_set) replay_settings_load();
+    if (!g_headless) lightgun_ui_settings_load();   /* the crosshair (Pinboard #1496) */
+    scripts_setup();
+    if (g_headless) exit(headless_main());
+    /* Capture mode wants the game moving, not a first frame held on pause. */
+    if (g_kiosk_on) g_autorun = 1;
+    return app_desc();
 }

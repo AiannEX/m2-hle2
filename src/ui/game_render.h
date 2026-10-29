@@ -2449,9 +2449,10 @@ static inline void game_render__tri_box(const geo3d_tri_t *T, const float *m, fl
 }
 
 #define GAME_RENDER_MAX_CHECKER 1024
-static inline void game_render__pixel_checker_caps(int nt) {
-    if (!g_geo3d_pixel_list) return;
-    static game_render__chk_box_t chk[GAME_RENDER_MAX_CHECKER];
+static game_render__chk_box_t g_game_render__chk[GAME_RENDER_MAX_CHECKER];
+
+/* The boxes of the batch's checkered faces into g_game_render__chk; how many. */
+static inline int game_render__checker_boxes(int nt) {
     int nc = 0;
     for (int r = 0; r < g_render_batch.count; r++) {
         const game_render_run_t *run = &g_render_batch.runs[r];
@@ -2459,7 +2460,7 @@ static inline void game_render__pixel_checker_caps(int nt) {
             const geo3d_tri_t *T = &g_geo3d_tris.tris[i];
             if (!((int)(T->fl + 0.5f) & (int)GEO3D_FACE_CHECKER) || T->zl > -1.0f || T->zl < -2.0f) continue;
             if (nc == GAME_RENDER_MAX_CHECKER) break;
-            game_render__chk_box_t *c = &chk[nc++];
+            game_render__chk_box_t *c = &g_game_render__chk[nc++];
             float b[4];
             game_render__tri_box(T, run->mvp_t, b);
             c->x0 = b[0]; c->y0 = b[1]; c->x1 = b[2]; c->y1 = b[3];
@@ -2467,33 +2468,50 @@ static inline void game_render__pixel_checker_caps(int nt) {
             c->key = (uint32_t)floorf((-T->zl - 1.0f) * 65536.0f);
         }
     }
+    return nc;
+}
+
+/* u (x0, x1, y0, y1) grown to take in box c. */
+static inline void game_render__box_union(float u[4], const game_render__chk_box_t *c) {
+    if (c->x0 < u[0]) u[0] = c->x0;
+    if (c->x1 > u[1]) u[1] = c->x1;
+    if (c->y0 < u[2]) u[2] = c->y0;
+    if (c->y1 > u[3]) u[3] = c->y1;
+}
+
+/* Per-pixel face T of run: capped below the checkered faces it overlaps that
+ * sort in front of it, their boxes' union kept with the cap. */
+static inline void game_render__pixel_cap(geo3d_tri_t *T, const game_render_run_t *run, int nc) {
+    const float v = -T->zl - GEO3D_PIXEL_ZL;
+    const uint32_t key = (uint32_t)((v - floorf(v)) * 65536.0f + 0.5f);
+    uint32_t cap = 0xffffffffu;
+    float b[4], u[4] = { 1023.0f, 0.0f, 1023.0f, 0.0f };
+    bool boxed = false;
+    for (int k = 0; k < nc; k++) {
+        const game_render__chk_box_t *c = &g_game_render__chk[k];
+        if (key > c->key || c->slice[0] != run->mvp_t[10] || c->slice[1] != run->mvp_t[14]) continue;
+        if (!boxed) { game_render__tri_box(T, run->mvp_t, b); boxed = true; }
+        if (b[0] > c->x1 || b[2] < c->x0 || b[1] > c->y1 || b[3] < c->y0) continue;
+        uint32_t to = key < c->key ? c->key - 1u : c->key;
+        if (to < cap) cap = to;
+        game_render__box_union(u, c);
+    }
+    if (cap == 0xffffffffu) return;
+    T->zs0 = (float)cap;                     /* x0, x1 and y0, y1 packed by 1024 */
+    T->zs1 = u[0] * 1024.0f + u[1];
+    T->zs2 = u[2] * 1024.0f + u[3];
+}
+
+static inline void game_render__pixel_checker_caps(int nt) {
+    if (!g_geo3d_pixel_list) return;
+    int nc = game_render__checker_boxes(nt);
     if (nc == 0) return;
     for (int r = 0; r < g_render_batch.count; r++) {
         const game_render_run_t *run = &g_render_batch.runs[r];
         for (int i = run->tri_first; i < run->tri_first + run->tri_count && i < nt; i++) {
             geo3d_tri_t *T = &g_geo3d_tris.tris[i];
             if (T->zl > -(GEO3D_PIXEL_ZL - 0.5f)) continue;    /* not a per-pixel face */
-            const float v = -T->zl - GEO3D_PIXEL_ZL;
-            const uint32_t key = (uint32_t)((v - floorf(v)) * 65536.0f + 0.5f);
-            uint32_t cap = 0xffffffffu;
-            float b[4], u[4] = { 1023.0f, 0.0f, 1023.0f, 0.0f };
-            bool boxed = false;
-            for (int k = 0; k < nc; k++) {
-                const game_render__chk_box_t *c = &chk[k];
-                if (key > c->key || c->slice[0] != run->mvp_t[10] || c->slice[1] != run->mvp_t[14]) continue;
-                if (!boxed) { game_render__tri_box(T, run->mvp_t, b); boxed = true; }
-                if (b[0] > c->x1 || b[2] < c->x0 || b[1] > c->y1 || b[3] < c->y0) continue;
-                uint32_t to = key < c->key ? c->key - 1u : c->key;
-                if (to < cap) cap = to;
-                if (c->x0 < u[0]) u[0] = c->x0;
-                if (c->x1 > u[1]) u[1] = c->x1;
-                if (c->y0 < u[2]) u[2] = c->y0;
-                if (c->y1 > u[3]) u[3] = c->y1;
-            }
-            if (cap == 0xffffffffu) continue;
-            T->zs0 = (float)cap;                     /* x0, x1 and y0, y1 packed by 1024 */
-            T->zs1 = u[0] * 1024.0f + u[1];
-            T->zs2 = u[2] * 1024.0f + u[3];
+            game_render__pixel_cap(T, run, nc);
         }
     }
 }

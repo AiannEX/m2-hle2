@@ -38,6 +38,7 @@
 #include "rom_loader.h"   /* romset_t — the regions the model decoder reads */
 #include "input.h"     /* g_input.held — drive the game's I/O ports over the bridge */
 #include "objview_cmd.h"  /* the object viewer's commands, shared with the web build */
+#include "game_shot.h"    /* screenshot: the game's picture, from the render thread */
 #include "av_stream.h"    /* the --av-port server, for the "av" block of get_status */
 #include "overlay_host.h" /* ...and the "overlay" block: is the plugin actually running */
 #include "frame_times.h"  /* ...and "render": where the host's frame time goes */
@@ -2842,6 +2843,49 @@ static void mcp_cmd_objview_set(const char *req, char *resp, int cap) {
                       g_objview.last_ok, g_objview.last_err);
 }
 
+/* {"cmd":"screenshot","path":"...","width":W,"height":H,"timeout_ms":N}: the
+ * game's picture as a PNG (game_shot.h), the board's 496x384 unless W x H say
+ * otherwise; no ImGui, no picture filter. Works with the board stopped: the
+ * last frame is drawn again. Blocks until the render thread has written it. */
+static void mcp_cmd_screenshot(const char *req, char *resp, int cap) {
+    char path[GAME_SHOT_PATH_MAX] = {0}, err[192] = {0};
+    uint32_t w = 0, h = 0, timeout_ms = 10000;
+    mcp_json_get_str(req, "path", path, sizeof path);
+    mcp_json_get_u32(req, "width", &w);
+    mcp_json_get_u32(req, "height", &h);
+    mcp_json_get_u32(req, "timeout_ms", &timeout_ms);
+    if (timeout_ms > 120000) timeout_ms = 120000;
+    if (!game_shot_renderer()) {
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"no renderer: --headless draws nothing "
+                 "without --av-port; run with a window (an Xvfb will do)\"}");
+        return;
+    }
+    char esc[2 * GAME_SHOT_PATH_MAX];
+    if (!game_shot_arm(path, (int)w, (int)h, err, sizeof err)) {
+        mcp_json_escape(esc, (int)sizeof esc, err);
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"%s\"}", esc);
+        return;
+    }
+    game_shot_req_t *rq = &g_game_shot.req;
+    uint32_t elapsed = 0;
+    while (!rq->done && elapsed < timeout_ms) { emu_sleep_ms(2); elapsed += 2; }
+    if (!rq->done) {
+        rq->pending = 0;
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"the render thread did not take the shot "
+                 "in %u ms (a minimised window gets no frames)\"}", timeout_ms);
+        return;
+    }
+    if (!rq->ok) {
+        mcp_json_escape(esc, (int)sizeof esc, rq->err);
+        snprintf(resp, (size_t)cap, "{\"ok\":false,\"error\":\"%s\"}", esc);
+        return;
+    }
+    mcp_json_escape(esc, (int)sizeof esc, rq->path);
+    snprintf(resp, (size_t)cap, "{\"ok\":true,\"path\":\"%s\",\"width\":%d,\"height\":%d,"
+             "\"frame\":%u,\"bytes\":%zu,\"elapsed_ms\":%u}",
+             esc, rq->w, rq->h, rq->frame, rq->bytes, elapsed);
+}
+
 static void mcp_cmd_objview_shot(const char *req, char *resp, int cap) {
     char err[192];
     if (!objview_cmd_arm_shot(req, err, sizeof err)) {
@@ -3015,21 +3059,28 @@ static void mcp_cmd_replay(const char *req, char *resp, int cap) {
  *   {"edit":F,"xor":BITS}, {"insert":F}, {"delete":F}, {"undo":1}, {"redo":1}
  *   {"branch_save":I}, {"branch_load":I}, {"save":PATH}, {"load":PATH}
  *   {"from":F,"count":N}  the frames' held words and checks in the answer */
-static const char *mcp_tas_do(const char *req) {
-    emu_thread_ctx_t *ctx = g_mcp.emu;
-    uint32_t v = 0, w = 0;
+/* The keys that start, stop, save or load a movie, the first one there
+ * answering for the request: true when one was. */
+static bool mcp_tas_session(emu_thread_ctx_t *ctx, const char *req, const char **err) {
+    uint32_t v = 0;
     char path[512];
-    if (!ctx) return "no board";
     if (mcp_json_get_u32(req, "power_on", &v) && v) {
-        const char *err = tas__busy();
-        if (!err) { g_tas.start_req = true; ctx->request_reset = 1; }
-        return err;
+        *err = tas__busy();
+        if (!*err) { g_tas.start_req = true; ctx->request_reset = 1; }
     }
-    if (mcp_json_get_u32(req, "start", &v) && v)        return tas_start(ctx);
-    if (mcp_json_get_u32(req, "stop", &v) && v)         { tas_stop("asked for"); return NULL; }
-    if (mcp_json_get_u32(req, "resume", &v) && v)       return tas_resume(ctx);
-    if (mcp_json_get_str(req, "save", path, sizeof path)) return tas_save_file(path);
-    if (mcp_json_get_str(req, "load", path, sizeof path)) return tas_load_file(ctx, path, true);
+    else if (mcp_json_get_u32(req, "start", &v) && v)        *err = tas_start(ctx);
+    else if (mcp_json_get_u32(req, "stop", &v) && v)         { tas_stop("asked for"); *err = NULL; }
+    else if (mcp_json_get_u32(req, "resume", &v) && v)       *err = tas_resume(ctx);
+    else if (mcp_json_get_str(req, "save", path, sizeof path)) *err = tas_save_file(path);
+    else if (mcp_json_get_str(req, "load", path, sizeof path)) *err = tas_load_file(ctx, path, true);
+    else return false;
+    return true;
+}
+
+/* The pad and the movie's switches, which hold with or without a movie. */
+static const char *mcp_tas_settings(const char *req) {
+    uint32_t v = 0;
+    char path[512];
     if (mcp_json_get_u32(req, "recording", &v))         g_tas.recording = v != 0;
     if (mcp_json_get_u32(req, "keys_too", &v))          g_tas.keys_too = v != 0;
     if (mcp_json_get_u32(req, "cut", &v))               g_tas.cut = v != 0;
@@ -3047,24 +3098,66 @@ static const char *mcp_tas_do(const char *req) {
         g_tas.pad.aim_x[p] = x; g_tas.pad.aim_y[p] = y;
         g_tas.pad.aim_off[p] = got >= 4 && off;
     }
-    if (!g_tas.on) return NULL;
+    return NULL;
+}
+
+/* The movie's seeks: only with a movie on. */
+static const char *mcp_tas_seeks(const char *req) {
+    uint32_t v = 0;
     if (mcp_json_get_u32(req, "seek", &v))              { g_tas.rewinding = false; tas_seek(v, false); }
     if (mcp_json_get_u32(req, "rewind", &v))            tas_rewind(v, false);
     if (mcp_json_get_u32(req, "undo_rewind", &v) && v && !tas_undo_rewind(false)) return "nothing to undo";
+    return NULL;
+}
+
+/* The movie's edits: only with a movie on. */
+static const char *mcp_tas_edits(const char *req) {
+    uint32_t v = 0, w = 0;
     if (mcp_json_get_u32(req, "edit", &v) && mcp_json_get_u32(req, "xor", &w)) tas_edit_held(v, w);
     if (mcp_json_get_u32(req, "insert", &v))            tas_insert(v, 1);
     if (mcp_json_get_u32(req, "delete", &v))            tas_delete(v, 1);
     if (mcp_json_get_u32(req, "undo", &v) && v && !tas_undo(false)) return "nothing to undo";
     if (mcp_json_get_u32(req, "redo", &v) && v && !tas_undo(true))  return "nothing to redo";
+    return NULL;
+}
+
+/* With a movie on: its seeks, its edits, its branches, then advance. */
+static const char *mcp_tas_movie(emu_thread_ctx_t *ctx, const char *req) {
+    uint32_t v = 0;
+    const char *err = mcp_tas_seeks(req);
+    if (!err) err = mcp_tas_edits(req);
+    if (err) return err;
     if (mcp_json_get_u32(req, "branch_save", &v))       tas_branch_save((int)v);
     if (mcp_json_get_u32(req, "branch_load", &v))       tas_branch_load((int)v);
     if (mcp_json_get_u32(req, "advance", &v) && v)      emu_run_frames(ctx, v);
     return NULL;
 }
 
-static void mcp_cmd_tas(const char *req, char *resp, int cap) {
-    int locked = g_mcp.emu && g_mcp.emu->thread_alive;
-    if (locked) emu_mutex_lock(&g_mcp.emu->mutex);
+static const char *mcp_tas_do(const char *req) {
+    emu_thread_ctx_t *ctx = g_mcp.emu;
+    const char *err = NULL;
+    if (!ctx) return "no board";
+    if (mcp_tas_session(ctx, req, &err)) return err;
+    if ((err = mcp_tas_settings(req)) != NULL) return err;
+    return g_tas.on ? mcp_tas_movie(ctx, req) : NULL;
+}
+
+/* {"from":F,"count":N}: the frames' held words and checks, after resp[k]. */
+static int mcp_tas_frames(const char *req, char *resp, int k, int cap) {
+    uint32_t from = 0, count = 0;
+    if (!mcp_json_get_u32(req, "from", &from) || !mcp_json_get_u32(req, "count", &count)) return k;
+    k += snprintf(resp + k, (size_t)(cap - k), ",\"held\":[");
+    for (uint32_t f = from; f < from + count && f < g_tas.mv.n && k < cap - 64; f++)
+        k += snprintf(resp + k, (size_t)(cap - k), "%s%u", f > from ? "," : "", g_tas.mv.in[f].held);
+    k += snprintf(resp + k, (size_t)(cap - k), "],\"check\":[");
+    for (uint32_t f = from; f < from + count && f < g_tas.mv.n && k < cap - 64; f++)
+        k += snprintf(resp + k, (size_t)(cap - k), "%s%u", f > from ? "," : "", g_tas.mv.check[f]);
+    k += snprintf(resp + k, (size_t)(cap - k), "]");
+    return k;
+}
+
+/* The request done, and the movie's state in resp. */
+static void mcp_tas_answer(const char *req, char *resp, int cap) {
     const char *err = mcp_tas_do(req);
     char msg[260];
     json_escape(msg, sizeof msg, g_tas.msg);
@@ -3077,17 +3170,14 @@ static void mcp_cmd_tas(const char *req, char *resp, int cap) {
              (g_tas.seek_req >= 0 || g_tas.start_req) ? 1 : 0, g_tas.mid ? 1 : 0,
              g_tas.recording ? 1 : 0, g_tas.rerecords, g_tas.gz_n, (long long)g_tas.desync,
              g_tas.undo_n, g_mcp.emu && emu_is_running(g_mcp.emu) ? 1 : 0, msg);
-    uint32_t from = 0, count = 0;
-    if (mcp_json_get_u32(req, "from", &from) && mcp_json_get_u32(req, "count", &count)) {
-        k += snprintf(resp + k, (size_t)(cap - k), ",\"held\":[");
-        for (uint32_t f = from; f < from + count && f < g_tas.mv.n && k < cap - 64; f++)
-            k += snprintf(resp + k, (size_t)(cap - k), "%s%u", f > from ? "," : "", g_tas.mv.in[f].held);
-        k += snprintf(resp + k, (size_t)(cap - k), "],\"check\":[");
-        for (uint32_t f = from; f < from + count && f < g_tas.mv.n && k < cap - 64; f++)
-            k += snprintf(resp + k, (size_t)(cap - k), "%s%u", f > from ? "," : "", g_tas.mv.check[f]);
-        k += snprintf(resp + k, (size_t)(cap - k), "]");
-    }
+    k = mcp_tas_frames(req, resp, k, cap);
     snprintf(resp + k, (size_t)(cap - k), "}");
+}
+
+static void mcp_cmd_tas(const char *req, char *resp, int cap) {
+    int locked = g_mcp.emu && g_mcp.emu->thread_alive;
+    if (locked) emu_mutex_lock(&g_mcp.emu->mutex);
+    mcp_tas_answer(req, resp, cap);
     if (locked) emu_mutex_unlock(&g_mcp.emu->mutex);
 }
 
@@ -3161,6 +3251,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
     else if (strcmp(cmd, "objview_status")           == 0) mcp_cmd_objview_status(resp, cap);
     else if (strcmp(cmd, "objview_set")              == 0) mcp_cmd_objview_set(req, resp, cap);
     else if (strcmp(cmd, "objview_shot")             == 0) mcp_cmd_objview_shot(req, resp, cap);
+    else if (strcmp(cmd, "screenshot")               == 0) mcp_cmd_screenshot(req, resp, cap);
     else if (strcmp(cmd, "objview_wait_ready")       == 0) mcp_cmd_objview_wait_ready(req, resp, cap);
     else if (strcmp(cmd, "objview_list")             == 0) mcp_cmd_objview_list(req, resp, cap);
     else if (strcmp(cmd, "dump_bones")               == 0) mcp_cmd_dump_bones(resp, cap);
@@ -3190,7 +3281,7 @@ static void mcp_dispatch(const char *req, char *resp, int cap) {
         char *p=resp; int left=cap; int n;
         n=snprintf(p,(size_t)left,"{\"ok\":true,\"addr\":\"%03X\",\"b\":[",addr); p+=n; left-=n;
         for (uint32_t i=0;i<len && (addr+i)<M68K_SCSP_SIZE && left>6;i++){
-            uint16_t w = scsp_peek16(&g_sound.scsp, (addr+i) & ~1u);
+            uint16_t w = ssyn_scsp_peek16((addr+i) & ~1u);
             n=snprintf(p,(size_t)left,"%s%u",i?",":"",((addr+i)&1) ? (w&0xFF) : (w>>8)); p+=n; left-=n;
         }
         snprintf(p,(size_t)left,"]}");

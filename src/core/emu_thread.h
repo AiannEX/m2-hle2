@@ -1012,6 +1012,9 @@ static inline void emu_slice_body(emu_thread_ctx_t *ctx) {
 static inline void emu_slice_count_frame(emu_thread_ctx_t *ctx) {
     g_emu_frames++;   /* frame clock for the MCP bridge / capture tools */
     g_dl_frame_now = g_emu_frames;
+    /* Idle loops a game put in work RAM since (m2_spin.h); no board state. */
+    if (g_hle_spin_rescan && !(g_emu_frames & 63u)) g_hle_spin_rescan(ctx->bus);
+
     /* Stamp the frame with the board audio produced up to its end: the
      * slice's own samples, which sound_run_slice handed out in the body
      * above and the sound thread may still be making (out_due is where

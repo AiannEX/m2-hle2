@@ -204,7 +204,7 @@ EM_JS(void, web_gpu_renderer, (char *out, int cap), {
 });
 
 static void web_install_board(void) {
-    g_active_profile->install_fn(&state.romset, &state.cpu, &state.bus);
+    m2_spin_install(&state.romset, &state.cpu, &state.bus);
     link_check_reset();   /* a new set: nothing asked, the TOSlink cable out */
     irqt_reset();
     if (g_active_profile->quirks.enable_68k_sound) {
@@ -590,10 +590,11 @@ EMSCRIPTEN_KEEPALIVE void web_audio_set_nudge(double nudge) {
 }
 
 /* Who runs the sound driver: the 68000 running the game's own program (0, the
- * default) or STF's driver ported to C (1, board/sound_hle.h), which runs the
- * sound board in about half the time (4-11% of a whole frame here, measured
- * with det_digest under Node) -- the page offers it for slower devices. Any
- * other game keeps the 68000 whatever this says (shle_driver_known).
+ * page's choice) or the driver ported to C (1, board/sound_hle.h, the default
+ * since #1802), which runs the sound board in about half the time (4-11% of a
+ * whole frame here, measured with det_digest under Node). A game
+ * on a driver build the port does not know keeps the 68000 whatever this says
+ * (shle_driver_known).
  *
  * The board takes the choice at a sound reset. With no session that happens
  * here and now: the driver boots afresh, so the music stops until the game's
@@ -1138,56 +1139,75 @@ EMSCRIPTEN_KEEPALIVE void web_set_gun_flash(int frames) {
  * in a session, a follow or a replay. Coordinates are the framebuffer's, as
  * the picture's rectangle is. */
 static int64_t g_web_gun_touch = -1;   /* the finger holding the gun, or -1 */
+
+/* The picture's rectangle on the canvas, and whether the gun aims at it. */
+typedef struct { float x, y, w, h; bool live; } web_gun_rect_t;
+
+static void web_gun_aim(const web_gun_rect_t *r, float x, float y) {
+    lightgun_host_aim(0, x, y, r->x, r->y, r->w, r->h);
+}
+
+static void web_gun_mouse_move(const sapp_event *ev, const web_gun_rect_t *r) {
+    if (r->live && g_web_gun_touch < 0) web_gun_aim(r, ev->mouse_x, ev->mouse_y);
+}
+
+/* The mouse's buttons: the left one is the trigger, the right one reloads.
+ * A press aims first, unless a finger holds the gun. */
+static void web_gun_mouse_button(const sapp_event *ev, const web_gun_rect_t *r, bool down) {
+    if (down && (!r->live || g_web_gun_touch >= 0)) return;
+    if (down) web_gun_aim(r, ev->mouse_x, ev->mouse_y);
+    if (ev->mouse_button == SAPP_MOUSEBUTTON_LEFT)  lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, down);
+    if (ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT) lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, down);
+}
+
+/* A finger lands: it holds the gun, and fires on the picture or reloads off it. */
+static void web_gun_touch_began(const sapp_event *ev, const web_gun_rect_t *r) {
+    for (int i = 0; i < ev->num_touches; i++) {
+        const sapp_touchpoint *t = &ev->touches[i];
+        if (!t->changed || g_web_gun_touch >= 0 || !r->live) continue;
+        g_web_gun_touch = (int64_t)t->identifier;
+        web_gun_aim(r, t->pos_x, t->pos_y);
+        bool on = t->pos_x >= r->x && t->pos_x <= r->x + r->w && t->pos_y >= r->y && t->pos_y <= r->y + r->h;
+        lightgun_host_button(0, on ? LIGHTGUN_HOST_TRIGGER : LIGHTGUN_HOST_RELOAD, true);
+    }
+}
+
+static void web_gun_touch_moved(const sapp_event *ev, const web_gun_rect_t *r) {
+    for (int i = 0; i < ev->num_touches; i++) {
+        const sapp_touchpoint *t = &ev->touches[i];
+        if (t->changed && r->live && (int64_t)t->identifier == g_web_gun_touch)
+            web_gun_aim(r, t->pos_x, t->pos_y);
+    }
+}
+
+/* The finger holding the gun lifts: both its buttons let go. */
+static void web_gun_touch_ended(const sapp_event *ev) {
+    for (int i = 0; i < ev->num_touches; i++) {
+        const sapp_touchpoint *t = &ev->touches[i];
+        if (!t->changed || (int64_t)t->identifier != g_web_gun_touch) continue;
+        g_web_gun_touch = -1;
+        lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, false);
+        lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, false);
+    }
+}
+
 static void web_gun_event(const sapp_event *ev) {
     if (!lightgun_host_on()) return;
-    const int *r = g_web_cheats_rect;
-    const bool live = web_game_pad() && r[2] > 0;
-    const float rx = (float)r[0], ry = (float)r[1], rw = (float)r[2], rh = (float)r[3];
+    const int *c = g_web_cheats_rect;
+    const web_gun_rect_t r = { (float)c[0], (float)c[1], (float)c[2], (float)c[3],
+                               web_game_pad() && c[2] > 0 };
     switch (ev->type) {
     case SAPP_EVENTTYPE_MOUSE_MOVE:
-    case SAPP_EVENTTYPE_MOUSE_ENTER:
-        if (live && g_web_gun_touch < 0) lightgun_host_aim(0, ev->mouse_x, ev->mouse_y, rx, ry, rw, rh);
-        break;
+    case SAPP_EVENTTYPE_MOUSE_ENTER:       web_gun_mouse_move(ev, &r);          break;
     case SAPP_EVENTTYPE_MOUSE_LEAVE:
         if (g_web_gun_touch < 0) lightgun_host_aim_away(0);
         break;
-    case SAPP_EVENTTYPE_MOUSE_DOWN:
-        if (!live || g_web_gun_touch >= 0) break;
-        lightgun_host_aim(0, ev->mouse_x, ev->mouse_y, rx, ry, rw, rh);
-        if (ev->mouse_button == SAPP_MOUSEBUTTON_LEFT)  lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, true);
-        if (ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT) lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, true);
-        break;
-    case SAPP_EVENTTYPE_MOUSE_UP:
-        if (ev->mouse_button == SAPP_MOUSEBUTTON_LEFT)  lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, false);
-        if (ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT) lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, false);
-        break;
-    case SAPP_EVENTTYPE_TOUCHES_BEGAN:
-        for (int i = 0; i < ev->num_touches; i++) {
-            const sapp_touchpoint *t = &ev->touches[i];
-            if (!t->changed || g_web_gun_touch >= 0 || !live) continue;
-            g_web_gun_touch = (int64_t)t->identifier;
-            lightgun_host_aim(0, t->pos_x, t->pos_y, rx, ry, rw, rh);
-            bool on = t->pos_x >= rx && t->pos_x <= rx + rw && t->pos_y >= ry && t->pos_y <= ry + rh;
-            lightgun_host_button(0, on ? LIGHTGUN_HOST_TRIGGER : LIGHTGUN_HOST_RELOAD, true);
-        }
-        break;
-    case SAPP_EVENTTYPE_TOUCHES_MOVED:
-        for (int i = 0; i < ev->num_touches; i++) {
-            const sapp_touchpoint *t = &ev->touches[i];
-            if (t->changed && live && (int64_t)t->identifier == g_web_gun_touch)
-                lightgun_host_aim(0, t->pos_x, t->pos_y, rx, ry, rw, rh);
-        }
-        break;
+    case SAPP_EVENTTYPE_MOUSE_DOWN:        web_gun_mouse_button(ev, &r, true);  break;
+    case SAPP_EVENTTYPE_MOUSE_UP:          web_gun_mouse_button(ev, &r, false); break;
+    case SAPP_EVENTTYPE_TOUCHES_BEGAN:     web_gun_touch_began(ev, &r);         break;
+    case SAPP_EVENTTYPE_TOUCHES_MOVED:     web_gun_touch_moved(ev, &r);         break;
     case SAPP_EVENTTYPE_TOUCHES_ENDED:
-    case SAPP_EVENTTYPE_TOUCHES_CANCELLED:
-        for (int i = 0; i < ev->num_touches; i++) {
-            const sapp_touchpoint *t = &ev->touches[i];
-            if (!t->changed || (int64_t)t->identifier != g_web_gun_touch) continue;
-            g_web_gun_touch = -1;
-            lightgun_host_button(0, LIGHTGUN_HOST_TRIGGER, false);
-            lightgun_host_button(0, LIGHTGUN_HOST_RELOAD, false);
-        }
-        break;
+    case SAPP_EVENTTYPE_TOUCHES_CANCELLED: web_gun_touch_ended(ev);             break;
     default:
         break;
     }

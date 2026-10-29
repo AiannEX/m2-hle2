@@ -762,9 +762,18 @@ Bridge-only JSON commands for the game's script, `<scripts>/<set>.lua`
 
 ### Captures and diagnostics
 
-`get_geo_captures` is an MCP tool; the rest are bridge-only JSON commands, used
-mostly by the graders under `tools/`. Paths are resolved by the emulator
-process, so pass absolute ones.
+`get_geo_captures`, `screenshot` and `set_geo_isolate` are MCP tools; the rest
+are bridge-only JSON commands, used mostly by the graders under `tools/`. Paths
+are resolved by the emulator process, so pass absolute ones.
+
+**`screenshot(path, width, height, timeout_ms = 10000)`**
+The game's picture as a PNG (`ui/game_shot.h`): what the A/V tap sends, at the
+board's 496x384 unless `width`/`height` say otherwise, with no ImGui and no
+picture filter. It is the frame the renderer last prepared, so a stopped board
+(`emu_stop`) gives its last frame. It needs a renderer: a window (an Xvfb will
+do) or `--headless --av-port`; plain `--headless` answers `ok: false`. Returns
+`frame`, `width`, `height`, `bytes`. With `set_geo_isolate` it shows one object
+alone (m2-megamix grabbed its Xvfb with ffmpeg for that before, #1545).
 
 **`get_geo_captures()`**
 The models the board drew in the last frame: `count` and `captures`, each with

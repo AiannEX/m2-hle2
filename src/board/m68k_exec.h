@@ -1163,9 +1163,12 @@ static inline int m68k_step_core(m68k_state_t *s) {
             break;
         }
 
-        /* 0100 1100 1 ea: MOVEM memory→regs */
-        /* 0100 1000 1 ea: MOVEM regs→memory  (already handled PEA above; check again) */
-        if ((op & 0xFB80) == 0x4880 && (op & 0x0040)) {
+        /* 0100 1100 1s ea: MOVEM memory→regs */
+        /* 0100 1000 1s ea: MOVEM regs→memory, s = 0 word, 1 long. Mode 0 is EXT
+         * (above); a word MOVEM must not fall to the NEG/CLR decode below, which
+         * left its register mask to run as an opcode (Motor Raid's sound driver
+         * saves its registers with movem.w, Pinboard #1627). */
+        if ((op & 0xFB80) == 0x4880 && mode >= 2) {
             /* MOVEM: bit 10 = direction (0=regs→mem, 1=mem→regs) */
             int to_regs = (op >> 10) & 1;
             int sz_long = (op >> 6) & 1; /* 0=word, 1=long */

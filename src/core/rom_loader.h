@@ -187,6 +187,35 @@ static inline uint8_t *zip_extract_by_crc(const char *zippath, uint32_t crc, siz
  * stand-in (rom_recipe.h, an older revision's) says so itself if both miss. */
 static int g_rl_quiet_missing;
 
+/* The file of that CRC in the child zip, else the parent's; NULL if neither has it. */
+static inline uint8_t *zip__by_crc_in_set(const char *child_zip, const char *parent_zip,
+                                          uint32_t crc, size_t *out_size) {
+    uint8_t *data = NULL;
+    if (child_zip)           data = zip_extract_by_crc(child_zip,  crc, out_size);
+    if (!data && parent_zip) data = zip_extract_by_crc(parent_zip, crc, out_size);
+    return data;
+}
+
+/* filename from the child zip or the parent, by name and then by CRC; *actual
+ * its CRC. */
+static inline uint8_t *zip__find_in_set(const char *child_zip, const char *parent_zip,
+                                        const char *filename, size_t *out_size,
+                                        uint32_t expected_crc, uint32_t *actual) {
+    uint8_t *data = NULL;
+    if (child_zip)  data = zip_extract(child_zip,  filename, out_size, actual);
+    if (!data && parent_zip) data = zip_extract(parent_zip, filename, out_size, actual);
+    if (!data && (data = zip__by_crc_in_set(child_zip, parent_zip, expected_crc, out_size))) *actual = expected_crc;
+    /* A file under the right name with the wrong CRC: the set may hold the
+     * right one under another name (daytonagtx.zip has bank0.bin and bank1.bin
+     * the other way round from MAME's list). Take that one if it is there. */
+    if (data && *actual != expected_crc) {
+        size_t n2 = 0;
+        uint8_t *by_crc = zip__by_crc_in_set(child_zip, parent_zip, expected_crc, &n2);
+        if (by_crc) { free(data); data = by_crc; *out_size = n2; *actual = expected_crc; }
+    }
+    return data;
+}
+
 /* Try the child zip first (e.g. sfight.zip), fall back to the parent
  * (e.g. schamp.zip) for files shared via MAME's clone mechanism.
  * Verifies CRC32 — mismatches log a warning but the buffer is still
@@ -202,22 +231,8 @@ static inline uint8_t *zip_extract_from_set(const char *child_zip, const char *p
         }
         return mem;
     }
-    uint8_t *data = NULL;
     uint32_t actual = 0;
-    if (child_zip)  data = zip_extract(child_zip,  filename, out_size, &actual);
-    if (!data && parent_zip) data = zip_extract(parent_zip, filename, out_size, &actual);
-    if (!data && child_zip  && (data = zip_extract_by_crc(child_zip,  expected_crc, out_size))) actual = expected_crc;
-    if (!data && parent_zip && (data = zip_extract_by_crc(parent_zip, expected_crc, out_size))) actual = expected_crc;
-    /* A file under the right name with the wrong CRC: the set may hold the
-     * right one under another name (daytonagtx.zip has bank0.bin and bank1.bin
-     * the other way round from MAME's list). Take that one if it is there. */
-    if (data && actual != expected_crc) {
-        size_t n2 = 0;
-        uint8_t *by_crc = NULL;
-        if (child_zip)            by_crc = zip_extract_by_crc(child_zip,  expected_crc, &n2);
-        if (!by_crc && parent_zip) by_crc = zip_extract_by_crc(parent_zip, expected_crc, &n2);
-        if (by_crc) { free(data); data = by_crc; *out_size = n2; actual = expected_crc; }
-    }
+    uint8_t *data = zip__find_in_set(child_zip, parent_zip, filename, out_size, expected_crc, &actual);
     if (!data) {
         if (!g_rl_quiet_missing) LOG_ERROR("ROM not found: %s", filename);
         return NULL;

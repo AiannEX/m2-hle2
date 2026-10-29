@@ -941,20 +941,21 @@ static inline int geo3d_lookup_by_pol(uint32_t pol_ptr) {
  * (MATRIX, OBJECT) pair into a captured_model_t — reusing the same mesh+matrix
  * render path. Only object_data (cmd 1) is emitted; direct_data (cmd 2) inline
  * geometry is not yet decoded (warned once and stops the walk).               */
+/* The words after each command's opcode, for the ones of a fixed size (0 for
+ * END, JUMP-less unknowns and the ones the scan does not size). */
+static const uint8_t geo3d__dl_fixed_args[32] = {
+    0, 4, 0, 6,  0, 0, 0, 1,  1, 2, 3, 12,  3, 2, 0, 0,     /* 0x00 .. 0x0F */
+    1, 4, 0, 6,  0, 0, 1, 1,  1, 2, 3, 12,  3, 0, 1, 0,     /* 0x10 .. 0x1F */
+};
+
+/* object_data 4, window/clip 6, mode/zsort/lod 1, focal 2, light 3, matrix
+ * 12; texture data is 2 + its count, texture parameters 2 + two a count. */
 static inline int geo3d__dl_args(const uint32_t *L, uint32_t nw, uint32_t p, uint32_t cmd) {
+    const int count = (int)(p + 2 < nw ? L[p + 2] : 0);
     switch (cmd) {
-        case 1: case 0x11: return 4;                          /* object_data        */
-        case 3: case 0x13: return 6;                          /* window/clip        */
-        case 7: case 0x17: case 8: case 0x18:
-        case 0x10: case 0x16: case 0x1e: return 1;            /* mode/zsort/lod/...  */
-        case 9: case 0x19: return 2;                          /* focal              */
-        case 0xa: case 0x1a: case 0xc: case 0x1c: return 3;   /* light              */
-        case 0xb: case 0x1b: return 12;                       /* matrix             */
-        case 0xd: return 2;
-        case 4: case 0x14: case 5: case 0x15:                 /* texdata: 2 + count  */
-            return 2 + (int)(p + 2 < nw ? L[p + 2] : 0);
-        case 6: return 2 + 2 * (int)(p + 2 < nw ? L[p + 2] : 0);  /* texparam        */
-        default: return 0;
+        case 4: case 0x14: case 5: case 0x15: return 2 + count;    /* texdata */
+        case 6: return 2 + 2 * count;                               /* texparam */
+        default: return cmd < 32 ? geo3d__dl_fixed_args[cmd] : 0;
     }
 }
 

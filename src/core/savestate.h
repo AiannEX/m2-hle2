@@ -158,6 +158,14 @@ static inline savestate_layout_t savestate_layout(void) {
     return l;
 }
 
+/* i960_cpu_t as it was before it kept the PRCB's interrupt table and stack
+ * (938e40d, Pinboard #1538): the same struct without its last three words.
+ * Every state from then (a TAS movie's start, Pinboard #1640) loads with them
+ * 0, "nothing taken yet": the next interrupt reads the PRCB from the board,
+ * as the build that saved it did at every interrupt. */
+#define SAVESTATE_CPU_PRE_PRCB \
+    ((offsetof(i960_cpu_t, prcb_cached) + _Alignof(i960_cpu_t) - 1) / _Alignof(i960_cpu_t) * _Alignof(i960_cpu_t))
+
 /* What identifies the ROM a state belongs to. */
 typedef struct {
     uint64_t program;      /* the program ROM as loaded (bus->rom) */
@@ -451,7 +459,8 @@ static inline bool savestate__add_sound(mz_zip_archive *zp, mz_uint level) {
            && savestate__add(zp, level, "M2SNDRAM", g_sound.ram, sizeof g_sound.ram)
            && savestate__add(zp, level, "M2SCSP",   scsp, sizeof *scsp)
            && savestate__add(zp, level, "SOUND",    &snd, sizeof snd)
-           && savestate__add(zp, level, "SOUNDHLE", &g_shle, sizeof g_shle);
+           && savestate__add(zp, level, "SOUNDHLE", &g_shle, sizeof g_shle)
+           && savestate__add(zp, level, "SNDSYNTH", &g_ssyn, sizeof g_ssyn);
     free(scsp);
     return ok;
 }
@@ -609,8 +618,9 @@ static inline bool savestate__get(mz_zip_archive *z, const char *name, void *dst
 }
 
 /* The entries that say whose board this is: the profile, the struct layout
- * and the ROMs. NULL if they are this one's, else why not. */
-static inline const char *savestate__check(mz_zip_archive *zp, memory_bus_t *bus) {
+ * and the ROMs. NULL if they are this one's, else why not. `*cpu_size` is
+ * the I960 entry's size: this build's, or SAVESTATE_CPU_PRE_PRCB's. */
+static inline const char *savestate__check(mz_zip_archive *zp, memory_bus_t *bus, size_t *cpu_size) {
     char info[512];
     memset(info, 0, sizeof info);
     int i = mz_zip_reader_locate_file(zp, "INFO", NULL, 0);
@@ -627,6 +637,8 @@ static inline const char *savestate__check(mz_zip_archive *zp, memory_bus_t *bus
     savestate_layout_t layout, want = savestate_layout();
     if (!savestate__get(zp, "LAYOUT", &layout, sizeof layout)) return "no LAYOUT entry";
     if (layout.version != SAVESTATE_VERSION) return "the state is from another savestate version";
+    if (layout.cpu == SAVESTATE_CPU_PRE_PRCB) want.cpu = layout.cpu;
+    *cpu_size = layout.cpu;
     if (memcmp(&layout, &want, sizeof layout) != 0) return "the state is from a build with another layout";
 
     savestate_rom_t rom, have = savestate_rom_id(bus);
@@ -643,6 +655,7 @@ static inline const char *savestate__check(mz_zip_archive *zp, memory_bus_t *bus
  * running board as it was. The large parts are on the heap. */
 typedef struct {
     i960_cpu_t        *cpu;
+    size_t             cpu_size;           /* the I960 entry's (savestate__check) */
     sharc_state_t     *sharc;
     cop_state_t       *cop;
     zanzou_stream_t    zz;
@@ -659,6 +672,8 @@ typedef struct {
     scsp_t            *scsp;
     savestate_sound_t  snd;
     shle_t             shle;
+    ssyn_t             ssyn;
+    bool               have_ssyn;          /* SNDSYNTH: a state from before it has none (the chip played) */
     savestate_emu_t    emu;
     savestate_hle_t    hle;
     uint8_t           *extra[SAVESTATE_EXTRA_MAX];
@@ -689,7 +704,7 @@ static inline void savestate__scratch_free(savestate_scratch_t *n) {
 /* Every board entry into scratch; false if one is missing or the wrong size. */
 static inline bool savestate__scratch_read(mz_zip_archive *zp, savestate_scratch_t *n) {
     const struct { const char *name; void *dst; size_t size; } e[] = {
-        { "I960",     n->cpu,   sizeof *n->cpu },
+        { "I960",     n->cpu,   n->cpu_size },
         { "SHARC",    n->sharc, sizeof *n->sharc },
         { "COP",      n->cop,   sizeof *n->cop },
         { "ZANZOU",   &n->zz,   sizeof n->zz },
@@ -711,8 +726,15 @@ static inline bool savestate__scratch_read(mz_zip_archive *zp, savestate_scratch
         ok = savestate__get(zp, e[i].name, e[i].dst, e[i].size);
     for (size_t i = 0; ok && i < SAVESTATE_NBUFS; i++)
         ok = savestate__get(zp, SAVESTATE_BUFS[i].name, n->bufs[i], SAVESTATE_BUFS[i].size);
+    if (ok && n->cpu_size == SAVESTATE_CPU_PRE_PRCB) {
+        n->cpu->prcb_cached = 0;           /* its tail held padding, if anything */
+        n->cpu->intr_table  = 0;
+        n->cpu->intr_stack  = 0;
+    }
     n->have_held = ok && mz_zip_reader_locate_file(zp, "GEOHELD", NULL, 0) >= 0
                 && savestate__get(zp, "GEOHELD", n->held, sizeof n->held);
+    n->have_ssyn = ok && mz_zip_reader_locate_file(zp, "SNDSYNTH", NULL, 0) >= 0
+                && savestate__get(zp, "SNDSYNTH", &n->ssyn, sizeof n->ssyn);
     for (int i = 0; ok && i < g_savestate_extra_n; i++) {
         if (!savestate_extra_mine(i)) continue;
         char name[64];
@@ -755,6 +777,8 @@ static inline void savestate__scratch_commit(const savestate_scratch_t *n, i960_
     savestate_scsp_unpack(n->scsp, &g_sound.scsp);
     memcpy(&g_sound.scsp, n->scsp, sizeof g_sound.scsp);
     g_shle = n->shle;
+    if (n->have_ssyn) g_ssyn = n->ssyn;                /* pending is 0 between runs: the block is empty */
+    else              memset(&g_ssyn, 0, sizeof g_ssyn);
     savestate_sound_put(&n->snd);
 
     savestate_hle_set(&n->hle);
@@ -768,9 +792,9 @@ static inline void savestate__scratch_commit(const savestate_scratch_t *n, i960_
  * success `emu` holds the run loop's latches for the caller to put back. */
 static inline const char *savestate__load_zip(mz_zip_archive *zp, const char *what, i960_cpu_t *cpu,
                                               memory_bus_t *bus, savestate_emu_t *emu) {
-    const char *err = savestate__check(zp, bus);
     savestate_scratch_t n;
     memset(&n, 0, sizeof n);
+    const char *err = savestate__check(zp, bus, &n.cpu_size);
     if (!err && !savestate__scratch_alloc(&n)) err = "out of memory";
     if (!err && !savestate__scratch_read(zp, &n)) err = "an entry is missing or the wrong size (see the log)";
     if (!err) {

@@ -119,6 +119,37 @@ static SDL_hid_device_info *fanatec__enumerate(void) {
     return list;
 }
 
+/* Open base i, and set it up to show the game's meters. */
+static void fanatec__open(const SDL_hid_device_info *i) {
+    g_fanatec.dev = SDL_hid_open_path(i->path);
+    if (!g_fanatec.dev) {
+        if (!g_fanatec.warned)
+            LOG_WARN("fanatec: %ls (%04X) would not open: %s%s", i->product_string ? i->product_string : L"base",
+                     i->product_id, SDL_GetError(), FANATEC__OPEN_HINT);
+        g_fanatec.warned = true;
+        return;
+    }
+    g_fanatec.multi = fanatec_multi_tlc(i->product_id);
+    if (g_fanatec.multi) fanatec__open_64(i->path);
+    LOG_INFO("fanatec: %ls (%04X) shows the game's meters", i->product_string ? i->product_string : L"base",
+             i->product_id);
+    g_fanatec.mask = -1;
+    memcpy(g_fanatec.text, "???", 4);
+    g_fanatec.display = false;
+    /* A rim with a rev stripe shows the rim's rev bits as revs. */
+    fanatec__cmd(fanatec_rev_translator, true);
+}
+
+/* No base: once, what there was, so a report names the IDs to add. */
+static void fanatec__list(const SDL_hid_device_info *list) {
+    if (g_fanatec.dev || g_fanatec.listed) return;
+    g_fanatec.listed = true;
+    if (!list) LOG_INFO("fanatec: no Fanatec HID device (0EB7) found");
+    for (const SDL_hid_device_info *i = list; i; i = i->next)
+        LOG_INFO("fanatec: %04X %s, usage %04X:%04X, not opened as a base (%s)", i->product_id,
+                 fanatec_is_base(i->product_id) ? "base" : "not a base", i->usage_page, i->usage, i->path);
+}
+
 /* The first wheel base that opens. */
 static void fanatec__find(void) {
     SDL_hid_device_info *list = fanatec__enumerate();
@@ -126,33 +157,25 @@ static void fanatec__find(void) {
         if (!fanatec_is_base(i->product_id)) continue;
         /* Windows lists each collection; the first is the one with the commands. */
         if (SDL_strcasestr(i->path, "col0") && !SDL_strcasestr(i->path, "col01")) continue;
-        g_fanatec.dev = SDL_hid_open_path(i->path);
-        if (!g_fanatec.dev) {
-            if (!g_fanatec.warned)
-                LOG_WARN("fanatec: %ls (%04X) would not open: %s%s", i->product_string ? i->product_string : L"base",
-                         i->product_id, SDL_GetError(), FANATEC__OPEN_HINT);
-            g_fanatec.warned = true;
-            continue;
-        }
-        g_fanatec.multi = fanatec_multi_tlc(i->product_id);
-        if (g_fanatec.multi) fanatec__open_64(i->path);
-        LOG_INFO("fanatec: %ls (%04X) shows the game's meters", i->product_string ? i->product_string : L"base",
-                 i->product_id);
-        g_fanatec.mask = -1;
-        memcpy(g_fanatec.text, "???", 4);
-        g_fanatec.display = false;
-        /* A rim with a rev stripe shows the rim's rev bits as revs. */
-        fanatec__cmd(fanatec_rev_translator, true);
+        fanatec__open(i);
     }
-    /* No base: once, what there was, so a report names the IDs to add. */
-    if (!g_fanatec.dev && !g_fanatec.listed) {
-        g_fanatec.listed = true;
-        if (!list) LOG_INFO("fanatec: no Fanatec HID device (0EB7) found");
-        for (SDL_hid_device_info *i = list; i; i = i->next)
-            LOG_INFO("fanatec: %04X %s, usage %04X:%04X, not opened as a base (%s)", i->product_id,
-                     fanatec_is_base(i->product_id) ? "base" : "not a base", i->usage_page, i->usage, i->path);
-    }
+    fanatec__list(list);
     SDL_hid_free_enumeration(list);
+}
+
+/* The rev LEDs to mask: the base's, the rim's and a multi base's RGB ones;
+ * false if a report did not go. */
+static bool fanatec__send_revs(uint16_t mask) {
+    uint8_t r[FANATEC_REPORT64];
+    fanatec_base_revs(r, g_fanatec.multi, mask);
+    if (!fanatec__send(r, FANATEC_REPORT)) return false;
+    fanatec_rim_revs(r, g_fanatec.multi, mask);
+    if (!fanatec__send(r, FANATEC_REPORT)) return false;
+    if (g_fanatec.multi && g_fanatec.dev64) {
+        fanatec_rgb_revs(r, mask);
+        if (!fanatec__send(r, FANATEC_REPORT64)) return false;
+    }
+    return true;
 }
 
 /* The LEDs dark and the display back to the wheel's menu; the base stays
@@ -160,16 +183,7 @@ static void fanatec__find(void) {
 static void fanatec_release(void) {
     if (!g_fanatec.dev) return;
     uint8_t r[FANATEC_REPORT64];
-    if (g_fanatec.mask) {
-        fanatec_base_revs(r, g_fanatec.multi, 0);
-        if (!fanatec__send(r, FANATEC_REPORT)) return;
-        fanatec_rim_revs(r, g_fanatec.multi, 0);
-        if (!fanatec__send(r, FANATEC_REPORT)) return;
-        if (g_fanatec.multi && g_fanatec.dev64) {
-            fanatec_rgb_revs(r, 0);
-            if (!fanatec__send(r, FANATEC_REPORT64)) return;
-        }
-    }
+    if (g_fanatec.mask && !fanatec__send_revs(0)) return;
     if (g_fanatec.display) {
         fanatec_display(r, g_fanatec.multi, "   ");
         if (!fanatec__send(r, FANATEC_REPORT)) return;
@@ -180,59 +194,58 @@ static void fanatec_release(void) {
     g_fanatec.display = false;
 }
 
-/* Once a drawn frame: the game's meters to the base. */
-static void fanatec_update(memory_bus_t *bus) {
-    game_dash_t d = { .speed = -1, .gear = -1 };
-    bool dash = g_fanatec_mode != FANATEC_OFF && g_active_profile && g_active_profile->dash && bus;
-    if (!dash) { fanatec_release(); return; }
+/* HID up and a base open: false while there is none (looked for again when
+ * a device comes or goes, or every few seconds where SDL cannot tell). */
+static bool fanatec__ready(void) {
     if (!g_fanatec.hid) {
-        if (SDL_hid_init() != 0) { g_fanatec_mode = FANATEC_OFF; return; }
+        if (SDL_hid_init() != 0) { g_fanatec_mode = FANATEC_OFF; return false; }
         g_fanatec.hid = true;
         g_fanatec.changes = SDL_hid_device_change_count();
         fanatec__find();
         g_fanatec.looked_ms = SDL_GetTicks();
     }
-    if (!g_fanatec.dev) {
-        /* Look again when a device comes or goes, or every few seconds where
-         * SDL cannot tell (change count 0). */
-        Uint32 ch = SDL_hid_device_change_count();
-        Uint64 now = SDL_GetTicks();
-        if (ch == g_fanatec.changes && (ch || now - g_fanatec.looked_ms < 3000)) return;
-        g_fanatec.changes = ch;
-        g_fanatec.looked_ms = now;
-        fanatec__find();
-        if (!g_fanatec.dev) return;
-    }
-    g_active_profile->dash(bus, &d);
+    if (g_fanatec.dev) return true;
+    Uint32 ch = SDL_hid_device_change_count();
+    Uint64 now = SDL_GetTicks();
+    if (ch == g_fanatec.changes && (ch || now - g_fanatec.looked_ms < 3000)) return false;
+    g_fanatec.changes = ch;
+    g_fanatec.looked_ms = now;
+    fanatec__find();
+    return g_fanatec.dev != NULL;
+}
 
-    uint8_t r[FANATEC_REPORT64];
-    int mask = fanatec_rev_mask(&d, SDL_GetTicks() / 125 & 1);
-    if (mask != g_fanatec.mask) {
-        fanatec_base_revs(r, g_fanatec.multi, (uint16_t)mask);
-        if (!fanatec__send(r, FANATEC_REPORT)) return;
-        fanatec_rim_revs(r, g_fanatec.multi, (uint16_t)mask);
-        if (!fanatec__send(r, FANATEC_REPORT)) return;
-        if (g_fanatec.multi && g_fanatec.dev64) {
-            fanatec_rgb_revs(r, (uint16_t)mask);
-            if (!fanatec__send(r, FANATEC_REPORT64)) return;
-        }
-        g_fanatec.mask = mask;
-    }
-
-    if (d.on && !g_fanatec.display) {
+/* The display: on when the game shows a meter, its text when that changed. */
+static void fanatec__show(const game_dash_t *d) {
+    if (d->on && !g_fanatec.display) {
         if (!fanatec__cmd(fanatec_display_mode, true)) return;
         g_fanatec.display = true;
         memcpy(g_fanatec.text, "???", 4);
     }
-    if (!d.on && g_fanatec.display) { fanatec_release(); return; }
+    if (!d->on && g_fanatec.display) { fanatec_release(); return; }
     if (!g_fanatec.display) return;
     char text[4];
-    fanatec_dash_text(&d, g_fanatec_mode == FANATEC_SPEED, text);
+    fanatec_dash_text(d, g_fanatec_mode == FANATEC_SPEED, text);
     if (memcmp(text, g_fanatec.text, 3) != 0) {
+        uint8_t r[FANATEC_REPORT64];
         fanatec_display(r, g_fanatec.multi, text);
         if (!fanatec__send(r, FANATEC_REPORT)) return;
         memcpy(g_fanatec.text, text, 4);
     }
+}
+
+/* Once a drawn frame: the game's meters to the base. */
+static void fanatec_update(memory_bus_t *bus) {
+    game_dash_t d = { .speed = -1, .gear = -1 };
+    bool dash = g_fanatec_mode != FANATEC_OFF && g_active_profile && g_active_profile->dash && bus;
+    if (!dash) { fanatec_release(); return; }
+    if (!fanatec__ready()) return;
+    g_active_profile->dash(bus, &d);
+    int mask = fanatec_rev_mask(&d, SDL_GetTicks() / 125 & 1);
+    if (mask != g_fanatec.mask) {
+        if (!fanatec__send_revs((uint16_t)mask)) return;
+        g_fanatec.mask = mask;
+    }
+    fanatec__show(&d);
 }
 
 /* The run ends: everything back to the wheel, the base closed. */
